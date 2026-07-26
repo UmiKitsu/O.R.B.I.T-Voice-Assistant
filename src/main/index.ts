@@ -1,7 +1,16 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { IPC_CHANNELS } from '../shared/ipcChannels'
+import type { ActionResult } from '../shared/types'
+
+ipcMain.handle(IPC_CHANNELS.ollamaHealth, async (): Promise<ActionResult> => {
+  return {
+    ok: true,
+    message: 'IPC connection is working.'
+  }
+})
 
 function createWindow(): void {
   // Create the browser window.

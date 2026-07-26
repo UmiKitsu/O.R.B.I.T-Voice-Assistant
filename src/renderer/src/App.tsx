@@ -1,10 +1,12 @@
 import { FormEvent, useState } from 'react'
-import type { ChatMessage, TitanStatus } from '../../shared/types'
+import type { ActionResult, ChatMessage, TitanStatus } from '../../shared/types'
 
 function App(): React.JSX.Element {
   const [status, setStatus] = useState<TitanStatus>('disabled')
   const [messages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
+  const [connectionResult, setConnectionResult] = useState<ActionResult | null>(null)
+  const [isTestingConnection, setIsTestingConnection] = useState(false)
 
   const enableTitan = (): void => {
     setStatus('ready')
@@ -18,6 +20,24 @@ function App(): React.JSX.Element {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
+  }
+
+  const testConnection = async (): Promise<void> => {
+    setIsTestingConnection(true)
+    setConnectionResult(null)
+
+    try {
+      setConnectionResult(await window.titan.checkOllama())
+    } catch {
+      setConnectionResult({
+        ok: false,
+        code: 'IPC_CONNECTION_FAILED',
+        message: 'The IPC connection test failed.',
+        recoverable: true
+      })
+    } finally {
+      setIsTestingConnection(false)
+    }
   }
 
   const statusLabel = status
@@ -85,6 +105,9 @@ function App(): React.JSX.Element {
         </section>
 
         <footer className="control-bar">
+          <button type="button" onClick={testConnection} disabled={isTestingConnection}>
+            {isTestingConnection ? 'Testing Connection…' : 'Test Connection'}
+          </button>
           <button type="button" disabled title="Speech-to-text will be added in a later phase">
             <span aria-hidden="true">●</span>
             Microphone — Coming Soon
@@ -94,6 +117,14 @@ function App(): React.JSX.Element {
           </button>
           <button type="button">Settings</button>
         </footer>
+        {connectionResult ? (
+          <p
+            className={`connection-result ${connectionResult.ok ? 'connection-success' : 'connection-error'}`}
+            role="status"
+          >
+            {connectionResult.message}
+          </p>
+        ) : null}
       </section>
     </main>
   )

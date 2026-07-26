@@ -272,6 +272,19 @@ h1 {
   color: #72809a;
 }
 
+.connection-result {
+  margin: -16px 30px 24px;
+  font-size: 13px;
+}
+
+.connection-success {
+  color: #9ee6be;
+}
+
+.connection-error {
+  color: #f2a7af;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
