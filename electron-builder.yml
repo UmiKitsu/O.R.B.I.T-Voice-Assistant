@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: titan-voice-assistant
+appId: com.umikitsune.titan
+productName: T.I.T.A.N. Voice Assistant
 directories:
   buildResources: build
 files:
