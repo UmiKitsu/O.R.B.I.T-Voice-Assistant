@@ -1,13 +1,4 @@
-type TitanVersions = {
-  electron: string
-  chrome: string
-  node: string
-}
-
-type TitanApi = {
-  ping: () => void
-  getVersions: () => TitanVersions
-}
+type TitanApi = Record<string, never>
 
 declare global {
   interface Window {
