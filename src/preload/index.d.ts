@@ -1,8 +1,18 @@
-import { ElectronAPI } from '@electron-toolkit/preload'
+type TitanVersions = {
+  electron: string
+  chrome: string
+  node: string
+}
+
+type TitanApi = {
+  ping: () => void
+  getVersions: () => TitanVersions
+}
 
 declare global {
   interface Window {
-    electron: ElectronAPI
-    api: unknown
+    titan: TitanApi
   }
 }
+
+export {}
