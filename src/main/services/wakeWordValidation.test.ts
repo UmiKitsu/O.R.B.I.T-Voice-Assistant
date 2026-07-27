@@ -19,10 +19,10 @@ describe('wake-word validation', () => {
   })
 
   it('removes only a leading fixed wake phrase', () => {
-    expect(stripWakePhrase('Hey Titan, open Spotify.')).toBe('open Spotify.')
+    expect(stripWakePhrase('Titan, open Spotify.')).toBe('open Spotify.')
     expect(stripWakePhrase('TITAN: tell me the time')).toBe('tell me the time')
     expect(stripWakePhrase('Explain the word titan')).toBe('Explain the word titan')
-    expect(stripWakePhrase('Hey Titan')).toBe('')
+    expect(stripWakePhrase('Titan')).toBe('')
   })
 
   it('bounds complete commands and produces a valid mono PCM WAV', () => {

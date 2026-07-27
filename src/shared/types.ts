@@ -54,10 +54,8 @@ export type TitanSettings = {
   ollamaBaseUrl: string
   ollamaModel: string
   thinkMode: boolean
-  speechEnabled: boolean
   speechRate: number
   speechVolume: number
-  wakeWordEnabled: boolean
   launchAtStartup: boolean
   minimizeToTray: boolean
   saveConversationHistory: boolean

@@ -1,10 +1,6 @@
 export const IPC_CHANNELS = {
   assistantAsk: 'titan:assistant:ask',
   assistantCancel: 'titan:assistant:cancel',
-  assistantClear: 'titan:assistant:clear',
-  speechTranscribe: 'titan:speech:transcribe',
-  speechRecordingStarted: 'titan:speech:recording-started',
-  speechCancelTranscription: 'titan:speech:cancel-transcription',
   wakeWordStart: 'titan:wake-word:start',
   wakeWordStop: 'titan:wake-word:stop',
   wakeWordPause: 'titan:wake-word:pause',

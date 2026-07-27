@@ -3,7 +3,6 @@ import type {
   AssistantResponse,
   OllamaHealth,
   TitanSettings,
-  Transcription,
   WakeWordEvent
 } from '../shared/types'
 
@@ -11,12 +10,8 @@ type TitanApi = {
   checkOllama: () => Promise<ActionResult<OllamaHealth>>
   askAssistant: (message: string) => Promise<ActionResult<AssistantResponse>>
   cancelAssistant: () => Promise<ActionResult>
-  clearConversation: () => Promise<ActionResult>
   getSettings: () => Promise<ActionResult<TitanSettings>>
   updateSettings: (patch: Partial<TitanSettings>) => Promise<ActionResult<TitanSettings>>
-  recordingStarted: () => Promise<ActionResult>
-  transcribeAudio: (audio: Uint8Array) => Promise<ActionResult<Transcription>>
-  cancelTranscription: () => Promise<ActionResult>
   startWakeWord: () => Promise<ActionResult>
   stopWakeWord: () => Promise<ActionResult>
   pauseWakeWord: () => Promise<ActionResult>

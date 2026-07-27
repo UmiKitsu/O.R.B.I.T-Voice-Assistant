@@ -55,7 +55,7 @@ export function isSafeToSpeak(text: string): boolean {
   return true
 }
 
-export function useSpeech(enabled = true): UseSpeechResult {
+export function useSpeech(): UseSpeechResult {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [selectedVoice, setSelectedVoiceState] = useState<SpeechSynthesisVoice | null>(null)
   const [speaking, setSpeaking] = useState(false)
@@ -115,19 +115,15 @@ export function useSpeech(enabled = true): UseSpeechResult {
       activeUtterance.current = null
       setSpeaking(false)
 
-      if (!enabled || !isSafeToSpeak(text)) return false
+      if (!isSafeToSpeak(text)) return false
 
       const utterance = new SpeechSynthesisUtterance(text.trim())
       const utteranceGeneration = generation.current
       utterance.voice = selectedVoice
       utterance.rate = rate
       utterance.volume = volume
-
-      utterance.onstart = (): void => {
-        if (generation.current !== utteranceGeneration) return
-        activeUtterance.current = utterance
-        setSpeaking(true)
-      }
+      activeUtterance.current = utterance
+      setSpeaking(true)
 
       const finish = (): void => {
         if (generation.current !== utteranceGeneration || activeUtterance.current !== utterance) {
@@ -143,7 +139,7 @@ export function useSpeech(enabled = true): UseSpeechResult {
       window.speechSynthesis.speak(utterance)
       return true
     },
-    [enabled, rate, selectedVoice, volume]
+    [rate, selectedVoice, volume]
   )
 
   return {

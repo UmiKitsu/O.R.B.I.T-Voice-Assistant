@@ -9,7 +9,6 @@ const WAKE_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
 }
 
 export type WakeWordController = {
-  start: () => Promise<ActionResult>
   stop: () => Promise<ActionResult>
   pause: () => Promise<ActionResult>
   resume: () => Promise<ActionResult>
@@ -46,6 +45,7 @@ export function useWakeWord(): WakeWordController {
   const contextRef = useRef<AudioContext | null>(null)
   const workletRef = useRef<AudioWorkletNode | null>(null)
   const startPromiseRef = useRef<Promise<ActionResult> | null>(null)
+  const lifecycleGenerationRef = useRef(0)
 
   const releaseAudio = useCallback(async (): Promise<void> => {
     workletRef.current?.disconnect()
@@ -64,13 +64,24 @@ export function useWakeWord(): WakeWordController {
     }
     if (startPromiseRef.current) return startPromiseRef.current
 
+    const generation = lifecycleGenerationRef.current
     const operation = (async (): Promise<ActionResult> => {
       const runtime = await window.titan.startWakeWord()
       if (!runtime.ok) return runtime
+      if (generation !== lifecycleGenerationRef.current) {
+        await window.titan.stopWakeWord()
+        return { ok: true, message: 'Voice listening was stopped.' }
+      }
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: WAKE_AUDIO_CONSTRAINTS })
         const context = new AudioContext({ sampleRate: 16_000, latencyHint: 'interactive' })
+        if (generation !== lifecycleGenerationRef.current) {
+          stream.getTracks().forEach((track) => track.stop())
+          await context.close()
+          await window.titan.stopWakeWord()
+          return { ok: true, message: 'Voice listening was stopped.' }
+        }
         if (context.sampleRate !== 16_000) {
           stream.getTracks().forEach((track) => track.stop())
           await context.close()
@@ -101,6 +112,14 @@ export function useWakeWord(): WakeWordController {
         worklet.connect(silentOutput)
         silentOutput.connect(context.destination)
 
+        if (generation !== lifecycleGenerationRef.current) {
+          worklet.disconnect()
+          stream.getTracks().forEach((track) => track.stop())
+          await context.close()
+          await window.titan.stopWakeWord()
+          return { ok: true, message: 'Voice listening was stopped.' }
+        }
+
         streamRef.current = stream
         contextRef.current = context
         workletRef.current = worklet
@@ -122,6 +141,7 @@ export function useWakeWord(): WakeWordController {
   }, [releaseAudio])
 
   const stop = useCallback(async (): Promise<ActionResult> => {
+    lifecycleGenerationRef.current += 1
     await releaseAudio()
     return window.titan.stopWakeWord()
   }, [releaseAudio])
@@ -141,5 +161,5 @@ export function useWakeWord(): WakeWordController {
     return result
   }, [start])
 
-  return { start, stop, pause, resume }
+  return { stop, pause, resume }
 }

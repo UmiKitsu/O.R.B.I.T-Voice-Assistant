@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   extractAmbiguousMediaQuery,
   isClarificationCancellation,
+  isConversationResetCommand,
   routeCommand,
   routeDeterministicCommand,
   routeMediaDestinationResponse
@@ -69,6 +70,19 @@ describe('routeDeterministicCommand', () => {
         effects: [effect]
       }
     })
+  })
+})
+
+describe('voice-only session controls', () => {
+  it.each(['Clear conversation', 'clear the conversation.'])(
+    'recognizes %s as a conversation reset',
+    (message) => {
+      expect(isConversationResetCommand(message)).toBe(true)
+    }
+  )
+
+  it('does not treat an unrelated clear request as a conversation reset', () => {
+    expect(isConversationResetCommand('clear the screen')).toBe(false)
   })
 })
 

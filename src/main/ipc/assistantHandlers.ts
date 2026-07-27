@@ -13,6 +13,7 @@ import {
 import {
   extractAmbiguousMediaQuery,
   isClarificationCancellation,
+  isConversationResetCommand,
   routeCommand,
   routeMediaDestinationResponse
 } from '../assistant/commandRouter'
@@ -121,6 +122,19 @@ export function registerAssistantHandlers(): void {
       }
 
       const senderId = event.sender.id
+
+      if (isConversationResetCommand(message)) {
+        confirmationFlow.cancelSender(senderId)
+        activeRequests.get(senderId)?.abort()
+        activeRequests.delete(senderId)
+        sessions.delete(senderId)
+        const response = 'Conversation cleared.'
+        return {
+          ok: true,
+          message: response,
+          data: { response }
+        }
+      }
 
       if (activeRequests.has(senderId)) {
         return {
@@ -290,18 +304,6 @@ export function registerAssistantHandlers(): void {
     return {
       ok: true,
       message: 'The request was cancelled.'
-    }
-  })
-
-  ipcMain.handle(IPC_CHANNELS.assistantClear, (event: IpcMainInvokeEvent): ActionResult => {
-    confirmationFlow.cancelSender(event.sender.id)
-    activeRequests.get(event.sender.id)?.abort()
-    activeRequests.delete(event.sender.id)
-    sessions.delete(event.sender.id)
-
-    return {
-      ok: true,
-      message: 'Conversation cleared.'
     }
   })
 }

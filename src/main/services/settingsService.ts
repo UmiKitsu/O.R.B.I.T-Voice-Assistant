@@ -21,10 +21,8 @@ export const titanSettingsSchema = z
     }, 'The Ollama URL must be an HTTP or HTTPS base URL without credentials.'),
     ollamaModel: z.string().trim().min(1).max(200),
     thinkMode: z.boolean(),
-    speechEnabled: z.boolean(),
     speechRate: z.number().min(0.5).max(2),
     speechVolume: z.number().min(0).max(1),
-    wakeWordEnabled: z.boolean(),
     launchAtStartup: z.boolean(),
     minimizeToTray: z.boolean(),
     saveConversationHistory: z.boolean(),
@@ -39,10 +37,8 @@ export const DEFAULT_TITAN_SETTINGS: Readonly<TitanSettings> = Object.freeze({
   ollamaBaseUrl: 'http://localhost:11434',
   ollamaModel: 'qwen3:8b',
   thinkMode: false,
-  speechEnabled: true,
   speechRate: 1,
   speechVolume: 1,
-  wakeWordEnabled: false,
   launchAtStartup: false,
   minimizeToTray: false,
   saveConversationHistory: false,
@@ -66,6 +62,18 @@ function cloneSettings(settings: TitanSettings): TitanSettings {
   }
 }
 
+function migrateLegacySettings(value: unknown): { value: unknown; changed: boolean } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { value, changed: false }
+  }
+
+  const migrated = { ...(value as Record<string, unknown>) }
+  const changed = 'speechEnabled' in migrated || 'wakeWordEnabled' in migrated
+  delete migrated.speechEnabled
+  delete migrated.wakeWordEnabled
+  return { value: migrated, changed }
+}
+
 export async function initializeSettingsService(): Promise<void> {
   if (storage) return
 
@@ -81,8 +89,12 @@ export function getSettings(): TitanSettings {
   if (!storage) return cloneSettings(DEFAULT_TITAN_SETTINGS)
   const currentStorage = storage
 
-  const parsed = titanSettingsSchema.safeParse(currentStorage.store)
-  if (parsed.success) return cloneSettings(parsed.data)
+  const migrated = migrateLegacySettings(currentStorage.store)
+  const parsed = titanSettingsSchema.safeParse(migrated.value)
+  if (parsed.success) {
+    if (migrated.changed) currentStorage.set(parsed.data)
+    return cloneSettings(parsed.data)
+  }
 
   const defaults = cloneSettings(DEFAULT_TITAN_SETTINGS)
   currentStorage.set(defaults)

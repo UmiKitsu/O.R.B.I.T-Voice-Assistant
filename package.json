@@ -24,7 +24,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "electron-store": "^11.0.2",
     "koffi": "^2.14.1",

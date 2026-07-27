@@ -5,7 +5,6 @@ import type {
   AssistantResponse,
   OllamaHealth,
   TitanSettings,
-  Transcription,
   WakeWordEvent
 } from '../shared/types'
 
@@ -51,19 +50,10 @@ const titan = Object.freeze({
 
   cancelAssistant: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.assistantCancel),
 
-  clearConversation: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.assistantClear),
   getSettings: (): Promise<ActionResult<TitanSettings>> =>
     ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
   updateSettings: (patch: Partial<TitanSettings>): Promise<ActionResult<TitanSettings>> =>
     ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, patch),
-  recordingStarted: (): Promise<ActionResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.speechRecordingStarted),
-  transcribeAudio: (audio: Uint8Array): Promise<ActionResult<Transcription>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.speechTranscribe, { audio }),
-
-  cancelTranscription: (): Promise<ActionResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.speechCancelTranscription),
-
   startWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordStart),
   stopWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordStop),
   pauseWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordPause),

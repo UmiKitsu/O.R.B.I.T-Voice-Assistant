@@ -34,7 +34,7 @@ function stateMessage(state: WakeWordState): string {
   const messages: Record<WakeWordState, string> = {
     off: 'Wake-word listening is off.',
     starting: 'Starting local wake-word listening.',
-    armed: 'Listening locally for “Hey TITAN”.',
+    armed: 'Listening locally for “TITAN”.',
     detected: 'Wake phrase detected.',
     capturing: 'Listening for your command.',
     transcribing: 'Transcribing your command locally.',
@@ -85,7 +85,7 @@ async function transcribeCommand(session: WakeWordSession, samples: unknown): Pr
     emit(session, {
       type: 'error',
       code: result.ok ? 'EMPTY_WAKE_WORD_COMMAND' : result.code,
-      message: result.ok ? 'No command was heard after “Hey TITAN”.' : result.message,
+      message: result.ok ? 'No command was heard after “TITAN”.' : result.message,
       fatal: false
     })
     return
@@ -96,7 +96,7 @@ async function transcribeCommand(session: WakeWordSession, samples: unknown): Pr
     emit(session, {
       type: 'error',
       code: 'EMPTY_WAKE_WORD_COMMAND',
-      message: 'No command was heard after “Hey TITAN”.',
+      message: 'No command was heard after “TITAN”.',
       fatal: false
     })
     return

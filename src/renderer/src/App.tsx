@@ -1,37 +1,27 @@
-import { FormEvent, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   ActionResult,
-  ChatMessage,
   ConfirmationPrompt,
   OllamaHealth,
   TitanStatus,
   WakeWordEvent,
   WakeWordState
 } from '../../shared/types'
-import { useSpeech } from './hooks/useSpeech'
-import { useMicrophone } from './hooks/useMicrophone'
-import { useWakeWord } from './hooks/useWakeWord'
 import { ConfirmationDialog } from './ConfirmationDialog'
+import { useSpeech } from './hooks/useSpeech'
+import { useWakeWord } from './hooks/useWakeWord'
 
 function App(): React.JSX.Element {
   const [status, setStatus] = useState<TitanStatus>('disabled')
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [draft, setDraft] = useState('')
-  const [isTranscribedDraft, setIsTranscribedDraft] = useState(false)
-  const [conversationError, setConversationError] = useState<string | null>(null)
+  const [assistantError, setAssistantError] = useState<string | null>(null)
   const [connectionResult, setConnectionResult] = useState<ActionResult<OllamaHealth> | null>(null)
   const [isTestingConnection, setIsTestingConnection] = useState(false)
-  const [speechEnabled, setSpeechEnabled] = useState(true)
-  const [wakeWordEnabled, setWakeWordEnabled] = useState(false)
   const [wakeWordState, setWakeWordState] = useState<WakeWordState>('off')
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationPrompt | null>(null)
   const isEnabled = useRef(false)
   const requestGeneration = useRef(0)
   const requestInFlight = useRef(false)
-  const messageInputRef = useRef<HTMLInputElement>(null)
   const wakeCommandHandler = useRef<((message: string) => Promise<void>) | null>(null)
-  const { startRecording, stopAndTranscribe, cancelRecording, cancelTranscription } =
-    useMicrophone()
   const { stop: stopWakeWord, pause: pauseWakeWord, resume: resumeWakeWord } = useWakeWord()
   const {
     speak,
@@ -44,7 +34,7 @@ function App(): React.JSX.Element {
     setRate,
     volume,
     setVolume
-  } = useSpeech(speechEnabled)
+  } = useSpeech()
 
   useEffect(() => {
     let active = true
@@ -52,8 +42,6 @@ function App(): React.JSX.Element {
       .getSettings()
       .then((result) => {
         if (!active || !result.ok || !result.data) return
-        setSpeechEnabled(result.data.speechEnabled)
-        setWakeWordEnabled(result.data.wakeWordEnabled)
         setRate(result.data.speechRate)
         setVolume(result.data.speechVolume)
       })
@@ -68,24 +56,29 @@ function App(): React.JSX.Element {
     void window.titan.updateSettings(patch).catch(() => undefined)
   }
 
-  const enableTitan = (): void => {
+  const enableTitan = async (): Promise<void> => {
     isEnabled.current = true
-    setConversationError(null)
+    setAssistantError(null)
+    setWakeWordState('starting')
     setStatus('ready')
+
+    const result = await resumeWakeWord()
+    if (!result.ok && isEnabled.current) {
+      setWakeWordState('error')
+      setAssistantError(result.message)
+      setStatus('error')
+    }
   }
 
   const disableTitan = async (): Promise<void> => {
     isEnabled.current = false
-    stopSpeaking()
-    if (status === 'listening') cancelRecording()
-    if (status === 'transcribing') await cancelTranscription()
     requestGeneration.current += 1
-    setConversationError(null)
+    stopSpeaking()
+    setAssistantError(null)
     setPendingConfirmation(null)
     setWakeWordState('off')
     setStatus('disabled')
-    await stopWakeWord()
-    await window.titan.cancelAssistant()
+    await Promise.all([stopWakeWord(), window.titan.cancelAssistant()])
   }
 
   const submitMessage = async (message: string): Promise<void> => {
@@ -95,72 +88,72 @@ function App(): React.JSX.Element {
       !isEnabled.current ||
       status === 'thinking' ||
       requestInFlight.current
-    )
+    ) {
       return
+    }
 
     requestInFlight.current = true
     try {
-      await pauseWakeWord()
-    } catch {
-      requestInFlight.current = false
-      setConversationError('T.I.T.A.N. could not pause wake-word listening.')
-      return
-    }
-    if (!isEnabled.current) {
-      requestInFlight.current = false
-      return
-    }
+      const pauseResult = await pauseWakeWord()
+      if (!pauseResult.ok) {
+        setAssistantError('T.I.T.A.N. could not pause voice listening.')
+        return
+      }
+      if (!isEnabled.current) return
 
-    const generation = requestGeneration.current + 1
-    requestGeneration.current = generation
-    setMessages((current) => [...current, { role: 'user', content: normalizedMessage }])
-    setDraft('')
-    setConversationError(null)
-    setStatus('thinking')
-    setIsTranscribedDraft(false)
+      const generation = requestGeneration.current + 1
+      requestGeneration.current = generation
+      setAssistantError(null)
+      setStatus('thinking')
 
-    let awaitingConfirmation = false
-    try {
-      const result = await window.titan.askAssistant(normalizedMessage)
-      if (requestGeneration.current !== generation) return
+      let awaitingConfirmation = false
+      try {
+        const result = await window.titan.askAssistant(normalizedMessage)
+        if (requestGeneration.current !== generation) return
 
-      if (result.ok) {
-        const response = result.data?.response
-        const effects = result.data?.effects ?? []
-        const confirmation = result.data?.confirmation ?? null
-        awaitingConfirmation = confirmation !== null
-        setPendingConfirmation(confirmation)
-        if (confirmation) setStatus('awaiting-confirmation')
+        if (result.ok) {
+          const response = result.data?.response
+          const effects = result.data?.effects ?? []
+          const confirmation = result.data?.confirmation ?? null
+          awaitingConfirmation = confirmation !== null
+          setPendingConfirmation(confirmation)
+          if (confirmation) setStatus('awaiting-confirmation')
 
-        if (response) {
-          setMessages((current) => [...current, { role: 'assistant', content: response }])
-          if (effects.includes('stop-speaking') || effects.includes('disable')) {
-            stopSpeaking()
+          if (response) {
+            if (effects.includes('stop-speaking') || effects.includes('disable')) {
+              stopSpeaking()
+            } else {
+              speak(response)
+            }
+
+            if (effects.includes('disable')) {
+              isEnabled.current = false
+              requestGeneration.current += 1
+              setWakeWordState('off')
+              await stopWakeWord()
+              setStatus('disabled')
+            }
           } else {
-            speak(response)
-          }
-
-          if (effects.includes('disable')) {
-            isEnabled.current = false
-            requestGeneration.current += 1
-            setWakeWordState('off')
-            await stopWakeWord()
-            setStatus('disabled')
+            setAssistantError('Ollama returned an invalid response.')
           }
         } else {
-          setConversationError('Ollama returned an invalid response.')
+          setAssistantError(result.message)
         }
-      } else {
-        setConversationError(result.message)
-      }
-    } catch {
-      if (requestGeneration.current === generation) {
-        setConversationError('T.I.T.A.N. could not send the request to the main process.')
+      } catch {
+        if (requestGeneration.current === generation) {
+          setAssistantError('T.I.T.A.N. could not send the request to the main process.')
+        }
+      } finally {
+        if (
+          !awaitingConfirmation &&
+          requestGeneration.current === generation &&
+          isEnabled.current
+        ) {
+          setStatus('ready')
+        }
       }
     } finally {
       requestInFlight.current = false
-      if (!awaitingConfirmation && requestGeneration.current === generation && isEnabled.current)
-        setStatus('ready')
     }
   }
 
@@ -168,111 +161,32 @@ function App(): React.JSX.Element {
     wakeCommandHandler.current = submitMessage
   })
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
-    event.preventDefault()
-    await submitMessage(draft)
-  }
   const respondToConfirmation = async (approved: boolean): Promise<void> => {
     const confirmation = pendingConfirmation
     if (!confirmation) return
     setStatus('executing')
-    setConversationError(null)
+    setAssistantError(null)
     try {
       const result = await window.titan.confirmAction(confirmation.requestId, approved)
       setPendingConfirmation(null)
       if (result.ok) {
         const response = result.data?.response
-        if (response) {
-          setMessages((current) => [...current, { role: 'assistant', content: response }])
-          speak(response)
-        }
+        if (response) speak(response)
       } else {
-        setConversationError(result.message)
+        setAssistantError(result.message)
       }
     } catch {
       setPendingConfirmation(null)
-      setConversationError('T.I.T.A.N. could not complete the confirmation request.')
+      setAssistantError('T.I.T.A.N. could not complete the confirmation request.')
     } finally {
       if (isEnabled.current) setStatus('ready')
     }
-  }
-  const handleMicrophone = async (): Promise<void> => {
-    if (
-      wakeWordState === 'detected' ||
-      wakeWordState === 'capturing' ||
-      wakeWordState === 'transcribing'
-    )
-      return
-    setConversationError(null)
-    stopSpeaking()
-
-    if (status === 'listening') {
-      setStatus('transcribing')
-      try {
-        const result = await stopAndTranscribe()
-        if (!isEnabled.current) return
-        if (result.ok && result.data?.text) {
-          setDraft(result.data.text)
-          setIsTranscribedDraft(true)
-          requestAnimationFrame(() => messageInputRef.current?.focus())
-        } else {
-          setConversationError(result.message)
-        }
-      } catch {
-        if (isEnabled.current) setConversationError('I could not understand the recording.')
-      } finally {
-        if (isEnabled.current) setStatus('ready')
-      }
-      return
-    }
-
-    if (status === 'transcribing') {
-      const result = await cancelTranscription()
-      setConversationError(result.message)
-      if (isEnabled.current) setStatus('ready')
-      return
-    }
-
-    const result = await startRecording()
-    if (result.ok) {
-      setIsTranscribedDraft(false)
-      setStatus('listening')
-    } else {
-      setConversationError(result.message)
-    }
-  }
-
-  const cancelActiveRecording = (): void => {
-    const result = cancelRecording()
-    setConversationError(result.message)
-    if (isEnabled.current) setStatus('ready')
   }
 
   const cancelResponse = async (): Promise<void> => {
     requestGeneration.current += 1
     const result = await window.titan.cancelAssistant()
-    setConversationError(result.message)
-    if (isEnabled.current) setStatus('ready')
-  }
-
-  const clearConversation = async (): Promise<void> => {
-    requestGeneration.current += 1
-    setPendingConfirmation(null)
-    if (status === 'listening') cancelRecording()
-    if (status === 'transcribing') await cancelTranscription()
-    if (
-      wakeWordState === 'detected' ||
-      wakeWordState === 'capturing' ||
-      wakeWordState === 'transcribing'
-    ) {
-      await pauseWakeWord()
-      setWakeWordState('paused')
-    }
-    const result = await window.titan.clearConversation()
-    setMessages([])
-    setDraft('')
-    setIsTranscribedDraft(false)
-    setConversationError(result.ok ? null : result.message)
+    setAssistantError(result.message)
     if (isEnabled.current) setStatus('ready')
   }
 
@@ -299,7 +213,7 @@ function App(): React.JSX.Element {
         setWakeWordState(event.state)
         if (event.state === 'detected' || event.state === 'capturing') {
           stopSpeaking()
-          setConversationError(null)
+          setAssistantError(null)
           setStatus('listening')
         } else if (event.state === 'transcribing') {
           setStatus('transcribing')
@@ -309,8 +223,8 @@ function App(): React.JSX.Element {
 
       if (event.type === 'error') {
         setWakeWordState(event.fatal ? 'error' : 'paused')
-        setConversationError(event.message)
-        if (isEnabled.current) setStatus('ready')
+        setAssistantError(event.message)
+        if (isEnabled.current) setStatus(event.fatal ? 'error' : 'ready')
         return
       }
 
@@ -321,7 +235,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     let active = true
-    if (!isEnabled.current || !wakeWordEnabled || wakeWordState === 'error') {
+    if (!isEnabled.current || wakeWordState === 'error') {
       return () => {
         active = false
       }
@@ -336,7 +250,8 @@ function App(): React.JSX.Element {
         void resumeWakeWord().then((result) => {
           if (active && !result.ok && isEnabled.current) {
             setWakeWordState('error')
-            setConversationError(result.message)
+            setAssistantError(result.message)
+            setStatus('error')
           }
         })
       } else {
@@ -347,31 +262,25 @@ function App(): React.JSX.Element {
     return () => {
       active = false
     }
-  }, [pauseWakeWord, resumeWakeWord, speaking, status, wakeWordEnabled, wakeWordState])
+  }, [pauseWakeWord, resumeWakeWord, speaking, status, wakeWordState])
+
   const displayedStatus = status === 'ready' && speaking ? 'speaking' : status
   const statusLabel = displayedStatus
     .split('-')
     .map((word) => word[0].toUpperCase() + word.slice(1))
     .join(' ')
+  const statusMessage: Record<TitanStatus, string> = {
+    disabled: 'Enable T.I.T.A.N. to begin local voice listening.',
+    ready: 'Say “TITAN” followed by your command.',
+    listening: 'Listening for your command…',
+    transcribing: 'Transcribing your command locally…',
+    thinking: 'Preparing a response…',
+    'awaiting-confirmation': 'Your confirmation is required.',
+    executing: 'Executing the confirmed action…',
+    speaking: 'Speaking the response…',
+    error: 'Voice listening needs your attention.'
+  }
 
-  const inputUnavailable =
-    status === 'disabled' ||
-    status === 'thinking' ||
-    status === 'listening' ||
-    status === 'transcribing' ||
-    status === 'awaiting-confirmation' ||
-    status === 'executing'
-  const wakeCaptureActive =
-    wakeWordState === 'detected' ||
-    wakeWordState === 'capturing' ||
-    wakeWordState === 'transcribing'
-  const microphoneLabel = wakeCaptureActive
-    ? 'Voice command in progress'
-    : status === 'listening'
-      ? 'Stop and transcribe'
-      : status === 'transcribing'
-        ? 'Cancel transcription'
-        : 'Start recording'
   return (
     <main className="app-shell">
       <section className="assistant-card" aria-labelledby="app-title">
@@ -383,66 +292,44 @@ function App(): React.JSX.Element {
             <h1 id="app-title">T.I.T.A.N.</h1>
             <p>Local Voice Assistant</p>
           </div>
-          <div className={`status-pill status-${displayedStatus}`} role="status" aria-live="polite">
-            <span className="status-dot" aria-hidden="true" />
-            Status: {statusLabel}
-          </div>
-          <div
-            className={`wake-word-pill wake-word-${wakeWordState}`}
-            role="status"
-            aria-live="polite"
-          >
-            <span aria-hidden="true" />
-            Wake word: {wakeWordEnabled ? wakeWordState : 'off'}
+          <div className="header-statuses">
+            <div
+              className={`status-pill status-${displayedStatus}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span className="status-dot" aria-hidden="true" />
+              Status: {statusLabel}
+            </div>
+            <div
+              className={`wake-word-pill wake-word-${wakeWordState}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span aria-hidden="true" />
+              Voice: {wakeWordState}
+            </div>
           </div>
         </header>
 
         <button
           className={`enable-button ${status === 'disabled' ? '' : 'disable-button'}`}
           type="button"
-          onClick={status === 'disabled' ? enableTitan : disableTitan}
+          onClick={() => void (status === 'disabled' ? enableTitan() : disableTitan())}
         >
           {status === 'disabled' ? 'Enable T.I.T.A.N.' : 'Disable T.I.T.A.N.'}
         </button>
 
-        <section className="conversation" aria-labelledby="conversation-title">
-          <div className="section-heading">
-            <div>
-              <h2 id="conversation-title">Conversation</h2>
-              <p>Your current session stays on this device.</p>
-            </div>
-            <button
-              type="button"
-              onClick={clearConversation}
-              disabled={messages.length === 0 && !draft}
-            >
-              Clear Conversation
-            </button>
+        <section className={`voice-status voice-status-${displayedStatus}`} aria-live="polite">
+          <div className="voice-orb" aria-hidden="true">
+            <span>T</span>
           </div>
+          <h2>{statusLabel}</h2>
+          <p>{statusMessage[displayedStatus]}</p>
 
-          <div className="message-list" aria-live="polite">
-            {messages.length === 0 ? (
-              <div className="empty-conversation">
-                <span aria-hidden="true">T</span>
-                <h3>Ready when you are</h3>
-                <p>Enable T.I.T.A.N. and type or record a message to begin.</p>
-              </div>
-            ) : (
-              messages.map((message, index) => (
-                <article
-                  className={`message message-${message.role}`}
-                  key={`${message.role}-${index}`}
-                >
-                  <span>{message.role === 'user' ? 'You' : 'T.I.T.A.N.'}</span>
-                  <p>{message.content}</p>
-                </article>
-              ))
-            )}
-          </div>
-
-          {conversationError ? (
-            <p className="conversation-error" role="alert">
-              {conversationError}
+          {assistantError ? (
+            <p className="assistant-error" role="alert">
+              {assistantError}
             </p>
           ) : null}
 
@@ -452,32 +339,6 @@ function App(): React.JSX.Element {
               disabled={status === 'executing'}
               onRespond={respondToConfirmation}
             />
-          ) : null}
-          <form className="message-form" onSubmit={handleSubmit}>
-            <label className="sr-only" htmlFor="message-input">
-              Message T.I.T.A.N.
-            </label>
-            <input
-              ref={messageInputRef}
-              id="message-input"
-              type="text"
-              value={draft}
-              onChange={(event) => {
-                setDraft(event.target.value)
-                setIsTranscribedDraft(false)
-              }}
-              placeholder={status === 'listening' ? 'Listening...' : 'Type a message...'}
-              maxLength={4000}
-              disabled={inputUnavailable}
-            />
-            <button type="submit" disabled={inputUnavailable || draft.trim().length === 0}>
-              {status === 'thinking' ? 'Thinking...' : 'Send'}
-            </button>
-          </form>
-          {isTranscribedDraft ? (
-            <p className="transcription-hint" role="status">
-              Review the recognized text, correct it if needed, then press Send.
-            </p>
           ) : null}
         </section>
 
@@ -490,57 +351,12 @@ function App(): React.JSX.Element {
               Cancel Response
             </button>
           ) : null}
-          <button
-            className={status === 'listening' ? 'microphone-active' : ''}
-            type="button"
-            onClick={handleMicrophone}
-            disabled={status === 'disabled' || status === 'thinking' || wakeCaptureActive}
-            aria-pressed={status === 'listening'}
-          >
-            <span aria-hidden="true">●</span>
-            {microphoneLabel}
-          </button>
-          {status === 'listening' && !wakeCaptureActive ? (
-            <button type="button" onClick={cancelActiveRecording}>
-              Cancel Recording
-            </button>
-          ) : null}
           <button type="button" onClick={stopSpeaking} disabled={!speaking}>
             Stop Speaking
           </button>
-          <label className="speech-toggle">
-            <input
-              type="checkbox"
-              checked={speechEnabled}
-              onChange={(event) => {
-                const nextEnabled = event.target.checked
-                if (!nextEnabled) stopSpeaking()
-                setSpeechEnabled(nextEnabled)
-                saveSettings({ speechEnabled: nextEnabled })
-              }}
-            />
-            Speak responses
-          </label>
-          <label className="speech-toggle">
-            <input
-              type="checkbox"
-              checked={wakeWordEnabled}
-              onChange={(event) => {
-                const nextEnabled = event.target.checked
-                setWakeWordEnabled(nextEnabled)
-                saveSettings({ wakeWordEnabled: nextEnabled })
-                if (!nextEnabled) {
-                  setWakeWordState('off')
-                  void stopWakeWord()
-                } else {
-                  setWakeWordState('off')
-                }
-              }}
-            />
-            Listen for “Hey TITAN”
-          </label>
         </footer>
-        <fieldset className="speech-settings" disabled={!speechEnabled}>
+
+        <fieldset className="speech-settings">
           <legend>Windows speech</legend>
           <label>
             Voice
@@ -589,6 +405,7 @@ function App(): React.JSX.Element {
             />
           </label>
         </fieldset>
+
         {connectionResult ? (
           <p
             className={`connection-result ${connectionResult.ok ? 'connection-success' : 'connection-error'}`}

@@ -63,4 +63,17 @@ describe('settings validation', () => {
     expect(updateSettings({ confirmationTimeoutSeconds: 1 })).toBeNull()
     expect((storage.store as TitanSettings).confirmationTimeoutSeconds).toBe(20)
   })
+
+  it('removes deprecated automatic voice flags without resetting other settings', () => {
+    const storage = memoryStorage({
+      ...DEFAULT_TITAN_SETTINGS,
+      speechEnabled: false,
+      wakeWordEnabled: false,
+      speechVolume: 0.4
+    })
+    setSettingsStorageForTests(storage)
+
+    expect(getSettings().speechVolume).toBe(0.4)
+    expect(storage.store).toEqual({ ...DEFAULT_TITAN_SETTINGS, speechVolume: 0.4 })
+  })
 })

@@ -208,6 +208,10 @@ export function isClarificationCancellation(message: string): boolean {
   return /^(?:cancel|never ?mind|stop|no)(?:[.!?]+)?$/i.test(message.trim())
 }
 
+export function isConversationResetCommand(message: string): boolean {
+  return /^clear (?:the )?conversation(?:[.!?]+)?$/i.test(message.trim())
+}
+
 export function routeCommand(
   message: string,
   context: import('../../shared/types').AssistantSessionContext = {}
