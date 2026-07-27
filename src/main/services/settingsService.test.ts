@@ -33,6 +33,8 @@ describe('settings validation', () => {
     expect(orbitSettingsSchema.safeParse(DEFAULT_ORBIT_SETTINGS).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ speechVolume: 0.4 }).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ recognitionLanguage: 'en' }).success).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ wakeRecognitionMode: 'hybrid' }).success).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ wakeRecognitionMode: 'cloud' }).success).toBe(false)
     expect(orbitSettingsPatchSchema.safeParse({ recognitionLanguage: 'tl' }).success).toBe(false)
     expect(orbitSettingsPatchSchema.safeParse({ unexpected: true }).success).toBe(false)
     expect(
@@ -50,8 +52,13 @@ describe('settings validation', () => {
   })
 
   it('imports only valid legacy settings and applies current migrations', () => {
-    const { recognitionLanguage: _recognitionLanguage, ...legacy } = DEFAULT_ORBIT_SETTINGS
+    const {
+      recognitionLanguage: _recognitionLanguage,
+      wakeRecognitionMode: _wakeRecognitionMode,
+      ...legacy
+    } = DEFAULT_ORBIT_SETTINGS
     void _recognitionLanguage
+    void _wakeRecognitionMode
     expect(parseLegacySettingsForImport({ ...legacy, speechVolume: 0.7 })).toEqual({
       ...DEFAULT_ORBIT_SETTINGS,
       speechVolume: 0.7
@@ -78,13 +85,19 @@ describe('settings validation', () => {
     expect((storage.store as OrbitSettings).confirmationTimeoutSeconds).toBe(20)
   })
 
-  it('adds automatic recognition language to existing settings', () => {
-    const { recognitionLanguage: _recognitionLanguage, ...legacy } = DEFAULT_ORBIT_SETTINGS
+  it('adds current recognition defaults to existing settings', () => {
+    const {
+      recognitionLanguage: _recognitionLanguage,
+      wakeRecognitionMode: _wakeRecognitionMode,
+      ...legacy
+    } = DEFAULT_ORBIT_SETTINGS
     void _recognitionLanguage
+    void _wakeRecognitionMode
     const storage = memoryStorage({ ...legacy, speechVolume: 0.6 })
     setSettingsStorageForTests(storage)
 
     expect(getSettings().recognitionLanguage).toBe('auto')
+    expect(getSettings().wakeRecognitionMode).toBe('hybrid')
     expect(storage.store).toEqual({ ...DEFAULT_ORBIT_SETTINGS, speechVolume: 0.6 })
   })
 

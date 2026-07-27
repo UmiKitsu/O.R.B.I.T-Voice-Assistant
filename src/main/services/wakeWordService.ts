@@ -2,19 +2,27 @@ import { app, type WebContents } from 'electron'
 import { access } from 'node:fs/promises'
 import { join } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/ipcChannels'
-import type { ActionResult, WakeWordEvent, WakeWordState } from '../../shared/types'
+import type {
+  ActionResult,
+  WakeWordEvent,
+  WakeWordState,
+  WakeWordTestResult
+} from '../../shared/types'
 import CreateWakeWordWorker from './wakeWordWorker?nodeWorker'
+import type { WakeAudioMetrics } from './wakeWordCandidateSegmenter'
 import type {
   WakeWordWorkerInput,
   WakeWordWorkerOutput,
   WakeWordWorkerResources
 } from './wakeWordProtocol'
 import { logOperationalEvent } from './loggerService'
-import { diagnoseVoiceRecording } from './voiceDiagnosticsService'
+import { getSettings } from './settingsService'
+import { diagnoseVoiceRecording, diagnoseWakeCandidateRecording } from './voiceDiagnosticsService'
 import { encodePcm16Wav, isValidWakeWordCommand } from './wakeWordValidation'
 
 const START_TIMEOUT_MS = 10_000
-const WAKE_WORD_TEST_TIMEOUT_MS = 8_000
+const WAKE_WORD_TEST_LISTEN_MS = 8_000
+const WAKE_WORD_TEST_PROCESSING_GRACE_MS = 4_000
 
 function wakeWordResourcePath(filename: string): string {
   const root = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
@@ -35,8 +43,8 @@ function stateMessage(state: WakeWordState): string {
   const messages: Record<WakeWordState, string> = {
     off: 'Wake-word listening is off.',
     starting: 'Starting local wake-word listening.',
-    armed: 'Listening locally for “ORBIT”.',
-    detected: 'Wake phrase detected.',
+    armed: 'Listening locally for ORBIT.',
+    detected: 'Orbit detected.',
     capturing: 'Listening for your command.',
     transcribing: 'Transcribing your command locally.',
     paused: 'Wake-word listening is paused.',
@@ -45,11 +53,35 @@ function stateMessage(state: WakeWordState): string {
   return messages[state]
 }
 
+const EMPTY_WAKE_METRICS: WakeAudioMetrics = {
+  captureDurationMs: 0,
+  audioChunkCount: 0,
+  peakLevel: 0,
+  rmsLevel: 0,
+  signalQuality: 'none'
+}
+
+type WakeWordTestSession = {
+  startedAt: number
+  windowTimeout: ReturnType<typeof setTimeout>
+  processingTimeout?: ReturnType<typeof setTimeout>
+  windowEnded: boolean
+  metrics: WakeAudioMetrics
+  heardText?: string
+}
+
+type FallbackTranscription = {
+  candidateId: number
+  controller: AbortController
+  test: boolean
+}
+
 type WakeWordSession = {
   worker: ReturnType<typeof CreateWakeWordWorker>
   sender: WebContents
   transcription?: AbortController
-  wakeTestTimeout?: ReturnType<typeof setTimeout>
+  fallback?: FallbackTranscription
+  wakeTest?: WakeWordTestSession
   ready: boolean
 }
 
@@ -63,15 +95,29 @@ function emitState(session: WakeWordSession, state: WakeWordState): void {
   emit(session, { type: 'state', state, message: stateMessage(state) })
 }
 
-function finishWakeWordTest(
-  session: WakeWordSession,
-  result: { detected: boolean; latencyMs?: number }
-): void {
-  if (!session.wakeTestTimeout) return
-  clearTimeout(session.wakeTestTimeout)
-  session.wakeTestTimeout = undefined
+function clearWakeWordTestTimers(test: WakeWordTestSession): void {
+  clearTimeout(test.windowTimeout)
+  if (test.processingTimeout) clearTimeout(test.processingTimeout)
+}
+
+function finishWakeWordTest(session: WakeWordSession, result: WakeWordTestResult): void {
+  const test = session.wakeTest
+  if (!test) return
+  clearWakeWordTestTimers(test)
+  session.wakeTest = undefined
+  if (session.fallback?.test) {
+    session.fallback.controller.abort()
+    session.fallback = undefined
+  }
   session.worker.postMessage({ type: 'test-cancel' } satisfies WakeWordWorkerInput)
   emit(session, { type: 'test-result', result })
+}
+
+function failedWakeWordTestResult(
+  metrics: WakeAudioMetrics,
+  heardText?: string
+): WakeWordTestResult {
+  return { detected: false, heardText, ...metrics }
 }
 
 async function transcribeCommand(session: WakeWordSession, samples: unknown): Promise<void> {
@@ -99,7 +145,7 @@ async function transcribeCommand(session: WakeWordSession, samples: unknown): Pr
     emit(session, {
       type: 'error',
       code: result.ok ? 'EMPTY_WAKE_WORD_COMMAND' : result.code,
-      message: result.ok ? 'No command was heard after “ORBIT”.' : result.message,
+      message: result.ok ? 'No command was heard after Orbit.' : result.message,
       fatal: false
     })
     return
@@ -112,6 +158,103 @@ async function transcribeCommand(session: WakeWordSession, samples: unknown): Pr
     diagnostics: result.data.diagnostics
   })
 }
+
+function postFallbackDecision(
+  session: WakeWordSession,
+  candidateId: number,
+  detected: boolean,
+  hasCommand: boolean
+): void {
+  session.worker.postMessage({
+    type: 'fallback-result',
+    candidateId,
+    detected,
+    hasCommand
+  } satisfies WakeWordWorkerInput)
+}
+
+async function transcribeWakeCandidate(
+  session: WakeWordSession,
+  message: Extract<WakeWordWorkerOutput, { type: 'wake-candidate' }>
+): Promise<void> {
+  if (!isValidWakeWordCommand(message.samples)) {
+    postFallbackDecision(session, message.candidateId, false, false)
+    return
+  }
+  if (message.test && !session.wakeTest) {
+    postFallbackDecision(session, message.candidateId, false, false)
+    return
+  }
+
+  session.fallback?.controller.abort()
+  const controller = new AbortController()
+  const fallback: FallbackTranscription = {
+    candidateId: message.candidateId,
+    controller,
+    test: message.test
+  }
+  session.fallback = fallback
+  if (message.test && session.wakeTest) session.wakeTest.metrics = message.metrics
+
+  const result = await diagnoseWakeCandidateRecording(
+    encodePcm16Wav(message.samples),
+    controller.signal
+  )
+  if (session.fallback !== fallback || controller.signal.aborted) return
+  session.fallback = undefined
+
+  if (!result.ok || !result.data) {
+    postFallbackDecision(session, message.candidateId, false, false)
+    if (message.test && session.wakeTest?.windowEnded) {
+      finishWakeWordTest(
+        session,
+        failedWakeWordTestResult(session.wakeTest.metrics, session.wakeTest.heardText)
+      )
+    }
+    return
+  }
+
+  const diagnosis = result.data
+  if (!diagnosis.detected) {
+    if (message.test && session.wakeTest) {
+      session.wakeTest.heardText = diagnosis.heardText.slice(0, 500)
+    }
+    postFallbackDecision(session, message.candidateId, false, false)
+    if (message.test && session.wakeTest?.windowEnded) {
+      finishWakeWordTest(
+        session,
+        failedWakeWordTestResult(session.wakeTest.metrics, session.wakeTest.heardText)
+      )
+    }
+    return
+  }
+
+  const hasCommand = diagnosis.transcript !== undefined && diagnosis.diagnostics !== undefined
+  postFallbackDecision(session, message.candidateId, true, hasCommand)
+
+  if (message.test) {
+    const test = session.wakeTest
+    if (!test) return
+    finishWakeWordTest(session, {
+      detected: true,
+      method: 'whisper-fallback',
+      latencyMs: Math.max(0, Date.now() - test.startedAt),
+      heardText: diagnosis.heardText.slice(0, 500),
+      ...test.metrics
+    })
+    return
+  }
+
+  if (hasCommand && diagnosis.transcript && diagnosis.diagnostics) {
+    emitState(session, 'detected')
+    emit(session, {
+      type: 'transcription',
+      transcript: diagnosis.transcript,
+      diagnostics: diagnosis.diagnostics
+    })
+  }
+}
+
 function unavailableResult(): ActionResult {
   return {
     ok: false,
@@ -176,9 +319,27 @@ export async function startWakeWord(sender: WebContents): Promise<ActionResult> 
         case 'command':
           void transcribeCommand(session, message.samples)
           break
-        case 'test-detected':
-          finishWakeWordTest(session, { detected: true, latencyMs: message.latencyMs })
+        case 'wake-candidate':
+          void transcribeWakeCandidate(session, message)
           break
+        case 'test-detected':
+          finishWakeWordTest(session, {
+            detected: true,
+            method: 'keyword',
+            latencyMs: message.latencyMs,
+            heardText: 'Orbit',
+            ...message.metrics
+          })
+          break
+        case 'test-window-ended': {
+          const test = session.wakeTest
+          if (!test) break
+          test.metrics = message.metrics
+          if (!session.fallback) {
+            finishWakeWordTest(session, failedWakeWordTestResult(message.metrics, test.heardText))
+          }
+          break
+        }
         case 'error':
           emit(session, {
             type: 'error',
@@ -193,6 +354,7 @@ export async function startWakeWord(sender: WebContents): Promise<ActionResult> 
             recoverable: true
           })
           sessions.delete(sender.id)
+          session.fallback?.controller.abort()
           void worker.terminate()
           break
       }
@@ -207,6 +369,8 @@ export async function startWakeWord(sender: WebContents): Promise<ActionResult> 
       })
       sessions.delete(sender.id)
       session.transcription?.abort()
+      session.fallback?.controller.abort()
+      if (session.wakeTest) clearWakeWordTestTimers(session.wakeTest)
       void worker.terminate()
       finish({
         ok: false,
@@ -218,7 +382,8 @@ export async function startWakeWord(sender: WebContents): Promise<ActionResult> 
 
     worker.postMessage({
       type: 'initialize',
-      resources: modelResources
+      resources: modelResources,
+      recognitionMode: getSettings().wakeRecognitionMode
     } satisfies WakeWordWorkerInput)
   })
 }
@@ -242,23 +407,47 @@ export function startWakeWordTest(senderId: number): ActionResult {
       recoverable: true
     }
   }
-  if (session.wakeTestTimeout) clearTimeout(session.wakeTestTimeout)
+  if (session.wakeTest) {
+    clearWakeWordTestTimers(session.wakeTest)
+    session.wakeTest = undefined
+  }
   session.transcription?.abort()
   session.transcription = undefined
+  if (session.fallback?.test) session.fallback.controller.abort()
+  session.fallback = undefined
   session.worker.postMessage({ type: 'test-start' } satisfies WakeWordWorkerInput)
-  session.wakeTestTimeout = setTimeout(() => {
-    finishWakeWordTest(session, { detected: false })
-  }, WAKE_WORD_TEST_TIMEOUT_MS)
-  return { ok: true, message: 'Listening for Orbit for up to eight seconds.' }
+
+  const test: WakeWordTestSession = {
+    startedAt: Date.now(),
+    windowEnded: false,
+    metrics: { ...EMPTY_WAKE_METRICS },
+    windowTimeout: setTimeout(() => {
+      if (session.wakeTest !== test) return
+      test.windowEnded = true
+      session.worker.postMessage({ type: 'test-window-end' } satisfies WakeWordWorkerInput)
+      test.processingTimeout = setTimeout(() => {
+        if (session.wakeTest !== test) return
+        finishWakeWordTest(session, failedWakeWordTestResult(test.metrics, test.heardText))
+      }, WAKE_WORD_TEST_PROCESSING_GRACE_MS)
+    }, WAKE_WORD_TEST_LISTEN_MS)
+  }
+  session.wakeTest = test
+  return {
+    ok: true,
+    message: 'Listening for Orbit for eight seconds with local fallback recognition.'
+  }
 }
 
 export function cancelWakeWordTest(senderId: number): ActionResult {
   const session = sessions.get(senderId)
-  if (!session?.wakeTestTimeout) {
-    return { ok: true, message: 'No wake-word test is running.' }
+  const test = session?.wakeTest
+  if (!session || !test) return { ok: true, message: 'No wake-word test is running.' }
+  clearWakeWordTestTimers(test)
+  session.wakeTest = undefined
+  if (session.fallback?.test) {
+    session.fallback.controller.abort()
+    session.fallback = undefined
   }
-  clearTimeout(session.wakeTestTimeout)
-  session.wakeTestTimeout = undefined
   session.worker.postMessage({ type: 'test-cancel' } satisfies WakeWordWorkerInput)
   return { ok: true, message: 'Wake-word test cancelled.' }
 }
@@ -272,6 +461,8 @@ function changeWakeWordState(senderId: number, type: 'pause' | 'resume'): Action
     cancelWakeWordTest(senderId)
     session.transcription?.abort()
     session.transcription = undefined
+    session.fallback?.controller.abort()
+    session.fallback = undefined
   }
   session.worker.postMessage({ type } satisfies WakeWordWorkerInput)
   return { ok: true, message: stateMessage(type === 'pause' ? 'paused' : 'armed') }
@@ -289,8 +480,9 @@ export function stopWakeWord(senderId: number): ActionResult {
   const session = sessions.get(senderId)
   if (!session) return { ok: true, message: stateMessage('off') }
   sessions.delete(senderId)
-  if (session.wakeTestTimeout) clearTimeout(session.wakeTestTimeout)
+  if (session.wakeTest) clearWakeWordTestTimers(session.wakeTest)
   session.transcription?.abort()
+  session.fallback?.controller.abort()
   session.worker.postMessage({ type: 'shutdown' } satisfies WakeWordWorkerInput)
   void session.worker.terminate()
   emitState(session, 'off')

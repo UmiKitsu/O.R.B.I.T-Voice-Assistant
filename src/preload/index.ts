@@ -105,14 +105,49 @@ function isWakeWordEvent(value: unknown): value is WakeWordEvent {
       return false
     }
     const result = event.result as Record<string, unknown>
+    const allowedKeys = new Set([
+      'detected',
+      'method',
+      'latencyMs',
+      'captureDurationMs',
+      'audioChunkCount',
+      'peakLevel',
+      'rmsLevel',
+      'signalQuality',
+      'heardText'
+    ])
+    if (Object.keys(result).some((key) => !allowedKeys.has(key))) return false
     return (
-      (Object.keys(result).length === 1 || Object.keys(result).length === 2) &&
       typeof result.detected === 'boolean' &&
+      (result.method === undefined ||
+        result.method === 'keyword' ||
+        result.method === 'whisper-fallback') &&
       (result.latencyMs === undefined ||
         (typeof result.latencyMs === 'number' &&
           Number.isFinite(result.latencyMs) &&
           result.latencyMs >= 0 &&
-          result.latencyMs <= 10_000))
+          result.latencyMs <= 15_000)) &&
+      typeof result.captureDurationMs === 'number' &&
+      Number.isFinite(result.captureDurationMs) &&
+      result.captureDurationMs >= 0 &&
+      result.captureDurationMs <= 12_000 &&
+      typeof result.audioChunkCount === 'number' &&
+      Number.isInteger(result.audioChunkCount) &&
+      result.audioChunkCount >= 0 &&
+      result.audioChunkCount <= 200 &&
+      typeof result.peakLevel === 'number' &&
+      Number.isFinite(result.peakLevel) &&
+      result.peakLevel >= 0 &&
+      result.peakLevel <= 1 &&
+      typeof result.rmsLevel === 'number' &&
+      Number.isFinite(result.rmsLevel) &&
+      result.rmsLevel >= 0 &&
+      result.rmsLevel <= 1 &&
+      (result.signalQuality === 'none' ||
+        result.signalQuality === 'low' ||
+        result.signalQuality === 'good') &&
+      (result.heardText === undefined ||
+        (typeof result.heardText === 'string' && result.heardText.length <= 500))
     )
   }
   return (

@@ -32,6 +32,9 @@ export type Transcription = {
 }
 
 export type RecognitionLanguage = 'auto' | 'en'
+export type WakeRecognitionMode = 'hybrid' | 'keyword-only'
+export type WakeDetectionMethod = 'keyword' | 'whisper-fallback'
+export type WakeSignalQuality = 'none' | 'low' | 'good'
 
 export type VoiceCorrection = {
   from: string
@@ -73,7 +76,14 @@ export type MicrophoneTestResult = {
 
 export type WakeWordTestResult = {
   detected: boolean
+  method?: WakeDetectionMethod
   latencyMs?: number
+  captureDurationMs: number
+  audioChunkCount: number
+  peakLevel: number
+  rmsLevel: number
+  signalQuality: WakeSignalQuality
+  heardText?: string
 }
 
 export type WakeWordState =
@@ -113,6 +123,7 @@ export type OrbitSettings = {
   confirmationTimeoutSeconds: number
   applicationAliases: Record<string, string[]>
   recognitionLanguage: RecognitionLanguage
+  wakeRecognitionMode: WakeRecognitionMode
 }
 
 export type AssistantEffect = 'stop-speaking' | 'disable'

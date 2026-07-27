@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   encodePcm16Wav,
   isValidWakeWordCommand,
+  matchWakePhraseDetails,
   parseWakeWordAudioChunk,
   stripWakePhrase,
   stripWakePhraseDetails
@@ -33,6 +34,23 @@ describe('wake-word validation', () => {
     })
     expect(stripWakePhrase('Explain the word orbit')).toBe('Explain the word orbit')
     expect(stripWakePhrase('Orbit')).toBe('')
+  })
+
+  it('matches only trusted leading wake variants for the Whisper fallback', () => {
+    expect(matchWakePhraseDetails('Or bit, open Spotify.')).toEqual({
+      wakePhrase: 'Or bit',
+      commandText: 'open Spotify.'
+    })
+    expect(matchWakePhraseDetails('Orbit')).toEqual({
+      wakePhrase: 'Orbit',
+      commandText: ''
+    })
+    expect(matchWakePhraseDetails('Hey, orb it: play music')).toEqual({
+      wakePhrase: 'orb it',
+      commandText: 'play music'
+    })
+    expect(matchWakePhraseDetails('Explain the word orbit')).toBeNull()
+    expect(matchWakePhraseDetails('Orbital open Spotify')).toBeNull()
   })
 
   it('bounds complete commands and produces a valid mono PCM WAV', () => {

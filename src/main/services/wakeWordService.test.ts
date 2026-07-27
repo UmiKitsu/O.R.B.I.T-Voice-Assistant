@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const WAKE_METRICS = {
+  captureDurationMs: 800,
+  audioChunkCount: 8,
+  peakLevel: 0.18,
+  rmsLevel: 0.04,
+  signalQuality: 'good' as const
+}
+
 const mocks = vi.hoisted(() => {
   type Handler = (value?: unknown) => void
   class FakeWorker {
@@ -17,8 +25,22 @@ const mocks = vi.hoisted(() => {
 
     postMessage(message: unknown): void {
       this.messages.push(message)
-      if ((message as { type?: string }).type === 'initialize') {
+      const type = (message as { type?: string }).type
+      if (type === 'initialize') {
         queueMicrotask(() => this.emit('message', { type: 'ready' }))
+      } else if (type === 'test-window-end') {
+        queueMicrotask(() =>
+          this.emit('message', {
+            type: 'test-window-ended',
+            metrics: {
+              captureDurationMs: 800,
+              audioChunkCount: 8,
+              peakLevel: 0.18,
+              rmsLevel: 0.04,
+              signalQuality: 'good'
+            }
+          })
+        )
       }
     }
 
@@ -34,6 +56,7 @@ const mocks = vi.hoisted(() => {
   return {
     workers: [] as FakeWorker[],
     diagnoseVoiceRecording: vi.fn(),
+    diagnoseWakeCandidateRecording: vi.fn(),
     FakeWorker
   }
 })
@@ -50,7 +73,8 @@ vi.mock('./loggerService', () => ({
 }))
 
 vi.mock('./voiceDiagnosticsService', () => ({
-  diagnoseVoiceRecording: mocks.diagnoseVoiceRecording
+  diagnoseVoiceRecording: mocks.diagnoseVoiceRecording,
+  diagnoseWakeCandidateRecording: mocks.diagnoseWakeCandidateRecording
 }))
 
 vi.mock('./wakeWordWorker?nodeWorker', () => ({
@@ -82,10 +106,65 @@ function sender(id = 41): {
   }
 }
 
+function wakeCandidate(test = false): {
+  type: 'wake-candidate'
+  candidateId: number
+  samples: Float32Array
+  metrics: typeof WAKE_METRICS
+  test: boolean
+} {
+  return {
+    type: 'wake-candidate',
+    candidateId: 7,
+    samples: new Float32Array(3_200).fill(0.05),
+    metrics: WAKE_METRICS,
+    test
+  }
+}
+
+function successfulFallback(command = true): unknown {
+  return {
+    ok: true,
+    message: 'Orbit was detected by local fallback transcription.',
+    data: {
+      detected: true,
+      heardText: command ? 'Orbit open Spotify' : 'Orbit',
+      wakePhrase: 'Orbit',
+      transcript: command
+        ? { rawText: 'open Spotify', normalizedText: 'open Spotify', corrections: [] }
+        : undefined,
+      diagnostics: command
+        ? {
+            durationMs: 200,
+            transcriptionLatencyMs: 90,
+            peakLevel: 0.1,
+            rmsLevel: 0.03,
+            detectedLanguage: 'en',
+            route: {
+              kind: 'deterministic',
+              summary: 'Open a registered application',
+              capability: 'application.launch',
+              parameters: { application: 'Spotify' }
+            }
+          }
+        : undefined,
+      transcriptionLatencyMs: 90,
+      detectedLanguage: 'en'
+    }
+  }
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   mocks.workers.length = 0
   mocks.diagnoseVoiceRecording.mockReset()
+  mocks.diagnoseWakeCandidateRecording.mockReset()
 })
 
 afterEach(() => {
@@ -94,47 +173,182 @@ afterEach(() => {
 })
 
 describe('wake-word diagnostic mode', () => {
-  it('times out after eight seconds without transcribing or routing audio', async () => {
+  it('ends after eight seconds without invoking Whisper when no speech candidate exists', async () => {
     const webContents = sender()
     await expect(startWakeWord(webContents as never)).resolves.toMatchObject({ ok: true })
 
     expect(startWakeWordTest(webContents.id)).toMatchObject({ ok: true })
     await vi.advanceTimersByTimeAsync(8_000)
+    await flushAsyncWork()
 
     expect(webContents.send).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
         type: 'test-result',
-        result: { detected: false }
+        result: { detected: false, ...WAKE_METRICS }
       })
     )
+    expect(mocks.diagnoseWakeCandidateRecording).not.toHaveBeenCalled()
     expect(mocks.diagnoseVoiceRecording).not.toHaveBeenCalled()
     expect(mocks.workers[0].messages).toContainEqual({ type: 'test-cancel' })
   })
 
-  it('reports detection latency and cancellation produces no result', async () => {
-    const detectedSender = sender(42)
-    await startWakeWord(detectedSender as never)
-    expect(startWakeWordTest(detectedSender.id)).toMatchObject({ ok: true })
-    mocks.workers[0].emit('message', { type: 'test-detected', latencyMs: 375 })
+  it('reports primary keyword metrics and bypasses Whisper', async () => {
+    const webContents = sender(42)
+    await startWakeWord(webContents as never)
+    expect(startWakeWordTest(webContents.id)).toMatchObject({ ok: true })
+    mocks.workers[0].emit('message', {
+      type: 'test-detected',
+      latencyMs: 375,
+      metrics: WAKE_METRICS
+    })
 
-    expect(detectedSender.send).toHaveBeenCalledWith(
+    expect(webContents.send).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
         type: 'test-result',
-        result: { detected: true, latencyMs: 375 }
+        result: {
+          detected: true,
+          method: 'keyword',
+          latencyMs: 375,
+          heardText: 'Orbit',
+          ...WAKE_METRICS
+        }
       })
     )
+    expect(mocks.diagnoseWakeCandidateRecording).not.toHaveBeenCalled()
     expect(mocks.diagnoseVoiceRecording).not.toHaveBeenCalled()
+  })
 
-    const cancelledSender = sender(43)
-    await startWakeWord(cancelledSender as never)
-    expect(startWakeWordTest(cancelledSender.id)).toMatchObject({ ok: true })
-    expect(cancelWakeWordTest(cancelledSender.id)).toMatchObject({ ok: true })
-    await vi.advanceTimersByTimeAsync(8_000)
-    expect(cancelledSender.send).not.toHaveBeenCalledWith(
+  it('uses Whisper diagnostically without emitting a routed transcription', async () => {
+    const webContents = sender(43)
+    await startWakeWord(webContents as never)
+    mocks.diagnoseWakeCandidateRecording.mockResolvedValue(successfulFallback(false))
+    expect(startWakeWordTest(webContents.id)).toMatchObject({ ok: true })
+
+    mocks.workers[0].emit('message', wakeCandidate(true))
+    await flushAsyncWork()
+
+    expect(mocks.workers[0].messages).toContainEqual({
+      type: 'fallback-result',
+      candidateId: 7,
+      detected: true,
+      hasCommand: false
+    })
+    expect(webContents.send).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        type: 'test-result',
+        result: expect.objectContaining({
+          detected: true,
+          method: 'whisper-fallback',
+          heardText: 'Orbit',
+          ...WAKE_METRICS
+        })
+      })
+    )
+    expect(webContents.send).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'transcription' })
+    )
+  })
+
+  it('cancels active fallback transcription and produces no result', async () => {
+    const webContents = sender(44)
+    let fallbackSignal: AbortSignal | undefined
+    mocks.diagnoseWakeCandidateRecording.mockImplementation(
+      (_audio: Uint8Array, signal: AbortSignal) => {
+        fallbackSignal = signal
+        return new Promise(() => undefined)
+      }
+    )
+    await startWakeWord(webContents as never)
+    expect(startWakeWordTest(webContents.id)).toMatchObject({ ok: true })
+    mocks.workers[0].emit('message', wakeCandidate(true))
+    await flushAsyncWork()
+
+    expect(cancelWakeWordTest(webContents.id)).toMatchObject({ ok: true })
+    expect(fallbackSignal?.aborted).toBe(true)
+    await vi.advanceTimersByTimeAsync(12_000)
+    expect(webContents.send).not.toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ type: 'test-result' })
+    )
+  })
+})
+
+describe('armed hybrid recognition', () => {
+  it('reuses one fallback transcription when Orbit and a command share a segment', async () => {
+    const webContents = sender(51)
+    mocks.diagnoseWakeCandidateRecording.mockResolvedValue(successfulFallback(true))
+    await startWakeWord(webContents as never)
+
+    mocks.workers[0].emit('message', wakeCandidate(false))
+    await flushAsyncWork()
+
+    expect(mocks.diagnoseWakeCandidateRecording).toHaveBeenCalledOnce()
+    expect(mocks.diagnoseVoiceRecording).not.toHaveBeenCalled()
+    expect(mocks.workers[0].messages).toContainEqual({
+      type: 'fallback-result',
+      candidateId: 7,
+      detected: true,
+      hasCommand: true
+    })
+    expect(webContents.send).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        type: 'transcription',
+        transcript: expect.objectContaining({ normalizedText: 'open Spotify' })
+      })
+    )
+  })
+
+  it('keeps buffered follow-up audio when fallback hears only Orbit', async () => {
+    const webContents = sender(52)
+    mocks.diagnoseWakeCandidateRecording.mockResolvedValue(successfulFallback(false))
+    await startWakeWord(webContents as never)
+
+    mocks.workers[0].emit('message', wakeCandidate(false))
+    await flushAsyncWork()
+
+    expect(mocks.workers[0].messages).toContainEqual({
+      type: 'fallback-result',
+      candidateId: 7,
+      detected: true,
+      hasCommand: false
+    })
+    expect(webContents.send).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'transcription' })
+    )
+  })
+
+  it('discards non-Orbit speech without routing or command transcription', async () => {
+    const webContents = sender(53)
+    mocks.diagnoseWakeCandidateRecording.mockResolvedValue({
+      ok: true,
+      message: 'No trusted wake phrase.',
+      data: {
+        detected: false,
+        heardText: 'Play some music',
+        transcriptionLatencyMs: 80
+      }
+    })
+    await startWakeWord(webContents as never)
+
+    mocks.workers[0].emit('message', wakeCandidate(false))
+    await flushAsyncWork()
+
+    expect(mocks.workers[0].messages).toContainEqual({
+      type: 'fallback-result',
+      candidateId: 7,
+      detected: false,
+      hasCommand: false
+    })
+    expect(mocks.diagnoseVoiceRecording).not.toHaveBeenCalled()
+    expect(webContents.send).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'transcription' })
     )
   })
 })

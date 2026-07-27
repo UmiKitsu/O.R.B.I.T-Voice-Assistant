@@ -43,18 +43,35 @@ export type StrippedWakePhrase = {
   }
 }
 
+export type WakePhraseMatch = {
+  wakePhrase: string
+  commandText: string
+}
+
+const WAKE_PHRASE_PREFIX =
+  /^(?:hey[\s,.:;!\u2014-]+)?(orbit|or[\s-]+bit|orb[\s-]+it)\b[\s,.:;!\u2014-]*/i
+
+export function matchWakePhraseDetails(transcription: string): WakePhraseMatch | null {
+  const trimmed = transcription.trim()
+  const match = trimmed.match(WAKE_PHRASE_PREFIX)
+  if (!match?.[1]) return null
+  return {
+    wakePhrase: match[1],
+    commandText: trimmed.slice(match[0].length).trim()
+  }
+}
+
 export function stripWakePhraseDetails(transcription: string): StrippedWakePhrase {
   const trimmed = transcription.trim()
-  const match = trimmed.match(/^(?:hey[\s,.:;!—-]+)?(orbit|or[\s-]+bit|orb[\s-]+it)\b[\s,.:;!—-]*/i)
+  const match = matchWakePhraseDetails(trimmed)
   if (!match) return { text: trimmed }
 
-  const heardWakeWord = match[1]
   return {
-    text: trimmed.slice(match[0].length).trim(),
+    text: match.commandText,
     wakeWord:
-      heardWakeWord.toLocaleLowerCase() === 'orbit'
+      match.wakePhrase.toLocaleLowerCase() === 'orbit'
         ? undefined
-        : { from: heardWakeWord, to: 'Orbit' }
+        : { from: match.wakePhrase, to: 'Orbit' }
   }
 }
 

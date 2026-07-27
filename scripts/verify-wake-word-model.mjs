@@ -27,9 +27,13 @@ const expectedFiles = Object.freeze({
     size: 1_928,
     sha256: '2d3f32311f9b692b964da3c90e830258d3e78e013cb0c992dbfb15cd5a1a71b0'
   },
+  'keywords.raw.txt': {
+    size: 51,
+    sha256: '5e2f803e0d9471ac30f2915e08c7c5ef6f37d1646d407f416bfcc600b15c278a'
+  },
   'keywords.txt': {
-    size: 33,
-    sha256: '9be421abdaabcc540e414fa8504d329468e1bd117e9ff3796898f91c0cdb8919'
+    size: 67,
+    sha256: '7e6f2c0a18dd8ddfd38b979aac8f16a9d9b04e5e045f20c3deeac09f79c07c1e'
   }
 })
 

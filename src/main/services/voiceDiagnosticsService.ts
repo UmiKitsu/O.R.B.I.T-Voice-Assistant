@@ -10,7 +10,17 @@ import { getSettings } from './settingsService'
 import { analyzePcm16Samples } from './speechToTextValidation'
 import { transcribeRecording } from './speechToTextService'
 import { normalizeVoiceCommand } from './voiceCommandNormalizer'
-import { stripWakePhraseDetails } from './wakeWordValidation'
+import { matchWakePhraseDetails, stripWakePhraseDetails } from './wakeWordValidation'
+
+export type WakeCandidateDiagnosis = {
+  detected: boolean
+  heardText: string
+  wakePhrase?: string
+  transcript?: VoiceTranscript
+  diagnostics?: VoiceDiagnostics
+  transcriptionLatencyMs: number
+  detectedLanguage?: string
+}
 
 export function previewVoiceRoute(text: string): VoiceRoutePreview {
   const plan = routeDeterministicCommand(text)
@@ -44,6 +54,73 @@ export function prepareVoiceTranscript(rawText: string): VoiceTranscript | null 
     })
   }
   return transcript
+}
+
+export async function diagnoseWakeCandidateRecording(
+  audio: Uint8Array,
+  signal: AbortSignal
+): Promise<ActionResult<WakeCandidateDiagnosis>> {
+  const stats = analyzePcm16Samples(audio)
+  if (!stats) {
+    return {
+      ok: false,
+      code: 'INVALID_WAKE_CANDIDATE',
+      message: 'The wake-word candidate was not valid 16 kHz mono audio.',
+      recoverable: true
+    }
+  }
+
+  const startedAt = performance.now()
+  const result = await transcribeRecording(audio, signal, 'wake-candidate')
+  const transcriptionLatencyMs = Math.round(performance.now() - startedAt)
+  if (!result.ok) return result
+  if (!result.data?.text) {
+    return {
+      ok: false,
+      code: 'TRANSCRIPTION_UNCLEAR',
+      message: 'I could not understand the wake-word candidate.',
+      recoverable: true
+    }
+  }
+
+  const heardText = result.data.text
+  const wakeMatch = matchWakePhraseDetails(heardText)
+  if (!wakeMatch) {
+    return {
+      ok: true,
+      message: 'Local fallback transcription did not begin with the Orbit wake phrase.',
+      data: {
+        detected: false,
+        heardText,
+        transcriptionLatencyMs,
+        detectedLanguage: result.data.detectedLanguage
+      }
+    }
+  }
+
+  const transcript = wakeMatch.commandText ? prepareVoiceTranscript(heardText) : null
+  const diagnostics = transcript
+    ? {
+        ...stats,
+        transcriptionLatencyMs,
+        detectedLanguage: result.data.detectedLanguage,
+        route: previewVoiceRoute(transcript.normalizedText)
+      }
+    : undefined
+
+  return {
+    ok: true,
+    message: 'Orbit was detected by local fallback transcription.',
+    data: {
+      detected: true,
+      heardText,
+      wakePhrase: wakeMatch.wakePhrase,
+      transcript: transcript ?? undefined,
+      diagnostics,
+      transcriptionLatencyMs,
+      detectedLanguage: result.data.detectedLanguage
+    }
+  }
 }
 
 export async function diagnoseVoiceRecording(

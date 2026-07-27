@@ -17,6 +17,8 @@ import { getSettings } from './settingsService'
 const TRANSCRIPTION_TIMEOUT_MS = 45_000
 const MAX_PROCESS_OUTPUT_LENGTH = 1_000_000
 const WHISPER_THREADS = Math.max(1, Math.min(10, availableParallelism()))
+const SHORT_WAKE_CANDIDATE_MAX_MS = 5_000
+const SHORT_WAKE_AUDIO_CONTEXT = 256
 const WHISPER_COMMAND_PROMPT =
   'Orbit Orbit. Open, launch, focus, play, pause, next, previous, volume up, volume down, mute, unmute, search, maximize, minimize, restore, stop speaking, disable Orbit. Buksan, i-play, patugtugin, hanapin. YouTube, Google, Chrome, Spotify, Calculator, File Explorer, Visual Studio Code.'
 
@@ -47,7 +49,8 @@ function runWhisper(
   executablePath: string,
   modelPath: string,
   audioPath: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  optimizeShortWakeCandidate: boolean
 ): Promise<ActionResult<Transcription>> {
   return new Promise((resolve) => {
     const recognitionLanguage = getSettings().recognitionLanguage
@@ -63,30 +66,30 @@ function runWhisper(
 
     let child: ChildProcessByStdio<null, Readable, Readable>
     try {
-      child = spawn(
-        executablePath,
-        [
-          '-m',
-          basename(modelPath),
-          '-f',
-          audioPath,
-          '-l',
-          recognitionLanguage,
-          '--threads',
-          String(WHISPER_THREADS),
-          '--prompt',
-          WHISPER_COMMAND_PROMPT,
-          '--no-timestamps'
-        ],
-        {
-          // whisper.cpp's Windows CLI does not reliably parse non-ASCII model paths.
-          // Run beside the fixed bundled model and pass only its trusted filename.
-          cwd: dirname(executablePath),
-          shell: false,
-          windowsHide: true,
-          stdio: ['ignore', 'pipe', 'pipe']
-        }
-      )
+      const arguments_ = [
+        '-m',
+        basename(modelPath),
+        '-f',
+        audioPath,
+        '-l',
+        recognitionLanguage,
+        '--threads',
+        String(WHISPER_THREADS),
+        '--prompt',
+        WHISPER_COMMAND_PROMPT,
+        '--no-timestamps'
+      ]
+      if (optimizeShortWakeCandidate) {
+        arguments_.push('--audio-ctx', String(SHORT_WAKE_AUDIO_CONTEXT), '--beam-size', '1')
+      }
+      child = spawn(executablePath, arguments_, {
+        // whisper.cpp's Windows CLI does not reliably parse non-ASCII model paths.
+        // Run beside the fixed bundled model and pass only its trusted filename.
+        cwd: dirname(executablePath),
+        shell: false,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
     } catch {
       resolve(unavailableResult('whisper-cli.exe'))
       return
@@ -169,7 +172,8 @@ function runWhisper(
 
 export async function transcribeRecording(
   audio: Uint8Array,
-  signal: AbortSignal
+  signal: AbortSignal,
+  profile: 'standard' | 'wake-candidate' = 'standard'
 ): Promise<ActionResult<Transcription>> {
   if (!isPcmWav(audio)) {
     return {
@@ -199,7 +203,16 @@ export async function transcribeRecording(
 
   try {
     await writeFile(audioPath, audio, { flag: 'wx' })
-    return await runWhisper(executablePath, modelPath, audioPath, signal)
+    const durationMs = ((audio.byteLength - 44) / 2 / 16_000) * 1_000
+    const optimizeShortWakeCandidate =
+      profile === 'wake-candidate' && durationMs <= SHORT_WAKE_CANDIDATE_MAX_MS
+    return await runWhisper(
+      executablePath,
+      modelPath,
+      audioPath,
+      signal,
+      optimizeShortWakeCandidate
+    )
   } catch {
     return {
       ok: false,

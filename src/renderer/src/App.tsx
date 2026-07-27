@@ -28,6 +28,9 @@ function App(): React.JSX.Element {
   const [voiceDiagnostics, setVoiceDiagnostics] = useState<VoiceDiagnostics | null>(null)
   const [voiceTranscriptIsTest, setVoiceTranscriptIsTest] = useState(false)
   const [recognitionLanguage, setRecognitionLanguage] = useState<'auto' | 'en'>('auto')
+  const [wakeRecognitionMode, setWakeRecognitionMode] = useState<'hybrid' | 'keyword-only'>(
+    'hybrid'
+  )
   const [wakeDetectionCount, setWakeDetectionCount] = useState(0)
   const [falseTriggerCount, setFalseTriggerCount] = useState(0)
   const [wakeWordTestPhase, setWakeWordTestPhase] = useState<'idle' | 'listening'>('idle')
@@ -113,6 +116,7 @@ function App(): React.JSX.Element {
         setRate(result.data.speechRate)
         setVolume(result.data.speechVolume)
         setRecognitionLanguage(result.data.recognitionLanguage)
+        setWakeRecognitionMode(result.data.wakeRecognitionMode)
       })
       .catch(() => undefined)
 
@@ -644,14 +648,44 @@ function App(): React.JSX.Element {
           ) : null}
 
           {wakeWordTestResult ? (
-            <p
+            <div
               className={wakeWordTestResult.detected ? 'connection-success' : 'assistant-error'}
               role="status"
             >
-              {wakeWordTestResult.detected
-                ? `Orbit detected in ${wakeWordTestResult.latencyMs ?? 0} ms.`
-                : 'Orbit was not detected within eight seconds. Speak clearly at a normal volume and try again.'}
-            </p>
+              <p>
+                {wakeWordTestResult.detected
+                  ? `Orbit detected in ${wakeWordTestResult.latencyMs ?? 0} ms.`
+                  : 'Orbit was not detected during the eight-second listening window.'}
+              </p>
+              <dl className="voice-metrics">
+                <div>
+                  <dt>Method</dt>
+                  <dd>
+                    {wakeWordTestResult.method === 'whisper-fallback'
+                      ? 'Whisper fallback'
+                      : wakeWordTestResult.method === 'keyword'
+                        ? 'Keyword detector'
+                        : 'No match'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Heard</dt>
+                  <dd>{wakeWordTestResult.heardText ?? 'No recognizable wake phrase'}</dd>
+                </div>
+                <div>
+                  <dt>Signal</dt>
+                  <dd>{wakeWordTestResult.signalQuality}</dd>
+                </div>
+                <div>
+                  <dt>Audio</dt>
+                  <dd>{(wakeWordTestResult.captureDurationMs / 1000).toFixed(1)} s</dd>
+                </div>
+                <div>
+                  <dt>Peak</dt>
+                  <dd>{Math.round(wakeWordTestResult.peakLevel * 100)}%</dd>
+                </div>
+              </dl>
+            </div>
           ) : null}
 
           {assistantError ? (
@@ -769,6 +803,21 @@ function App(): React.JSX.Element {
             >
               <option value="auto">English + Taglish (Auto)</option>
               <option value="en">English only</option>
+            </select>
+          </label>
+          <label>
+            Wake recognition
+            <select
+              value={wakeRecognitionMode}
+              disabled={status !== 'disabled'}
+              onChange={(event) => {
+                const mode = event.target.value === 'keyword-only' ? 'keyword-only' : 'hybrid'
+                setWakeRecognitionMode(mode)
+                saveSettings({ wakeRecognitionMode: mode })
+              }}
+            >
+              <option value="hybrid">Hybrid local (recommended)</option>
+              <option value="keyword-only">Keyword only (lower CPU)</option>
             </select>
           </label>
           <label>

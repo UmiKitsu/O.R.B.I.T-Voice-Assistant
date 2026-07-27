@@ -5,6 +5,8 @@ directories:
 files:
   - '!**/.vscode/*'
   - '!src/*'
+  - '!test/**'
+  - '!scripts/smoke-wake-word.mjs'
   - '!resources/whisper/**'
   - '!resources/wake-word/**'
   - '!electron.vite.config.{js,ts,mjs,cjs}'

@@ -30,7 +30,8 @@ export const orbitSettingsSchema = z
     saveConversationHistory: z.boolean(),
     confirmationTimeoutSeconds: z.number().int().min(5).max(300),
     applicationAliases: applicationAliasesSchema,
-    recognitionLanguage: z.enum(['auto', 'en'])
+    recognitionLanguage: z.enum(['auto', 'en']),
+    wakeRecognitionMode: z.enum(['hybrid', 'keyword-only'])
   })
   .strict()
 
@@ -47,7 +48,8 @@ export const DEFAULT_ORBIT_SETTINGS: Readonly<OrbitSettings> = Object.freeze({
   saveConversationHistory: false,
   confirmationTimeoutSeconds: 20,
   applicationAliases: {},
-  recognitionLanguage: 'auto'
+  recognitionLanguage: 'auto',
+  wakeRecognitionMode: 'hybrid'
 })
 
 type SettingsStorage = {
@@ -77,6 +79,10 @@ export function migrateLegacySettings(value: unknown): { value: unknown; changed
   delete migrated.wakeWordEnabled
   if (!('recognitionLanguage' in migrated)) {
     migrated.recognitionLanguage = 'auto'
+    changed = true
+  }
+  if (!('wakeRecognitionMode' in migrated)) {
+    migrated.wakeRecognitionMode = 'hybrid'
     changed = true
   }
   return { value: migrated, changed }

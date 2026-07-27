@@ -5,9 +5,21 @@
   "keywordTokenizer": {
     "tool": "sherpa-onnx 1.13.4 text2token",
     "tokensType": "phone+ppinyin",
-    "keyword": "ORBIT",
-    "generatedTokens": "AO1 R B AH0 T",
-    "boost": 1.8,
-    "threshold": 0.22
+    "lexicon": "en.phone",
+    "keywords": [
+      {
+        "keyword": "ORBIT",
+        "generatedTokens": "AO1 R B AH0 T",
+        "boost": 1.8,
+        "threshold": 0.22
+      },
+      {
+        "keyword": "OR BIT",
+        "canonical": "ORBIT",
+        "generatedTokens": "AO1 R B IH1 T",
+        "boost": 2.0,
+        "threshold": 0.18
+      }
+    ]
   }
 }
