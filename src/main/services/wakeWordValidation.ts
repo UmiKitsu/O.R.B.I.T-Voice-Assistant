@@ -46,7 +46,7 @@ export type StrippedWakePhrase = {
 export function stripWakePhraseDetails(transcription: string): StrippedWakePhrase {
   const trimmed = transcription.trim()
   const match = trimmed.match(
-    /^(?:hey[\s,.:;!—-]+)?(titan|taitan|tytan|tighten|tie[\s-]+tan)\b[\s,.:;!—-]*/i
+    /^(?:hey[\s,.:;!—-]+)?(titan|taitan|taytan|tytan|tighten|tie[\s-]+tan)\b[\s,.:;!—-]*/i
   )
   if (!match) return { text: trimmed }
 

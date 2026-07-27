@@ -19,7 +19,7 @@ describe('wake-word validation', () => {
     expect(parseWakeWordAudioChunk({ samples: new Float32Array([1.1]) })).toBeNull()
   })
 
-  it.each(['Titan', 'TITAN', 'taitan', 'tytan', 'tighten', 'tie tan', 'Hey, taitan'])(
+  it.each(['Titan', 'TITAN', 'taitan', 'taytan', 'tytan', 'tighten', 'tie tan', 'Hey, taitan'])(
     'accepts %s as a leading wake phrase',
     (wakePhrase) => {
       expect(stripWakePhrase(`${wakePhrase}, open Spotify.`)).toBe('open Spotify.')

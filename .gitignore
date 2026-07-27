@@ -136,5 +136,5 @@ dist
 .pnp.*
 
 # Downloaded local speech model (GitHub rejects files larger than 100 MB)
-resources/whisper/ggml-base.bin
-resources/whisper/ggml-base.bin.download
+resources/whisper/ggml-small.bin
+resources/whisper/ggml-small.bin.download

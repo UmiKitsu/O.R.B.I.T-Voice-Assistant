@@ -10,14 +10,8 @@ import type {
   WakeWordWorkerResources
 } from './wakeWordProtocol'
 import { logOperationalEvent } from './loggerService'
-import { transcribeRecording } from './speechToTextService'
-import { getSettings } from './settingsService'
-import { normalizeVoiceCommand } from './voiceCommandNormalizer'
-import {
-  encodePcm16Wav,
-  isValidWakeWordCommand,
-  stripWakePhraseDetails
-} from './wakeWordValidation'
+import { diagnoseVoiceRecording } from './voiceDiagnosticsService'
+import { encodePcm16Wav, isValidWakeWordCommand } from './wakeWordValidation'
 
 const START_TIMEOUT_MS = 10_000
 
@@ -83,11 +77,12 @@ async function transcribeCommand(session: WakeWordSession, samples: unknown): Pr
   session.transcription = controller
   emitState(session, 'transcribing')
 
-  const result = await transcribeRecording(encodePcm16Wav(samples), controller.signal)
+  const result = await diagnoseVoiceRecording(encodePcm16Wav(samples), controller.signal)
   if (session.transcription !== controller || controller.signal.aborted) return
   session.transcription = undefined
 
-  if (!result.ok || !result.data?.text) {
+  if (!result.ok || !result.data) {
+    logOperationalEvent({ event: 'wake-word.command-transcribed', outcome: 'failed' })
     emit(session, {
       type: 'error',
       code: result.ok ? 'EMPTY_WAKE_WORD_COMMAND' : result.code,
@@ -97,30 +92,13 @@ async function transcribeCommand(session: WakeWordSession, samples: unknown): Pr
     return
   }
 
-  const stripped = stripWakePhraseDetails(result.data.text)
-  if (!stripped.text) {
-    emit(session, {
-      type: 'error',
-      code: 'EMPTY_WAKE_WORD_COMMAND',
-      message: 'No command was heard after “TITAN”.',
-      fatal: false
-    })
-    return
-  }
-
-  const transcript = normalizeVoiceCommand(stripped.text, getSettings().applicationAliases)
-  if (stripped.wakeWord) {
-    transcript.corrections.unshift({
-      from: stripped.wakeWord.from,
-      to: stripped.wakeWord.to,
-      kind: 'wake-word'
-    })
-  }
-
   logOperationalEvent({ event: 'wake-word.command-transcribed', outcome: 'succeeded' })
-  emit(session, { type: 'transcription', transcript })
+  emit(session, {
+    type: 'transcription',
+    transcript: result.data.transcript,
+    diagnostics: result.data.diagnostics
+  })
 }
-
 function unavailableResult(): ActionResult {
   return {
     ok: false,

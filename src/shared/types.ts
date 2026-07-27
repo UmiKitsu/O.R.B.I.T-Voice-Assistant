@@ -28,7 +28,10 @@ export type OllamaHealth = {
 
 export type Transcription = {
   text: string
+  detectedLanguage?: string
 }
+
+export type RecognitionLanguage = 'auto' | 'en'
 
 export type VoiceCorrection = {
   from: string
@@ -40,6 +43,32 @@ export type VoiceTranscript = {
   rawText: string
   normalizedText: string
   corrections: VoiceCorrection[]
+}
+
+export type VoiceRoutePreview =
+  | {
+      kind: 'deterministic'
+      summary: string
+      capability: string
+      parameters: Record<string, unknown>
+    }
+  | {
+      kind: 'ai-required'
+      summary: string
+    }
+
+export type VoiceDiagnostics = {
+  durationMs: number
+  transcriptionLatencyMs: number
+  peakLevel: number
+  rmsLevel: number
+  detectedLanguage?: string
+  route: VoiceRoutePreview
+}
+
+export type MicrophoneTestResult = {
+  transcript: VoiceTranscript
+  diagnostics: VoiceDiagnostics
 }
 
 export type WakeWordState =
@@ -54,6 +83,7 @@ export type WakeWordEvent =
   | {
       type: 'transcription'
       transcript: VoiceTranscript
+      diagnostics: VoiceDiagnostics
     }
   | {
       type: 'error'
@@ -73,6 +103,7 @@ export type TitanSettings = {
   saveConversationHistory: boolean
   confirmationTimeoutSeconds: number
   applicationAliases: Record<string, string[]>
+  recognitionLanguage: RecognitionLanguage
 }
 
 export type AssistantEffect = 'stop-speaking' | 'disable'

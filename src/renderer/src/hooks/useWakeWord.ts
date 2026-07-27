@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { ActionResult } from '../../../shared/types'
 
 const WAKE_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
@@ -9,6 +9,8 @@ const WAKE_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
 }
 
 export type WakeWordController = {
+  microphoneName: string
+  inputLevel: number
   stop: () => Promise<ActionResult>
   pause: () => Promise<ActionResult>
   resume: () => Promise<ActionResult>
@@ -46,8 +48,11 @@ export function useWakeWord(): WakeWordController {
   const workletRef = useRef<AudioWorkletNode | null>(null)
   const startPromiseRef = useRef<Promise<ActionResult> | null>(null)
   const lifecycleGenerationRef = useRef(0)
+  const [microphoneName, setMicrophoneName] = useState('Default microphone')
+  const [inputLevel, setInputLevel] = useState(0)
 
   const releaseAudio = useCallback(async (): Promise<void> => {
+    setInputLevel(0)
     workletRef.current?.disconnect()
     workletRef.current = null
     streamRef.current?.getTracks().forEach((track) => track.stop())
@@ -75,6 +80,7 @@ export function useWakeWord(): WakeWordController {
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: WAKE_AUDIO_CONSTRAINTS })
+        setMicrophoneName(stream.getAudioTracks()[0]?.label || 'Default microphone')
         const context = new AudioContext({ sampleRate: 16_000, latencyHint: 'interactive' })
         if (generation !== lifecycleGenerationRef.current) {
           stream.getTracks().forEach((track) => track.stop())
@@ -106,7 +112,12 @@ export function useWakeWord(): WakeWordController {
         const silentOutput = context.createGain()
         silentOutput.gain.value = 0
         worklet.port.onmessage = (event: MessageEvent<unknown>) => {
-          if (event.data instanceof Float32Array) window.titan.sendWakeWordAudio(event.data)
+          if (!(event.data instanceof Float32Array)) return
+          let energy = 0
+          for (const sample of event.data) energy += sample * sample
+          const rms = Math.sqrt(energy / event.data.length)
+          setInputLevel(Math.min(1, rms * 12))
+          window.titan.sendWakeWordAudio(event.data)
         }
         source.connect(worklet)
         worklet.connect(silentOutput)
@@ -161,5 +172,5 @@ export function useWakeWord(): WakeWordController {
     return result
   }, [start])
 
-  return { stop, pause, resume }
+  return { microphoneName, inputLevel, stop, pause, resume }
 }

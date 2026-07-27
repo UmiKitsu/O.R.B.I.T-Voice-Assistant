@@ -316,7 +316,7 @@ h1 {
 
 .speech-settings {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 1fr 1fr;
+  grid-template-columns: minmax(200px, 1.3fr) repeat(3, 1fr);
   gap: 14px;
   margin: -8px 30px 28px;
   padding: 14px 16px 16px;
@@ -527,5 +527,123 @@ h1 {
   .voice-orb::after,
   .voice-waveform span {
     animation: none !important;
+  }
+}
+
+.microphone-monitor {
+  width: min(560px, 100%);
+  margin-top: 18px;
+  text-align: left;
+}
+
+.microphone-monitor-heading {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  color: #b8c7e1;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.microphone-monitor-heading small,
+.microphone-monitor > small {
+  overflow: hidden;
+  color: #77849b;
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.input-meter {
+  height: 8px;
+  margin: 7px 0 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(115, 132, 163, 0.16);
+}
+
+.input-meter span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4ed387, #ffcc67, #ff7d7d);
+  transition: width 100ms linear;
+}
+
+.voice-pipeline {
+  display: grid;
+  width: min(640px, 100%);
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.voice-pipeline li {
+  position: relative;
+  padding: 7px 5px;
+  border: 1px solid rgba(143, 172, 228, 0.12);
+  border-radius: 7px;
+  color: #68758d;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.voice-pipeline .pipeline-complete {
+  color: #9ee6be;
+  border-color: rgba(78, 211, 135, 0.24);
+  background: rgba(33, 142, 81, 0.08);
+}
+
+.voice-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.voice-metrics div {
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.voice-metrics dt {
+  color: #7f90ad;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.voice-metrics dd {
+  overflow-wrap: anywhere;
+  margin: 3px 0 0;
+  color: #cbd8ee;
+  font-size: 11px;
+}
+
+.voice-metrics .route-metric {
+  grid-column: 1 / -1;
+}
+
+.trigger-counts {
+  align-self: center;
+  color: #78859b;
+  font-size: 11px;
+}
+
+@media (max-width: 700px) {
+  .voice-pipeline {
+    grid-template-columns: 1fr;
+  }
+
+  .voice-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

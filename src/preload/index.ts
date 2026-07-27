@@ -3,8 +3,10 @@ import { IPC_CHANNELS } from '../shared/ipcChannels'
 import type {
   ActionResult,
   AssistantResponse,
+  MicrophoneTestResult,
   OllamaHealth,
   TitanSettings,
+  VoiceDiagnostics,
   WakeWordEvent
 } from '../shared/types'
 
@@ -46,6 +48,36 @@ function isVoiceTranscript(value: unknown): boolean {
     transcript.corrections.every(isVoiceCorrection)
   )
 }
+
+function isVoiceDiagnostics(value: unknown): value is VoiceDiagnostics {
+  if (typeof value !== 'object' || value === null) return false
+  const diagnostics = value as Record<string, unknown>
+  const route = diagnostics.route
+  if (typeof route !== 'object' || route === null) return false
+  const routeRecord = route as Record<string, unknown>
+  const validRoute =
+    (routeRecord.kind === 'ai-required' && typeof routeRecord.summary === 'string') ||
+    (routeRecord.kind === 'deterministic' &&
+      typeof routeRecord.summary === 'string' &&
+      typeof routeRecord.capability === 'string' &&
+      typeof routeRecord.parameters === 'object' &&
+      routeRecord.parameters !== null)
+  return (
+    validRoute &&
+    typeof diagnostics.durationMs === 'number' &&
+    diagnostics.durationMs >= 0 &&
+    typeof diagnostics.transcriptionLatencyMs === 'number' &&
+    diagnostics.transcriptionLatencyMs >= 0 &&
+    typeof diagnostics.peakLevel === 'number' &&
+    diagnostics.peakLevel >= 0 &&
+    diagnostics.peakLevel <= 1 &&
+    typeof diagnostics.rmsLevel === 'number' &&
+    diagnostics.rmsLevel >= 0 &&
+    diagnostics.rmsLevel <= 1 &&
+    (diagnostics.detectedLanguage === undefined || typeof diagnostics.detectedLanguage === 'string')
+  )
+}
+
 function isWakeWordEvent(value: unknown): value is WakeWordEvent {
   if (typeof value !== 'object' || value === null || !('type' in value)) return false
   const event = value as Record<string, unknown>
@@ -58,7 +90,11 @@ function isWakeWordEvent(value: unknown): value is WakeWordEvent {
     )
   }
   if (event.type === 'transcription') {
-    return Object.keys(event).length === 2 && isVoiceTranscript(event.transcript)
+    return (
+      Object.keys(event).length === 3 &&
+      isVoiceTranscript(event.transcript) &&
+      isVoiceDiagnostics(event.diagnostics)
+    )
   }
   return (
     event.type === 'error' &&
@@ -68,6 +104,7 @@ function isWakeWordEvent(value: unknown): value is WakeWordEvent {
     typeof event.fatal === 'boolean'
   )
 }
+
 const titan = Object.freeze({
   checkOllama: (): Promise<ActionResult<OllamaHealth>> =>
     ipcRenderer.invoke(IPC_CHANNELS.ollamaHealth),
@@ -87,6 +124,10 @@ const titan = Object.freeze({
   resumeWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordResume),
   sendWakeWordAudio: (samples: Float32Array): void =>
     ipcRenderer.send(IPC_CHANNELS.wakeWordAudioChunk, { samples }),
+  transcribeMicrophoneTest: (audio: Uint8Array): Promise<ActionResult<MicrophoneTestResult>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.microphoneTestTranscribe, { audio }),
+  cancelMicrophoneTest: (): Promise<ActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.microphoneTestCancel),
   onWakeWordEvent: (listener: (event: WakeWordEvent) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, value: unknown): void => {
       if (isWakeWordEvent(value)) listener(value)

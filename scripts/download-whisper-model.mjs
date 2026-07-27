@@ -10,14 +10,14 @@ import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
-const MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin'
-const MODEL_SHA256 = '60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe'
-const MODEL_SIZE = 147_951_465
+const MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin'
+const MODEL_SHA256 = '1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b'
+const MODEL_SIZE = 487_601_967
 const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1_000
 
 const projectRoot = fileURLToPath(new URL('..', import.meta.url))
 const modelDirectory = join(projectRoot, 'resources', 'whisper')
-const modelPath = join(modelDirectory, 'ggml-base.bin')
+const modelPath = join(modelDirectory, 'ggml-small.bin')
 const temporaryPath = `${modelPath}.download`
 
 async function calculateSha256(path) {
@@ -42,7 +42,7 @@ async function downloadModel() {
   await mkdir(modelDirectory, { recursive: true })
   await rm(temporaryPath, { force: true })
 
-  console.log('Downloading the official Whisper base model (148 MB)...')
+  console.log('Downloading the official Whisper small multilingual model (488 MB)...')
 
   try {
     // The URL and checksum are fixed so this setup tool cannot download arbitrary content.
@@ -77,7 +77,7 @@ async function downloadModel() {
 
     await rm(modelPath, { force: true })
     await rename(temporaryPath, modelPath)
-    console.log('Whisper base model downloaded and verified.')
+    console.log('Whisper small multilingual model downloaded and verified.')
   } catch (error) {
     await rm(temporaryPath, { force: true })
     throw error
@@ -86,7 +86,7 @@ async function downloadModel() {
 
 try {
   if (await modelIsValid()) {
-    console.log('Whisper base model is already present and verified.')
+    console.log('Whisper small multilingual model is already present and verified.')
   } else {
     await downloadModel()
   }

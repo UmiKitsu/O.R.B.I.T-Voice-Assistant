@@ -4,11 +4,13 @@ import type {
   ConfirmationPrompt,
   OllamaHealth,
   TitanStatus,
+  VoiceDiagnostics,
   VoiceTranscript,
   WakeWordEvent,
   WakeWordState
 } from '../../shared/types'
 import { ConfirmationDialog } from './ConfirmationDialog'
+import { useMicrophoneTest } from './hooks/useMicrophoneTest'
 import { useSpeech } from './hooks/useSpeech'
 import { useWakeWord } from './hooks/useWakeWord'
 import { TRANSCRIPT_READY_HOLD_MS, WAKE_ACKNOWLEDGEMENT_MS } from './voiceCueTiming'
@@ -22,13 +24,39 @@ function App(): React.JSX.Element {
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationPrompt | null>(null)
   const [voiceTranscript, setVoiceTranscript] = useState<VoiceTranscript | null>(null)
   const [wakeAcknowledged, setWakeAcknowledged] = useState(false)
+  const [voiceDiagnostics, setVoiceDiagnostics] = useState<VoiceDiagnostics | null>(null)
+  const [voiceTranscriptIsTest, setVoiceTranscriptIsTest] = useState(false)
+  const [recognitionLanguage, setRecognitionLanguage] = useState<'auto' | 'en'>('auto')
+  const [wakeDetectionCount, setWakeDetectionCount] = useState(0)
+  const [falseTriggerCount, setFalseTriggerCount] = useState(0)
   const isEnabled = useRef(false)
   const requestGeneration = useRef(0)
   const requestInFlight = useRef(false)
   const wakeCommandHandler = useRef<((message: string) => Promise<void>) | null>(null)
   const wakeAcknowledgementTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const transcriptClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const { stop: stopWakeWord, pause: pauseWakeWord, resume: resumeWakeWord } = useWakeWord()
+  const {
+    microphoneName: wakeMicrophoneName,
+    inputLevel: wakeInputLevel,
+    stop: stopWakeWord,
+    pause: pauseWakeWord,
+    resume: resumeWakeWord
+  } = useWakeWord()
+  const handleMicrophoneTestResult = useCallback(
+    (result: ActionResult<import('../../shared/types').MicrophoneTestResult>): void => {
+      if (result.ok && result.data) {
+        setVoiceTranscript(result.data.transcript)
+        setVoiceDiagnostics(result.data.diagnostics)
+        setVoiceTranscriptIsTest(true)
+        setAssistantError(null)
+      } else {
+        setAssistantError(result.message)
+      }
+      setStatus(isEnabled.current ? 'ready' : 'disabled')
+    },
+    []
+  )
+  const microphoneTest = useMicrophoneTest(handleMicrophoneTestResult)
   const {
     speak,
     stop: stopSpeaking,
@@ -61,6 +89,8 @@ function App(): React.JSX.Element {
     if (transcriptClearTimer.current) clearTimeout(transcriptClearTimer.current)
     transcriptClearTimer.current = null
     setVoiceTranscript(null)
+    setVoiceDiagnostics(null)
+    setVoiceTranscriptIsTest(false)
   }, [])
 
   useEffect(
@@ -78,6 +108,7 @@ function App(): React.JSX.Element {
         if (!active || !result.ok || !result.data) return
         setRate(result.data.speechRate)
         setVolume(result.data.speechVolume)
+        setRecognitionLanguage(result.data.recognitionLanguage)
       })
       .catch(() => undefined)
 
@@ -114,7 +145,7 @@ function App(): React.JSX.Element {
     clearVoiceTranscript()
     setWakeWordState('off')
     setStatus('disabled')
-    await Promise.all([stopWakeWord(), window.titan.cancelAssistant()])
+    await Promise.all([stopWakeWord(), window.titan.cancelAssistant(), microphoneTest.cancel()])
   }
 
   const submitMessage = async (message: string): Promise<void> => {
@@ -247,12 +278,39 @@ function App(): React.JSX.Element {
     }
   }
 
+  const startMicrophoneTest = async (): Promise<void> => {
+    stopSpeaking()
+    clearVoiceTranscript()
+    microphoneTest.clearResult()
+    setAssistantError(null)
+    if (isEnabled.current) await pauseWakeWord()
+    const result = await microphoneTest.start()
+    if (!result.ok) {
+      setAssistantError(result.message)
+      if (isEnabled.current) setStatus('ready')
+      return
+    }
+    if (isEnabled.current) setStatus('listening')
+  }
+
+  const stopMicrophoneTest = async (): Promise<void> => {
+    if (isEnabled.current) setStatus('transcribing')
+    await microphoneTest.stop()
+  }
+
+  const cancelMicrophoneTest = async (): Promise<void> => {
+    await microphoneTest.cancel()
+    if (isEnabled.current) setStatus('ready')
+  }
+
   useEffect(() => {
     return window.titan.onWakeWordEvent((event: WakeWordEvent) => {
       if (event.type === 'state') {
         setWakeWordState(event.state)
         if (event.state === 'detected') {
           clearVoiceTranscript()
+          setWakeDetectionCount((count) => count + 1)
+          setVoiceTranscriptIsTest(false)
           acknowledgeWakeWord()
           stopSpeaking()
           setAssistantError(null)
@@ -277,6 +335,8 @@ function App(): React.JSX.Element {
       }
 
       setVoiceTranscript(event.transcript)
+      setVoiceDiagnostics(event.diagnostics)
+      setVoiceTranscriptIsTest(false)
       setWakeWordState('paused')
       void wakeCommandHandler.current?.(event.transcript.normalizedText)
     })
@@ -285,7 +345,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (transcriptClearTimer.current) clearTimeout(transcriptClearTimer.current)
     transcriptClearTimer.current = null
-    if (!voiceTranscript || status !== 'ready' || speaking) return
+    if (!voiceTranscript || voiceTranscriptIsTest || status !== 'ready' || speaking) return
 
     transcriptClearTimer.current = setTimeout(() => {
       transcriptClearTimer.current = null
@@ -296,11 +356,18 @@ function App(): React.JSX.Element {
       if (transcriptClearTimer.current) clearTimeout(transcriptClearTimer.current)
       transcriptClearTimer.current = null
     }
-  }, [speaking, status, voiceTranscript])
+  }, [speaking, status, voiceTranscript, voiceTranscriptIsTest])
 
   useEffect(() => {
     let active = true
     if (!isEnabled.current || wakeWordState === 'error') {
+      return () => {
+        active = false
+      }
+    }
+
+    if (microphoneTest.phase !== 'idle') {
+      void pauseWakeWord()
       return () => {
         active = false
       }
@@ -327,7 +394,7 @@ function App(): React.JSX.Element {
     return () => {
       active = false
     }
-  }, [pauseWakeWord, resumeWakeWord, speaking, status, wakeWordState])
+  }, [microphoneTest.phase, pauseWakeWord, resumeWakeWord, speaking, status, wakeWordState])
 
   const displayedStatus = status === 'ready' && speaking ? 'speaking' : status
   const statusLabel = displayedStatus
@@ -353,7 +420,20 @@ function App(): React.JSX.Element {
     voiceTranscript !== null &&
     voiceTranscript.rawText.toLocaleLowerCase() !==
       voiceTranscript.normalizedText.toLocaleLowerCase()
-
+  const activeMicrophoneName =
+    microphoneTest.phase === 'idle' ? wakeMicrophoneName : microphoneTest.microphoneName
+  const activeInputLevel =
+    microphoneTest.phase === 'idle' ? wakeInputLevel : microphoneTest.inputLevel
+  const microphoneActive =
+    microphoneTest.phase !== 'idle' || (status !== 'disabled' && wakeWordState !== 'off')
+  const wakeDetected = wakeDetectionCount > 0
+  const wakeStageComplete = wakeDetected || microphoneTest.phase !== 'idle' || voiceTranscriptIsTest
+  const commandCaptured = voiceDiagnostics !== null || wakeWordState === 'transcribing'
+  const routeDescription = voiceDiagnostics
+    ? voiceDiagnostics.route.kind === 'deterministic'
+      ? `${voiceDiagnostics.route.capability} ${JSON.stringify(voiceDiagnostics.route.parameters)}`
+      : voiceDiagnostics.route.summary
+    : null
   return (
     <main className="app-shell">
       <section className="assistant-card" aria-labelledby="app-title">
@@ -380,7 +460,7 @@ function App(): React.JSX.Element {
               aria-live="polite"
             >
               <span aria-hidden="true" />
-              Voice: {wakeWordState}
+              Voice: {wakeWordState === 'armed' ? 'armed (waiting for TITAN)' : wakeWordState}
             </div>
           </div>
         </header>
@@ -412,6 +492,32 @@ function App(): React.JSX.Element {
           <h2>{primaryStatusLabel}</h2>
           <p>{primaryStatusMessage}</p>
 
+          <div className="microphone-monitor" aria-label="Microphone input monitor">
+            <div className="microphone-monitor-heading">
+              <span>{microphoneActive ? 'Microphone active' : 'Microphone inactive'}</span>
+              <small>{activeMicrophoneName}</small>
+            </div>
+            <div
+              className="input-meter"
+              aria-label={`Input level ${Math.round(activeInputLevel * 100)} percent`}
+            >
+              <span style={{ width: `${Math.round(activeInputLevel * 100)}%` }} />
+            </div>
+            <small>{Math.round(activeInputLevel * 100)}% input level</small>
+          </div>
+
+          <ol className="voice-pipeline" aria-label="Voice processing pipeline">
+            <li className={microphoneActive ? 'pipeline-complete' : ''}>Microphone active</li>
+            <li className={wakeStageComplete ? 'pipeline-complete' : ''}>
+              {microphoneTest.phase !== 'idle' || voiceTranscriptIsTest
+                ? 'Wake word skipped for test'
+                : 'TITAN detected'}
+            </li>
+            <li className={commandCaptured ? 'pipeline-complete' : ''}>Command captured</li>
+            <li className={voiceTranscript ? 'pipeline-complete' : ''}>Text transcribed</li>
+            <li className={routeDescription ? 'pipeline-complete' : ''}>Route previewed</li>
+          </ol>
+
           {voiceTranscript ? (
             <div className="voice-transcript" role="status">
               <p>
@@ -421,6 +527,30 @@ function App(): React.JSX.Element {
                 <p className="voice-understood">
                   <span>Understood</span> “{voiceTranscript.normalizedText}”
                 </p>
+              ) : null}
+              {voiceDiagnostics ? (
+                <dl className="voice-metrics">
+                  <div>
+                    <dt>Audio</dt>
+                    <dd>{(voiceDiagnostics.durationMs / 1000).toFixed(1)} s</dd>
+                  </div>
+                  <div>
+                    <dt>Whisper</dt>
+                    <dd>{(voiceDiagnostics.transcriptionLatencyMs / 1000).toFixed(2)} s</dd>
+                  </div>
+                  <div>
+                    <dt>Peak</dt>
+                    <dd>{Math.round(voiceDiagnostics.peakLevel * 100)}%</dd>
+                  </div>
+                  <div>
+                    <dt>Language</dt>
+                    <dd>{voiceDiagnostics.detectedLanguage ?? recognitionLanguage}</dd>
+                  </div>
+                  <div className="route-metric">
+                    <dt>Route</dt>
+                    <dd>{routeDescription}</dd>
+                  </div>
+                </dl>
               ) : null}
             </div>
           ) : null}
@@ -442,8 +572,31 @@ function App(): React.JSX.Element {
 
         <footer className="control-bar">
           <button type="button" onClick={testConnection} disabled={isTestingConnection}>
-            {isTestingConnection ? 'Testing Connection...' : 'Test Connection'}
+            {isTestingConnection ? 'Testing Ollama...' : 'Test Ollama'}
           </button>
+          {microphoneTest.phase === 'idle' ? (
+            <button type="button" onClick={() => void startMicrophoneTest()}>
+              Test Microphone
+            </button>
+          ) : microphoneTest.phase === 'recording' ? (
+            <button type="button" onClick={() => void stopMicrophoneTest()}>
+              Stop & Transcribe ({(microphoneTest.durationMs / 1000).toFixed(1)} s)
+            </button>
+          ) : (
+            <button type="button" onClick={() => void cancelMicrophoneTest()}>
+              Cancel Transcription
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={wakeDetectionCount <= falseTriggerCount}
+            onClick={() => setFalseTriggerCount((count) => count + 1)}
+          >
+            Mark False Trigger
+          </button>
+          <span className="trigger-counts">
+            Wake detections: {wakeDetectionCount} · marked false: {falseTriggerCount}
+          </span>
           {status === 'thinking' ? (
             <button type="button" onClick={cancelResponse}>
               Cancel Response
@@ -487,6 +640,20 @@ function App(): React.JSX.Element {
                 saveSettings({ speechRate: event.target.valueAsNumber })
               }}
             />
+          </label>
+          <label>
+            Recognition
+            <select
+              value={recognitionLanguage}
+              onChange={(event) => {
+                const language = event.target.value === 'en' ? 'en' : 'auto'
+                setRecognitionLanguage(language)
+                saveSettings({ recognitionLanguage: language })
+              }}
+            >
+              <option value="auto">English + Taglish (Auto)</option>
+              <option value="en">English only</option>
+            </select>
           </label>
           <label>
             Volume: {Math.round(volume * 100)}%

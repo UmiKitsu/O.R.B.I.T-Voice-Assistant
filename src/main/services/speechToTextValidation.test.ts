@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { hasAudiblePcm16Samples, isPcmWav, normalizeWhisperOutput } from './speechToTextValidation'
+import {
+  analyzePcm16Samples,
+  hasAudiblePcm16Samples,
+  isPcmWav,
+  normalizeWhisperOutput,
+  parseMicrophoneTestRequest,
+  parseWhisperDetectedLanguage
+} from './speechToTextValidation'
 
 function pcmWav(sample: number): Uint8Array {
   const bytes = new Uint8Array(46)
@@ -30,6 +37,24 @@ describe('speech-to-text validation', () => {
   it('distinguishes silence from audible PCM samples', () => {
     expect(hasAudiblePcm16Samples(pcmWav(0))).toBe(false)
     expect(hasAudiblePcm16Samples(pcmWav(100))).toBe(true)
+  })
+
+  it('reports bounded audio statistics and clones valid test requests', () => {
+    const audio = pcmWav(16_384)
+    expect(analyzePcm16Samples(audio)).toEqual({
+      durationMs: 0,
+      peakLevel: 0.5,
+      rmsLevel: 0.5
+    })
+    const parsed = parseMicrophoneTestRequest({ audio })
+    expect(parsed).toEqual(audio)
+    expect(parsed).not.toBe(audio)
+    expect(parseMicrophoneTestRequest({ audio, path: 'forbidden.wav' })).toBeNull()
+  })
+
+  it('extracts Whisper auto-detected language without exposing process output', () => {
+    expect(parseWhisperDetectedLanguage('auto-detected language: tl (p = 0.91)')).toBe('tl')
+    expect(parseWhisperDetectedLanguage('no language here')).toBeUndefined()
   })
 
   it('normalizes timestamped whisper output and ignores silence markers', () => {

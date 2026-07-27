@@ -27,7 +27,8 @@ export const titanSettingsSchema = z
     minimizeToTray: z.boolean(),
     saveConversationHistory: z.boolean(),
     confirmationTimeoutSeconds: z.number().int().min(5).max(300),
-    applicationAliases: applicationAliasesSchema
+    applicationAliases: applicationAliasesSchema,
+    recognitionLanguage: z.enum(['auto', 'en'])
   })
   .strict()
 
@@ -43,7 +44,8 @@ export const DEFAULT_TITAN_SETTINGS: Readonly<TitanSettings> = Object.freeze({
   minimizeToTray: false,
   saveConversationHistory: false,
   confirmationTimeoutSeconds: 20,
-  applicationAliases: {}
+  applicationAliases: {},
+  recognitionLanguage: 'auto'
 })
 
 type SettingsStorage = {
@@ -68,9 +70,13 @@ function migrateLegacySettings(value: unknown): { value: unknown; changed: boole
   }
 
   const migrated = { ...(value as Record<string, unknown>) }
-  const changed = 'speechEnabled' in migrated || 'wakeWordEnabled' in migrated
+  let changed = 'speechEnabled' in migrated || 'wakeWordEnabled' in migrated
   delete migrated.speechEnabled
   delete migrated.wakeWordEnabled
+  if (!('recognitionLanguage' in migrated)) {
+    migrated.recognitionLanguage = 'auto'
+    changed = true
+  }
   return { value: migrated, changed }
 }
 

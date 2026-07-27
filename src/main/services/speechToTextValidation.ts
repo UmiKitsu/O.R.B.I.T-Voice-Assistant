@@ -48,3 +48,41 @@ export function normalizeWhisperOutput(output: string): string {
     .replace(/\s+/g, ' ')
     .trim()
 }
+
+export type Pcm16AudioStats = {
+  durationMs: number
+  peakLevel: number
+  rmsLevel: number
+}
+
+export function analyzePcm16Samples(audio: Uint8Array): Pcm16AudioStats | null {
+  if (!isPcmWav(audio)) return null
+
+  const view = new DataView(audio.buffer, audio.byteOffset, audio.byteLength)
+  const sampleCount = (audio.byteLength - 44) / 2
+  let peak = 0
+  let sumSquares = 0
+  for (let offset = 44; offset + 1 < audio.byteLength; offset += 2) {
+    const normalized = view.getInt16(offset, true) / 32_768
+    peak = Math.max(peak, Math.abs(normalized))
+    sumSquares += normalized * normalized
+  }
+
+  return {
+    durationMs: Math.round((sampleCount / 16_000) * 1_000),
+    peakLevel: Math.min(1, peak),
+    rmsLevel: sampleCount === 0 ? 0 : Math.min(1, Math.sqrt(sumSquares / sampleCount))
+  }
+}
+
+export function parseWhisperDetectedLanguage(output: string): string | undefined {
+  const match = output.match(/auto-detected language:\s*([a-z]{2,3})(?:\s|\()/i)
+  return match?.[1]?.toLocaleLowerCase()
+}
+export function parseMicrophoneTestRequest(value: unknown): Uint8Array | null {
+  if (typeof value !== 'object' || value === null || Object.keys(value).length !== 1) return null
+  if (!('audio' in value)) return null
+  const audio = (value as { audio?: unknown }).audio
+  if (!(audio instanceof Uint8Array) || !isPcmWav(audio)) return null
+  return new Uint8Array(audio)
+}

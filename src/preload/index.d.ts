@@ -1,6 +1,7 @@
 import type {
   ActionResult,
   AssistantResponse,
+  MicrophoneTestResult,
   OllamaHealth,
   TitanSettings,
   WakeWordEvent
@@ -17,6 +18,8 @@ type TitanApi = {
   pauseWakeWord: () => Promise<ActionResult>
   resumeWakeWord: () => Promise<ActionResult>
   sendWakeWordAudio: (samples: Float32Array) => void
+  transcribeMicrophoneTest: (audio: Uint8Array) => Promise<ActionResult<MicrophoneTestResult>>
+  cancelMicrophoneTest: () => Promise<ActionResult>
   onWakeWordEvent: (listener: (event: WakeWordEvent) => void) => () => void
   confirmAction: (requestId: string, approved: boolean) => Promise<ActionResult<AssistantResponse>>
 }

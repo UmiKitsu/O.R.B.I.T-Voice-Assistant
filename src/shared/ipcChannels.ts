@@ -7,6 +7,8 @@ export const IPC_CHANNELS = {
   wakeWordResume: 'titan:wake-word:resume',
   wakeWordAudioChunk: 'titan:wake-word:audio-chunk',
   wakeWordEvent: 'titan:wake-word:event',
+  microphoneTestTranscribe: 'titan:microphone-test:transcribe',
+  microphoneTestCancel: 'titan:microphone-test:cancel',
   ollamaHealth: 'titan:ollama:health',
   settingsGet: 'titan:settings:get',
   settingsUpdate: 'titan:settings:update',

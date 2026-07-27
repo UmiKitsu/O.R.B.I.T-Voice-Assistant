@@ -2,15 +2,23 @@ import { app } from 'electron'
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { access, unlink, writeFile } from 'node:fs/promises'
+import { availableParallelism } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
 import type { ActionResult, Transcription } from '../../shared/types'
-import { hasAudiblePcm16Samples, isPcmWav, normalizeWhisperOutput } from './speechToTextValidation'
+import {
+  hasAudiblePcm16Samples,
+  isPcmWav,
+  normalizeWhisperOutput,
+  parseWhisperDetectedLanguage
+} from './speechToTextValidation'
+import { getSettings } from './settingsService'
 
 const TRANSCRIPTION_TIMEOUT_MS = 45_000
 const MAX_PROCESS_OUTPUT_LENGTH = 1_000_000
+const WHISPER_THREADS = Math.max(1, Math.min(10, availableParallelism()))
 const WHISPER_COMMAND_PROMPT =
-  'T.I.T.A.N. Titan. Open, launch, focus, play, pause, next, previous, volume up, volume down, mute, unmute, search, maximize, minimize, restore, stop speaking, disable Titan. YouTube, Google, Chrome, Spotify, Calculator, File Explorer, Visual Studio Code.'
+  'T.I.T.A.N. Titan. Open, launch, focus, play, pause, next, previous, volume up, volume down, mute, unmute, search, maximize, minimize, restore, stop speaking, disable Titan. Buksan, i-play, patugtugin, hanapin. YouTube, Google, Chrome, Spotify, Calculator, File Explorer, Visual Studio Code.'
 
 function whisperResourcePath(filename: string): string {
   const resourceRoot = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
@@ -42,6 +50,7 @@ function runWhisper(
   signal: AbortSignal
 ): Promise<ActionResult<Transcription>> {
   return new Promise((resolve) => {
+    const recognitionLanguage = getSettings().recognitionLanguage
     if (signal.aborted) {
       resolve({
         ok: false,
@@ -62,11 +71,12 @@ function runWhisper(
           '-f',
           audioPath,
           '-l',
-          'auto',
+          recognitionLanguage,
+          '--threads',
+          String(WHISPER_THREADS),
           '--prompt',
           WHISPER_COMMAND_PROMPT,
-          '--no-timestamps',
-          '--no-prints'
+          '--no-timestamps'
         ],
         {
           // whisper.cpp's Windows CLI does not reliably parse non-ASCII model paths.
@@ -83,6 +93,7 @@ function runWhisper(
     }
 
     let stdout = ''
+    let stderr = ''
     let settled = false
 
     const finish = (result: ActionResult<Transcription>): void => {
@@ -114,7 +125,12 @@ function runWhisper(
     }, TRANSCRIPTION_TIMEOUT_MS)
 
     signal.addEventListener('abort', abort, { once: true })
-    child.stderr.resume()
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk: string) => {
+      if (stderr.length < MAX_PROCESS_OUTPUT_LENGTH) {
+        stderr += chunk.slice(0, MAX_PROCESS_OUTPUT_LENGTH - stderr.length)
+      }
+    })
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       if (stdout.length < MAX_PROCESS_OUTPUT_LENGTH) {
@@ -141,7 +157,11 @@ function runWhisper(
       finish({
         ok: true,
         message: 'Recording transcribed locally.',
-        data: { text }
+        data: {
+          text,
+          detectedLanguage:
+            recognitionLanguage === 'en' ? 'en' : parseWhisperDetectedLanguage(stderr)
+        }
       })
     })
   })
@@ -164,15 +184,16 @@ export async function transcribeRecording(
     return {
       ok: false,
       code: 'NO_SPEECH_DETECTED',
-      message: 'No speech was detected.',
+      message:
+        'The microphone signal was too low. Check the selected input and speak closer to it.',
       recoverable: true
     }
   }
 
   const executablePath = whisperResourcePath('whisper-cli.exe')
-  const modelPath = whisperResourcePath('ggml-base.bin')
+  const modelPath = whisperResourcePath('ggml-small.bin')
   if (!(await pathExists(executablePath))) return unavailableResult('whisper-cli.exe')
-  if (!(await pathExists(modelPath))) return unavailableResult('ggml-base.bin')
+  if (!(await pathExists(modelPath))) return unavailableResult('ggml-small.bin')
 
   const audioPath = join(app.getPath('temp'), `titan-recording-${randomUUID()}.wav`)
 

@@ -31,6 +31,8 @@ describe('settings validation', () => {
   it('accepts the complete defaults and strict partial updates', () => {
     expect(titanSettingsSchema.safeParse(DEFAULT_TITAN_SETTINGS).success).toBe(true)
     expect(titanSettingsPatchSchema.safeParse({ speechVolume: 0.4 }).success).toBe(true)
+    expect(titanSettingsPatchSchema.safeParse({ recognitionLanguage: 'en' }).success).toBe(true)
+    expect(titanSettingsPatchSchema.safeParse({ recognitionLanguage: 'tl' }).success).toBe(false)
     expect(titanSettingsPatchSchema.safeParse({ unexpected: true }).success).toBe(false)
     expect(
       titanSettingsPatchSchema.safeParse({ ollamaBaseUrl: 'http://token@localhost:11434' }).success
@@ -62,6 +64,16 @@ describe('settings validation', () => {
     expect((storage.store as TitanSettings).speechRate).toBe(1.4)
     expect(updateSettings({ confirmationTimeoutSeconds: 1 })).toBeNull()
     expect((storage.store as TitanSettings).confirmationTimeoutSeconds).toBe(20)
+  })
+
+  it('adds automatic recognition language to existing settings', () => {
+    const { recognitionLanguage: _recognitionLanguage, ...legacy } = DEFAULT_TITAN_SETTINGS
+    void _recognitionLanguage
+    const storage = memoryStorage({ ...legacy, speechVolume: 0.6 })
+    setSettingsStorageForTests(storage)
+
+    expect(getSettings().recognitionLanguage).toBe('auto')
+    expect(storage.store).toEqual({ ...DEFAULT_TITAN_SETTINGS, speechVolume: 0.6 })
   })
 
   it('removes deprecated automatic voice flags without resetting other settings', () => {
