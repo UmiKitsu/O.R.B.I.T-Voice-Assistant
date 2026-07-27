@@ -130,6 +130,22 @@ export async function chat(
   messages: ChatMessage[],
   signal?: AbortSignal
 ): Promise<ActionResult<{ response: string }>> {
+  return sendChatRequest(messages, undefined, signal)
+}
+
+export async function structuredChat(
+  messages: ChatMessage[],
+  format: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<ActionResult<{ response: string }>> {
+  return sendChatRequest(messages, format, signal)
+}
+
+async function sendChatRequest(
+  messages: ChatMessage[],
+  format: Record<string, unknown> | undefined,
+  signal?: AbortSignal
+): Promise<ActionResult<{ response: string }>> {
   const timedSignal = createTimedSignal(signal, REQUEST_TIMEOUT_MS)
 
   try {
@@ -142,7 +158,8 @@ export async function chat(
         model: DEFAULT_MODEL,
         messages,
         think: false,
-        stream: false
+        stream: false,
+        ...(format ? { format } : {})
       }),
       signal: timedSignal.signal
     })

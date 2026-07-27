@@ -1,0 +1,159 @@
+import { describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
+import { CapabilityRegistry } from '../capabilities/capabilityRegistry'
+import type { CapabilityDefinition } from '../capabilities/capabilityTypes'
+import { emptyActionResultSchema } from '../capabilities/resultSchemas'
+import { ConfirmationManager } from '../security/confirmationManager'
+import { PolicyEngine } from '../security/policyEngine'
+import { executeActionPlan } from './actionPlanExecutor'
+import type { ActionPlan } from './actionPlanSchemas'
+import { describeRegisteredCapabilities, parseAndValidateAssistantOutput } from './actionPlanner'
+
+function registerTestCapability(
+  registry: CapabilityRegistry,
+  name: string,
+  execute: CapabilityDefinition<{ value: string }, unknown>['execute'],
+  risk: CapabilityDefinition<unknown, unknown>['risk'] = 'automatic'
+): void {
+  registry.register(
+    {
+      name,
+      risk,
+      timeoutMs: 1_000,
+      execute
+    },
+    z.object({ value: z.string() }).strict(),
+    emptyActionResultSchema
+  )
+}
+
+describe('structured action planning', () => {
+  it('strictly validates the top-level output shape and action count', () => {
+    const registry = new CapabilityRegistry()
+
+    expect(
+      parseAndValidateAssistantOutput(
+        JSON.stringify({ kind: 'conversation', response: 'Hello.', extra: true }),
+        registry
+      )
+    ).toBeNull()
+    expect(
+      parseAndValidateAssistantOutput(
+        JSON.stringify({ kind: 'action_plan', summary: 'Nothing', actions: [] }),
+        registry
+      )
+    ).toBeNull()
+    expect(parseAndValidateAssistantOutput('{not-json', registry)).toBeNull()
+  })
+
+  it('rejects unknown capabilities and invalid capability parameters', () => {
+    const registry = new CapabilityRegistry()
+    registerTestCapability(
+      registry,
+      'test.first',
+      vi.fn(async () => ({ ok: true, message: 'ok' }))
+    )
+
+    expect(
+      parseAndValidateAssistantOutput(
+        JSON.stringify({
+          kind: 'action_plan',
+          summary: 'Unknown',
+          actions: [{ capability: 'shell.execute', parameters: { value: 'no' } }]
+        }),
+        registry
+      )
+    ).toBeNull()
+    expect(
+      parseAndValidateAssistantOutput(
+        JSON.stringify({
+          kind: 'action_plan',
+          summary: 'Wrong parameters',
+          actions: [{ capability: 'test.first', parameters: { value: 42 } }]
+        }),
+        registry
+      )
+    ).toBeNull()
+  })
+
+  it('describes only registered names and their parameter JSON schemas', () => {
+    const registry = new CapabilityRegistry()
+    registerTestCapability(
+      registry,
+      'test.first',
+      vi.fn(async () => ({ ok: true, message: 'ok' }))
+    )
+
+    expect(describeRegisteredCapabilities(registry)).toEqual([
+      {
+        name: 'test.first',
+        parameters: expect.objectContaining({
+          type: 'object',
+          required: ['value'],
+          additionalProperties: false
+        })
+      }
+    ])
+  })
+
+  it('executes steps sequentially and stops after the first failed result', async () => {
+    const registry = new CapabilityRegistry()
+    const order: string[] = []
+    const first = vi.fn(async () => {
+      order.push('first')
+      return {
+        ok: false as const,
+        code: 'FIRST_FAILED',
+        message: 'First failed.',
+        recoverable: true
+      }
+    })
+    const second = vi.fn(async () => {
+      order.push('second')
+      return { ok: true as const, message: 'Second succeeded.' }
+    })
+    registerTestCapability(registry, 'test.first', first)
+    registerTestCapability(registry, 'test.second', second)
+    const engine = new PolicyEngine(registry, new ConfirmationManager())
+    const plan: ActionPlan = {
+      kind: 'action_plan',
+      summary: 'Run two steps',
+      actions: [
+        { capability: 'test.first', parameters: { value: 'one' } },
+        { capability: 'test.second', parameters: { value: 'two' } }
+      ]
+    }
+
+    await expect(executeActionPlan(plan, engine)).resolves.toMatchObject({
+      ok: false,
+      code: 'FIRST_FAILED'
+    })
+    expect(order).toEqual(['first'])
+    expect(second).not.toHaveBeenCalled()
+  })
+
+  it('does not continue while a step is awaiting confirmation', async () => {
+    const registry = new CapabilityRegistry()
+    const first = vi.fn(async () => ({ ok: true as const, message: 'First succeeded.' }))
+    const second = vi.fn(async () => ({ ok: true as const, message: 'Second succeeded.' }))
+    registerTestCapability(registry, 'test.confirm', first, 'confirmation-required')
+    registerTestCapability(registry, 'test.second', second)
+    const engine = new PolicyEngine(registry, new ConfirmationManager())
+    const plan: ActionPlan = {
+      kind: 'action_plan',
+      summary: 'Confirm the first step',
+      actions: [
+        { capability: 'test.confirm', parameters: { value: 'one' } },
+        { capability: 'test.second', parameters: { value: 'two' } }
+      ]
+    }
+
+    await expect(executeActionPlan(plan, engine)).resolves.toMatchObject({
+      ok: false,
+      code: 'ACTION_CONFIRMATION_REQUIRED',
+      message: 'Confirm the first step'
+    })
+    expect(first).not.toHaveBeenCalled()
+    expect(second).not.toHaveBeenCalled()
+  })
+})

@@ -40,4 +40,8 @@ export class CapabilityRegistry {
   get(name: string): RegisteredCapability | undefined {
     return this.capabilities.get(name)
   }
+
+  list(): readonly RegisteredCapability[] {
+    return [...this.capabilities.values()]
+  }
 }

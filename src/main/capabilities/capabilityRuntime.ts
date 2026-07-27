@@ -18,9 +18,9 @@ export type CapabilityRuntimeDependencies = {
   launchApplication?: ApplicationLauncher
 }
 
-export function createCapabilityRuntime(
+export function createCapabilityRegistry(
   dependencies: CapabilityRuntimeDependencies = {}
-): PolicyEngine {
+): CapabilityRegistry {
   const registry = new CapabilityRegistry()
   registerSystemCapabilities(registry, dependencies.now)
   registerBrowserCapabilities(registry, dependencies.openExternalUrl)
@@ -28,5 +28,12 @@ export function createCapabilityRuntime(
   registerApplicationCapabilities(registry, dependencies.launchApplication)
   registerAssistantCapabilities(registry)
 
+  return registry
+}
+
+export function createCapabilityRuntime(
+  dependencies: CapabilityRuntimeDependencies = {},
+  registry: CapabilityRegistry = createCapabilityRegistry(dependencies)
+): PolicyEngine {
   return new PolicyEngine(registry, new ConfirmationManager())
 }

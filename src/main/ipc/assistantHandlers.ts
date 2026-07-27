@@ -1,25 +1,23 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipcChannels'
 import type { ActionResult, AssistantResponse, ChatMessage, OllamaHealth } from '../../shared/types'
+import { executeActionPlan } from '../assistant/actionPlanExecutor'
+import { planAssistantRequest } from '../assistant/actionPlanner'
 import { executeDeterministicAction } from '../assistant/deterministicActionExecutor'
-import { chat, checkConnection } from '../services/ollamaService'
+import {
+  createCapabilityRegistry,
+  createCapabilityRuntime
+} from '../capabilities/capabilityRuntime'
+import { checkConnection } from '../services/ollamaService'
 
 const DEFAULT_MODEL = 'qwen3:8b'
 const MAX_RETAINED_MESSAGES = 20
 const MAX_MESSAGE_LENGTH = 4_000
 
-const systemMessage: ChatMessage = {
-  role: 'system',
-  content: `You are T.I.T.A.N., a local Windows voice assistant.
-
-Keep responses clear and reasonably brief.
-Never claim that a computer action succeeded unless the application reports
-success. Never invent computer state. Do not provide shell commands as computer
-actions. When an action is blocked, explain the restriction briefly.`
-}
-
 const conversations = new Map<number, ChatMessage[]>()
 const activeRequests = new Map<number, AbortController>()
+const capabilityRegistry = createCapabilityRegistry()
+const capabilityRuntime = createCapabilityRuntime({}, capabilityRegistry)
 
 function parseAssistantRequest(value: unknown): string | null {
   if (
@@ -117,30 +115,41 @@ export function registerAssistantHandlers(): void {
 
         const recentMessages = conversations.get(senderId) ?? []
         const userMessage: ChatMessage = { role: 'user', content: message }
-        const result = await chat(
-          [systemMessage, ...recentMessages, userMessage],
+        const planned = await planAssistantRequest(
+          [...recentMessages, userMessage],
+          capabilityRegistry,
           controller.signal
         )
 
-        if (result.ok) {
-          const response = result.data?.response
+        if (!planned.ok) return planned
 
-          if (!response) {
-            return {
-              ok: false,
-              code: 'OLLAMA_INVALID_RESPONSE',
-              message: 'Ollama returned an invalid response.',
-              recoverable: true
-            }
+        const output = planned.data
+        if (!output) {
+          return {
+            ok: false,
+            code: 'OLLAMA_INVALID_RESPONSE',
+            message: 'Ollama returned an invalid response.',
+            recoverable: true
           }
+        }
 
-          const assistantMessage: ChatMessage = {
-            role: 'assistant',
-            content: response
-          }
+        const result =
+          output.kind === 'conversation'
+            ? {
+                ok: true as const,
+                message: 'T.I.T.A.N. responded.',
+                data: { response: output.response }
+              }
+            : await executeActionPlan(output, capabilityRuntime)
+
+        if (result.ok && result.data?.response) {
           conversations.set(
             senderId,
-            [...recentMessages, userMessage, assistantMessage].slice(-MAX_RETAINED_MESSAGES)
+            [
+              ...recentMessages,
+              userMessage,
+              { role: 'assistant', content: result.data.response } satisfies ChatMessage
+            ].slice(-MAX_RETAINED_MESSAGES)
           )
         }
 

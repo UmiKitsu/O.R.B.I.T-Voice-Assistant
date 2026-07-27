@@ -1,19 +1,10 @@
-export type InternalAction = {
-  capability: string
-  parameters: unknown
-}
-
-export type InternalActionPlan = {
-  kind: 'action_plan'
-  summary: string
-  actions: InternalAction[]
-}
+import type { ActionPlan } from './actionPlanSchemas'
 
 function actionPlan(
   summary: string,
   capability: string,
-  parameters: unknown = {}
-): InternalActionPlan {
+  parameters: Record<string, unknown> = {}
+): ActionPlan {
   return {
     kind: 'action_plan',
     summary,
@@ -21,7 +12,7 @@ function actionPlan(
   }
 }
 
-export function routeDeterministicCommand(message: string): InternalActionPlan | null {
+export function routeDeterministicCommand(message: string): ActionPlan | null {
   const normalized = message
     .trim()
     .replace(/[.!?]+$/, '')
