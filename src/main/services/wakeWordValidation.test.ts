@@ -3,7 +3,8 @@ import {
   encodePcm16Wav,
   isValidWakeWordCommand,
   parseWakeWordAudioChunk,
-  stripWakePhrase
+  stripWakePhrase,
+  stripWakePhraseDetails
 } from './wakeWordValidation'
 
 describe('wake-word validation', () => {
@@ -18,9 +19,18 @@ describe('wake-word validation', () => {
     expect(parseWakeWordAudioChunk({ samples: new Float32Array([1.1]) })).toBeNull()
   })
 
-  it('removes only a leading fixed wake phrase', () => {
-    expect(stripWakePhrase('Titan, open Spotify.')).toBe('open Spotify.')
-    expect(stripWakePhrase('TITAN: tell me the time')).toBe('tell me the time')
+  it.each(['Titan', 'TITAN', 'taitan', 'tytan', 'tighten', 'tie tan', 'Hey, taitan'])(
+    'accepts %s as a leading wake phrase',
+    (wakePhrase) => {
+      expect(stripWakePhrase(`${wakePhrase}, open Spotify.`)).toBe('open Spotify.')
+    }
+  )
+
+  it('reports corrected wake spellings without stripping unrelated uses', () => {
+    expect(stripWakePhraseDetails('Taitan, open Spotify.')).toEqual({
+      text: 'open Spotify.',
+      wakeWord: { from: 'Taitan', to: 'Titan' }
+    })
     expect(stripWakePhrase('Explain the word titan')).toBe('Explain the word titan')
     expect(stripWakePhrase('Titan')).toBe('')
   })

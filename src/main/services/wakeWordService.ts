@@ -11,7 +11,13 @@ import type {
 } from './wakeWordProtocol'
 import { logOperationalEvent } from './loggerService'
 import { transcribeRecording } from './speechToTextService'
-import { encodePcm16Wav, isValidWakeWordCommand, stripWakePhrase } from './wakeWordValidation'
+import { getSettings } from './settingsService'
+import { normalizeVoiceCommand } from './voiceCommandNormalizer'
+import {
+  encodePcm16Wav,
+  isValidWakeWordCommand,
+  stripWakePhraseDetails
+} from './wakeWordValidation'
 
 const START_TIMEOUT_MS = 10_000
 
@@ -91,8 +97,8 @@ async function transcribeCommand(session: WakeWordSession, samples: unknown): Pr
     return
   }
 
-  const command = stripWakePhrase(result.data.text)
-  if (!command) {
+  const stripped = stripWakePhraseDetails(result.data.text)
+  if (!stripped.text) {
     emit(session, {
       type: 'error',
       code: 'EMPTY_WAKE_WORD_COMMAND',
@@ -102,8 +108,17 @@ async function transcribeCommand(session: WakeWordSession, samples: unknown): Pr
     return
   }
 
+  const transcript = normalizeVoiceCommand(stripped.text, getSettings().applicationAliases)
+  if (stripped.wakeWord) {
+    transcript.corrections.unshift({
+      from: stripped.wakeWord.from,
+      to: stripped.wakeWord.to,
+      kind: 'wake-word'
+    })
+  }
+
   logOperationalEvent({ event: 'wake-word.command-transcribed', outcome: 'succeeded' })
-  emit(session, { type: 'transcription', text: command })
+  emit(session, { type: 'transcription', transcript })
 }
 
 function unavailableResult(): ActionResult {

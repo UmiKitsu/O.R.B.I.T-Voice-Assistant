@@ -9,6 +9,8 @@ import { hasAudiblePcm16Samples, isPcmWav, normalizeWhisperOutput } from './spee
 
 const TRANSCRIPTION_TIMEOUT_MS = 45_000
 const MAX_PROCESS_OUTPUT_LENGTH = 1_000_000
+const WHISPER_COMMAND_PROMPT =
+  'T.I.T.A.N. Titan. Open, launch, focus, play, pause, next, previous, volume up, volume down, mute, unmute, search, maximize, minimize, restore, stop speaking, disable Titan. YouTube, Google, Chrome, Spotify, Calculator, File Explorer, Visual Studio Code.'
 
 function whisperResourcePath(filename: string): string {
   const resourceRoot = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
@@ -61,6 +63,8 @@ function runWhisper(
           audioPath,
           '-l',
           'auto',
+          '--prompt',
+          WHISPER_COMMAND_PROMPT,
           '--no-timestamps',
           '--no-prints'
         ],

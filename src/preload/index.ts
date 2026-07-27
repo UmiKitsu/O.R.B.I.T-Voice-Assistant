@@ -19,6 +19,33 @@ const WAKE_WORD_STATES = new Set([
   'error'
 ])
 
+function isVoiceCorrection(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  const correction = value as Record<string, unknown>
+  return (
+    Object.keys(correction).length === 3 &&
+    typeof correction.from === 'string' &&
+    typeof correction.to === 'string' &&
+    (correction.kind === 'wake-word' ||
+      correction.kind === 'command' ||
+      correction.kind === 'application')
+  )
+}
+
+function isVoiceTranscript(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  const transcript = value as Record<string, unknown>
+  return (
+    Object.keys(transcript).length === 3 &&
+    typeof transcript.rawText === 'string' &&
+    transcript.rawText.length <= 4_000 &&
+    typeof transcript.normalizedText === 'string' &&
+    transcript.normalizedText.length <= 4_000 &&
+    Array.isArray(transcript.corrections) &&
+    transcript.corrections.length <= 20 &&
+    transcript.corrections.every(isVoiceCorrection)
+  )
+}
 function isWakeWordEvent(value: unknown): value is WakeWordEvent {
   if (typeof value !== 'object' || value === null || !('type' in value)) return false
   const event = value as Record<string, unknown>
@@ -31,7 +58,7 @@ function isWakeWordEvent(value: unknown): value is WakeWordEvent {
     )
   }
   if (event.type === 'transcription') {
-    return Object.keys(event).length === 2 && typeof event.text === 'string'
+    return Object.keys(event).length === 2 && isVoiceTranscript(event.transcript)
   }
   return (
     event.type === 'error' &&

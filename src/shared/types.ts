@@ -30,6 +30,18 @@ export type Transcription = {
   text: string
 }
 
+export type VoiceCorrection = {
+  from: string
+  to: string
+  kind: 'wake-word' | 'command' | 'application'
+}
+
+export type VoiceTranscript = {
+  rawText: string
+  normalizedText: string
+  corrections: VoiceCorrection[]
+}
+
 export type WakeWordState =
   'off' | 'starting' | 'armed' | 'detected' | 'capturing' | 'transcribing' | 'paused' | 'error'
 
@@ -41,7 +53,7 @@ export type WakeWordEvent =
     }
   | {
       type: 'transcription'
-      text: string
+      transcript: VoiceTranscript
     }
   | {
       type: 'error'

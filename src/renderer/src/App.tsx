@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ActionResult,
   ConfirmationPrompt,
   OllamaHealth,
   TitanStatus,
+  VoiceTranscript,
   WakeWordEvent,
   WakeWordState
 } from '../../shared/types'
 import { ConfirmationDialog } from './ConfirmationDialog'
 import { useSpeech } from './hooks/useSpeech'
 import { useWakeWord } from './hooks/useWakeWord'
+import { TRANSCRIPT_READY_HOLD_MS, WAKE_ACKNOWLEDGEMENT_MS } from './voiceCueTiming'
 
 function App(): React.JSX.Element {
   const [status, setStatus] = useState<TitanStatus>('disabled')
@@ -18,10 +20,14 @@ function App(): React.JSX.Element {
   const [isTestingConnection, setIsTestingConnection] = useState(false)
   const [wakeWordState, setWakeWordState] = useState<WakeWordState>('off')
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationPrompt | null>(null)
+  const [voiceTranscript, setVoiceTranscript] = useState<VoiceTranscript | null>(null)
+  const [wakeAcknowledged, setWakeAcknowledged] = useState(false)
   const isEnabled = useRef(false)
   const requestGeneration = useRef(0)
   const requestInFlight = useRef(false)
   const wakeCommandHandler = useRef<((message: string) => Promise<void>) | null>(null)
+  const wakeAcknowledgementTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const transcriptClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { stop: stopWakeWord, pause: pauseWakeWord, resume: resumeWakeWord } = useWakeWord()
   const {
     speak,
@@ -36,6 +42,34 @@ function App(): React.JSX.Element {
     setVolume
   } = useSpeech()
 
+  const clearWakeAcknowledgement = useCallback((): void => {
+    if (wakeAcknowledgementTimer.current) clearTimeout(wakeAcknowledgementTimer.current)
+    wakeAcknowledgementTimer.current = null
+    setWakeAcknowledged(false)
+  }, [])
+
+  const acknowledgeWakeWord = useCallback((): void => {
+    if (wakeAcknowledgementTimer.current) clearTimeout(wakeAcknowledgementTimer.current)
+    setWakeAcknowledged(true)
+    wakeAcknowledgementTimer.current = setTimeout(() => {
+      wakeAcknowledgementTimer.current = null
+      setWakeAcknowledged(false)
+    }, WAKE_ACKNOWLEDGEMENT_MS)
+  }, [])
+
+  const clearVoiceTranscript = useCallback((): void => {
+    if (transcriptClearTimer.current) clearTimeout(transcriptClearTimer.current)
+    transcriptClearTimer.current = null
+    setVoiceTranscript(null)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (wakeAcknowledgementTimer.current) clearTimeout(wakeAcknowledgementTimer.current)
+      if (transcriptClearTimer.current) clearTimeout(transcriptClearTimer.current)
+    },
+    []
+  )
   useEffect(() => {
     let active = true
     void window.titan
@@ -76,6 +110,8 @@ function App(): React.JSX.Element {
     stopSpeaking()
     setAssistantError(null)
     setPendingConfirmation(null)
+    clearWakeAcknowledgement()
+    clearVoiceTranscript()
     setWakeWordState('off')
     setStatus('disabled')
     await Promise.all([stopWakeWord(), window.titan.cancelAssistant()])
@@ -129,6 +165,8 @@ function App(): React.JSX.Element {
             if (effects.includes('disable')) {
               isEnabled.current = false
               requestGeneration.current += 1
+              clearWakeAcknowledgement()
+              clearVoiceTranscript()
               setWakeWordState('off')
               await stopWakeWord()
               setStatus('disabled')
@@ -185,6 +223,8 @@ function App(): React.JSX.Element {
 
   const cancelResponse = async (): Promise<void> => {
     requestGeneration.current += 1
+    clearWakeAcknowledgement()
+    clearVoiceTranscript()
     const result = await window.titan.cancelAssistant()
     setAssistantError(result.message)
     if (isEnabled.current) setStatus('ready')
@@ -211,7 +251,13 @@ function App(): React.JSX.Element {
     return window.titan.onWakeWordEvent((event: WakeWordEvent) => {
       if (event.type === 'state') {
         setWakeWordState(event.state)
-        if (event.state === 'detected' || event.state === 'capturing') {
+        if (event.state === 'detected') {
+          clearVoiceTranscript()
+          acknowledgeWakeWord()
+          stopSpeaking()
+          setAssistantError(null)
+          setStatus('listening')
+        } else if (event.state === 'capturing') {
           stopSpeaking()
           setAssistantError(null)
           setStatus('listening')
@@ -222,16 +268,35 @@ function App(): React.JSX.Element {
       }
 
       if (event.type === 'error') {
+        clearWakeAcknowledgement()
+        clearVoiceTranscript()
         setWakeWordState(event.fatal ? 'error' : 'paused')
         setAssistantError(event.message)
         if (isEnabled.current) setStatus(event.fatal ? 'error' : 'ready')
         return
       }
 
+      setVoiceTranscript(event.transcript)
       setWakeWordState('paused')
-      void wakeCommandHandler.current?.(event.text)
+      void wakeCommandHandler.current?.(event.transcript.normalizedText)
     })
-  }, [stopSpeaking])
+  }, [acknowledgeWakeWord, clearVoiceTranscript, clearWakeAcknowledgement, stopSpeaking])
+
+  useEffect(() => {
+    if (transcriptClearTimer.current) clearTimeout(transcriptClearTimer.current)
+    transcriptClearTimer.current = null
+    if (!voiceTranscript || status !== 'ready' || speaking) return
+
+    transcriptClearTimer.current = setTimeout(() => {
+      transcriptClearTimer.current = null
+      setVoiceTranscript(null)
+    }, TRANSCRIPT_READY_HOLD_MS)
+
+    return () => {
+      if (transcriptClearTimer.current) clearTimeout(transcriptClearTimer.current)
+      transcriptClearTimer.current = null
+    }
+  }, [speaking, status, voiceTranscript])
 
   useEffect(() => {
     let active = true
@@ -280,6 +345,14 @@ function App(): React.JSX.Element {
     speaking: 'Speaking the response…',
     error: 'Voice listening needs your attention.'
   }
+  const primaryStatusLabel = wakeAcknowledged ? 'T.I.T.A.N. heard you' : statusLabel
+  const primaryStatusMessage = wakeAcknowledged
+    ? 'Listening for your command…'
+    : statusMessage[displayedStatus]
+  const commandWasCorrected =
+    voiceTranscript !== null &&
+    voiceTranscript.rawText.toLocaleLowerCase() !==
+      voiceTranscript.normalizedText.toLocaleLowerCase()
 
   return (
     <main className="app-shell">
@@ -320,12 +393,37 @@ function App(): React.JSX.Element {
           {status === 'disabled' ? 'Enable T.I.T.A.N.' : 'Disable T.I.T.A.N.'}
         </button>
 
-        <section className={`voice-status voice-status-${displayedStatus}`} aria-live="polite">
+        <section
+          className={`voice-status voice-status-${displayedStatus}${wakeAcknowledged ? ' wake-acknowledged' : ''}`}
+          aria-live="polite"
+        >
           <div className="voice-orb" aria-hidden="true">
             <span>T</span>
           </div>
-          <h2>{statusLabel}</h2>
-          <p>{statusMessage[displayedStatus]}</p>
+          {displayedStatus === 'listening' ? (
+            <div className="voice-waveform" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+              <span />
+              <span />
+            </div>
+          ) : null}
+          <h2>{primaryStatusLabel}</h2>
+          <p>{primaryStatusMessage}</p>
+
+          {voiceTranscript ? (
+            <div className="voice-transcript" role="status">
+              <p>
+                <span>Heard</span> “{voiceTranscript.rawText}”
+              </p>
+              {commandWasCorrected ? (
+                <p className="voice-understood">
+                  <span>Understood</span> “{voiceTranscript.normalizedText}”
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           {assistantError ? (
             <p className="assistant-error" role="alert">

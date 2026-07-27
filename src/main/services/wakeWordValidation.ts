@@ -35,13 +35,34 @@ export function isValidWakeWordCommand(samples: unknown): samples is Float32Arra
   return true
 }
 
-export function stripWakePhrase(transcription: string): string {
-  return transcription
-    .trim()
-    .replace(/^(?:hey[\s,.:;!—-]+)?titan\b[\s,.:;!—-]*/i, '')
-    .trim()
+export type StrippedWakePhrase = {
+  text: string
+  wakeWord?: {
+    from: string
+    to: 'Titan'
+  }
 }
 
+export function stripWakePhraseDetails(transcription: string): StrippedWakePhrase {
+  const trimmed = transcription.trim()
+  const match = trimmed.match(
+    /^(?:hey[\s,.:;!—-]+)?(titan|taitan|tytan|tighten|tie[\s-]+tan)\b[\s,.:;!—-]*/i
+  )
+  if (!match) return { text: trimmed }
+
+  const heardWakeWord = match[1]
+  return {
+    text: trimmed.slice(match[0].length).trim(),
+    wakeWord:
+      heardWakeWord.toLocaleLowerCase() === 'titan'
+        ? undefined
+        : { from: heardWakeWord, to: 'Titan' }
+  }
+}
+
+export function stripWakePhrase(transcription: string): string {
+  return stripWakePhraseDetails(transcription).text
+}
 export function encodePcm16Wav(samples: Float32Array, sampleRate = 16_000): Uint8Array {
   const buffer = new ArrayBuffer(44 + samples.length * 2)
   const view = new DataView(buffer)

@@ -244,6 +244,7 @@ h1 {
 }
 
 .voice-orb {
+  position: relative;
   display: grid;
   width: 76px;
   height: 76px;
@@ -256,6 +257,12 @@ h1 {
   box-shadow: 0 0 32px rgba(74, 128, 235, 0.09);
   font-size: 28px;
   font-weight: 700;
+  isolation: isolate;
+}
+
+.voice-orb > span {
+  position: relative;
+  z-index: 1;
 }
 
 .voice-status-ready .voice-orb,
@@ -356,6 +363,113 @@ h1 {
   color: #f2a7af;
 }
 
+.voice-status-listening .voice-orb {
+  border-color: rgba(255, 173, 69, 0.72);
+  color: #ffd18b;
+  background: radial-gradient(circle, rgba(255, 173, 69, 0.28), rgba(218, 119, 24, 0.08));
+  box-shadow: 0 0 46px rgba(255, 154, 45, 0.2);
+}
+
+.wake-acknowledged .voice-orb {
+  animation: wake-orb-pop 0.45s ease-out both;
+}
+
+.wake-acknowledged .voice-orb::before,
+.wake-acknowledged .voice-orb::after {
+  position: absolute;
+  z-index: -1;
+  border: 2px solid rgba(255, 173, 69, 0.58);
+  border-radius: 50%;
+  content: '';
+  inset: -2px;
+  animation: wake-ring 0.9s ease-out both;
+}
+
+.wake-acknowledged .voice-orb::after {
+  animation-delay: 0.16s;
+}
+
+.voice-waveform {
+  display: flex;
+  height: 22px;
+  gap: 4px;
+  align-items: center;
+  margin: -8px 0 12px;
+}
+
+.voice-waveform span {
+  width: 4px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ffad45;
+  animation: waveform-bar 0.8s ease-in-out infinite alternate;
+}
+
+.voice-waveform span:nth-child(2),
+.voice-waveform span:nth-child(4) {
+  animation-delay: -0.35s;
+}
+
+.voice-waveform span:nth-child(3) {
+  animation-delay: -0.6s;
+}
+
+.voice-transcript {
+  width: min(560px, 100%);
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(112, 162, 255, 0.2);
+  border-radius: 10px;
+  color: #d7e3fa;
+  background: rgba(32, 55, 96, 0.22);
+  font-size: 13px;
+  text-align: left;
+}
+
+.voice-transcript p + p {
+  margin-top: 7px;
+}
+
+.voice-transcript span {
+  margin-right: 5px;
+  color: #91b5ff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.voice-transcript .voice-understood {
+  color: #b8f0cf;
+}
+
+.voice-transcript .voice-understood span {
+  color: #62dc97;
+}
+
+@keyframes wake-orb-pop {
+  45% {
+    transform: scale(1.13);
+  }
+}
+
+@keyframes wake-ring {
+  from {
+    opacity: 0.82;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.75);
+  }
+}
+
+@keyframes waveform-bar {
+  to {
+    height: 22px;
+    opacity: 0.7;
+  }
+}
 @keyframes listening-pulse {
   50% {
     transform: scale(1.25);
@@ -403,5 +517,15 @@ h1 {
   .speech-settings {
     grid-template-columns: 1fr;
     margin: -6px 20px 22px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-dot,
+  .wake-word-pill span,
+  .voice-orb,
+  .voice-orb::before,
+  .voice-orb::after,
+  .voice-waveform span {
+    animation: none !important;
   }
 }
