@@ -1,9 +1,11 @@
 import type {
   ActionResult,
+  AssistantProgress,
   AssistantResponse,
   MicrophoneTestResult,
   OllamaHealth,
   OrbitSettings,
+  SpeechSynthesisEvent,
   WakeWordEvent
 } from '../shared/types'
 
@@ -11,6 +13,10 @@ type OrbitApi = {
   checkOllama: () => Promise<ActionResult<OllamaHealth>>
   askAssistant: (message: string) => Promise<ActionResult<AssistantResponse>>
   cancelAssistant: () => Promise<ActionResult>
+  onAssistantProgress: (listener: (progress: AssistantProgress) => void) => () => void
+  synthesizeSpeech: (text: string) => Promise<ActionResult<{ requestId: string }>>
+  cancelSpeech: () => Promise<ActionResult>
+  onSpeechSynthesisEvent: (listener: (event: SpeechSynthesisEvent) => void) => () => void
   getSettings: () => Promise<ActionResult<OrbitSettings>>
   updateSettings: (patch: Partial<OrbitSettings>) => Promise<ActionResult<OrbitSettings>>
   startWakeWord: () => Promise<ActionResult>

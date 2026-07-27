@@ -1,108 +1,299 @@
-import type { ActionResult, ChatMessage, OllamaHealth, OrbitSettings } from '../../shared/types'
+import type {
+  ActionResult,
+  AssistantProgress,
+  ChatMessage,
+  OllamaHealth,
+  OllamaTiming,
+  OrbitSettings
+} from '../../shared/types'
 import { getSettings } from './settingsService'
 
-const REQUEST_TIMEOUT_MS = 30_000
+const IDLE_TIMEOUT_MS = 30_000
+const HARD_TIMEOUT_MS = 120_000
+const HEALTH_TIMEOUT_MS = 15_000
+const WARM_TIMEOUT_MS = 90_000
+const MODEL_CACHE_MS = 30_000
+const KEEP_ALIVE = '15m'
+const FALLBACK_MODEL = 'qwen3:8b'
+const OLLAMA_CONTEXT_TOKENS = 8_192
+const OLLAMA_MAX_OUTPUT_TOKENS = 512
+const MAX_STREAM_BYTES = 2 * 1024 * 1024
+const WARM_SLOW_THRESHOLD_MS = 8_000
+const WARM_SAMPLE_COUNT = 3
+
+export type OllamaProgressCallback = (progress: AssistantProgress) => void
+
+type RunningModel = {
+  name: string
+  size: number
+  sizeVram: number
+}
+
+type ParsedChatStream = {
+  content: string
+  timing?: OllamaTiming
+}
+
+type ModelCache = {
+  baseUrl: string
+  models: string[]
+  expiresAt: number
+}
+
+let modelCache: ModelCache | undefined
+let lastTimingByModel = new Map<string, OllamaTiming>()
+let warmSamplesByModel = new Map<string, number[]>()
+let disqualifiedModels = new Set<string>()
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function parseTagsResponse(value: unknown): string[] | null {
-  if (!isRecord(value) || !Array.isArray(value.models)) {
-    return null
+function finiteNonNegative(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
+function nanosecondsToMilliseconds(value: unknown): number {
+  return Math.round((finiteNonNegative(value) ?? 0) / 1_000_000)
+}
+
+function parseTiming(value: Record<string, unknown>): OllamaTiming | undefined {
+  const total = finiteNonNegative(value.total_duration)
+  if (total === undefined) return undefined
+  return {
+    loadMs: nanosecondsToMilliseconds(value.load_duration),
+    promptMs: nanosecondsToMilliseconds(value.prompt_eval_duration),
+    generationMs: nanosecondsToMilliseconds(value.eval_duration),
+    totalMs: nanosecondsToMilliseconds(total)
   }
+}
+
+function parseTagsResponse(value: unknown): string[] | null {
+  if (!isRecord(value) || !Array.isArray(value.models)) return null
 
   const models: string[] = []
-
   for (const model of value.models) {
-    if (!isRecord(model) || typeof model.name !== 'string') {
-      return null
-    }
-
+    if (!isRecord(model) || typeof model.name !== 'string') return null
     models.push(model.name)
   }
-
   return models
 }
 
-function parseChatResponse(value: unknown): string | null {
-  if (!isRecord(value) || !isRecord(value.message)) {
-    return null
+function parseRunningModels(value: unknown): RunningModel[] | null {
+  if (!isRecord(value) || !Array.isArray(value.models)) return null
+  const models: RunningModel[] = []
+  for (const model of value.models) {
+    if (!isRecord(model) || typeof model.name !== 'string') return null
+    const size = finiteNonNegative(model.size)
+    const sizeVram = finiteNonNegative(model.size_vram)
+    if (size === undefined || sizeVram === undefined) return null
+    models.push({ name: model.name, size, sizeVram })
   }
+  return models
+}
 
-  if (value.message.role !== 'assistant' || typeof value.message.content !== 'string') {
-    return null
-  }
+function normalizeBaseUrl(value: string): string {
+  return value.replace(/\/+$/, '')
+}
 
-  const content = value.message.content.trim()
-  return content.length > 0 ? content : null
+function notify(
+  callback: OllamaProgressCallback | undefined,
+  startedAt: number,
+  phase: AssistantProgress['phase'],
+  message: string,
+  model?: string
+): void {
+  callback?.({
+    phase,
+    message,
+    elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    ...(model ? { model } : {})
+  })
 }
 
 function createTimedSignal(
   externalSignal: AbortSignal | undefined,
-  timeoutMs: number
+  idleTimeoutMs: number,
+  hardTimeoutMs: number
 ): {
   signal: AbortSignal
-  didTimeout: () => boolean
+  activity: () => void
+  didTimeout: () => 'idle' | 'hard' | undefined
   dispose: () => void
 } {
   const controller = new AbortController()
-  let timedOut = false
+  let timeoutKind: 'idle' | 'hard' | undefined
+  let idleTimer: ReturnType<typeof setTimeout>
 
-  const abortFromExternalSignal = (): void => {
-    controller.abort(externalSignal?.reason)
+  const abortFromExternalSignal = (): void => controller.abort(externalSignal?.reason)
+  const abortForTimeout = (kind: 'idle' | 'hard'): void => {
+    if (controller.signal.aborted) return
+    timeoutKind = kind
+    controller.abort(new Error(`The Ollama ${kind} timeout elapsed.`))
+  }
+  const resetIdle = (): void => {
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => abortForTimeout('idle'), idleTimeoutMs)
   }
 
-  if (externalSignal?.aborted) {
-    abortFromExternalSignal()
-  } else {
-    externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true })
-  }
+  if (externalSignal?.aborted) abortFromExternalSignal()
+  else externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true })
 
-  const timeout = setTimeout(() => {
-    timedOut = true
-    controller.abort(new Error('The Ollama request timed out.'))
-  }, timeoutMs)
+  resetIdle()
+  const hardTimer = setTimeout(() => abortForTimeout('hard'), hardTimeoutMs)
 
   return {
     signal: controller.signal,
-    didTimeout: () => timedOut,
+    activity: resetIdle,
+    didTimeout: () => timeoutKind,
     dispose: () => {
-      clearTimeout(timeout)
+      clearTimeout(idleTimer)
+      clearTimeout(hardTimer)
       externalSignal?.removeEventListener('abort', abortFromExternalSignal)
     }
   }
 }
 
-async function fetchModels(baseUrl: string, signal?: AbortSignal): Promise<string[]> {
-  const timedSignal = createTimedSignal(signal, REQUEST_TIMEOUT_MS)
-
+async function fetchJson(
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal | undefined,
+  timeoutMs: number
+): Promise<unknown> {
+  const timed = createTimedSignal(signal, timeoutMs, timeoutMs)
   try {
-    const response = await fetch(`${baseUrl}/api/tags`, {
-      method: 'GET',
-      signal: timedSignal.signal
-    })
-
-    if (!response.ok) {
-      throw new Error(`Ollama returned HTTP ${response.status}.`)
-    }
-
-    const parsed: unknown = await response.json()
-    const models = parseTagsResponse(parsed)
-
-    if (!models) {
-      throw new Error('Ollama returned an invalid model list.')
-    }
-
-    return models
+    const response = await fetch(url, { ...init, signal: timed.signal })
+    timed.activity()
+    if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}.`)
+    return await response.json()
   } finally {
-    timedSignal.dispose()
+    timed.dispose()
+  }
+}
+
+async function fetchModels(
+  baseUrl: string,
+  signal?: AbortSignal,
+  force = false
+): Promise<string[]> {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
+  if (!force && modelCache?.baseUrl === normalizedBaseUrl && modelCache.expiresAt > Date.now()) {
+    return [...modelCache.models]
+  }
+
+  const parsed = await fetchJson(
+    `${normalizedBaseUrl}/api/tags`,
+    { method: 'GET' },
+    signal,
+    HEALTH_TIMEOUT_MS
+  )
+  const models = parseTagsResponse(parsed)
+  if (!models) throw new Error('Ollama returned an invalid model list.')
+  modelCache = {
+    baseUrl: normalizedBaseUrl,
+    models: [...models],
+    expiresAt: Date.now() + MODEL_CACHE_MS
+  }
+  return models
+}
+
+async function fetchRunningModels(baseUrl: string, signal?: AbortSignal): Promise<RunningModel[]> {
+  const parsed = await fetchJson(
+    `${normalizeBaseUrl(baseUrl)}/api/ps`,
+    { method: 'GET' },
+    signal,
+    HEALTH_TIMEOUT_MS
+  )
+  const models = parseRunningModels(parsed)
+  if (!models) throw new Error('Ollama returned an invalid running model list.')
+  return models
+}
+
+function chooseActiveModel(configuredModel: string, models: readonly string[]): string | undefined {
+  if (models.includes(configuredModel) && !disqualifiedModels.has(configuredModel)) {
+    return configuredModel
+  }
+  if (configuredModel !== FALLBACK_MODEL && models.includes(FALLBACK_MODEL)) return FALLBACK_MODEL
+  if (models.includes(configuredModel)) return configuredModel
+  return undefined
+}
+
+function processorFor(model: RunningModel | undefined): OllamaHealth['processor'] {
+  if (!model || model.size <= 0) return 'unknown'
+  if (model.sizeVram <= 0) return 'cpu'
+  if (model.sizeVram >= model.size * 0.95) return 'gpu'
+  return 'mixed'
+}
+
+function recordWarmPerformance(model: string, timing: OllamaTiming): void {
+  if (timing.loadMs > 1_000) return
+  const samples = [...(warmSamplesByModel.get(model) ?? []), timing.totalMs].slice(
+    -WARM_SAMPLE_COUNT
+  )
+  warmSamplesByModel.set(model, samples)
+  if (samples.length < WARM_SAMPLE_COUNT) return
+  const median = [...samples].sort((a, b) => a - b)[Math.floor(samples.length / 2)]
+  if (median !== undefined && median > WARM_SLOW_THRESHOLD_MS && model !== FALLBACK_MODEL) {
+    disqualifiedModels.add(model)
+  }
+}
+
+async function buildHealth(
+  settings: OrbitSettings,
+  models: string[],
+  signal?: AbortSignal
+): Promise<OllamaHealth> {
+  let activeModel = chooseActiveModel(settings.ollamaModel, models)
+  let runningModels: RunningModel[] = []
+  try {
+    runningModels = await fetchRunningModels(settings.ollamaBaseUrl, signal)
+  } catch {
+    // The tags endpoint is sufficient for connectivity; process diagnostics are best-effort.
+  }
+
+  let running = runningModels.find((model) => model.name === activeModel)
+  if (
+    activeModel === settings.ollamaModel &&
+    running &&
+    processorFor(running) !== 'gpu' &&
+    activeModel !== FALLBACK_MODEL &&
+    models.includes(FALLBACK_MODEL)
+  ) {
+    disqualifiedModels.add(activeModel)
+    activeModel = FALLBACK_MODEL
+    running = runningModels.find((model) => model.name === activeModel)
+  }
+
+  return {
+    connected: true,
+    modelInstalled: activeModel !== undefined,
+    models: [...models],
+    configuredModel: settings.ollamaModel,
+    ...(activeModel ? { activeModel } : {}),
+    fallbackActive: activeModel !== undefined && activeModel !== settings.ollamaModel,
+    warm: running !== undefined,
+    processor: processorFor(running),
+    ...(activeModel && lastTimingByModel.has(activeModel)
+      ? { timing: lastTimingByModel.get(activeModel) }
+      : {})
   }
 }
 
 export async function checkConnection(signal?: AbortSignal): Promise<OllamaHealth> {
   const settings = getSettings()
-  return checkModelInstalled(settings.ollamaModel, signal, settings.ollamaBaseUrl)
+  try {
+    const models = await fetchModels(settings.ollamaBaseUrl, signal)
+    return await buildHealth(settings, models, signal)
+  } catch {
+    return {
+      connected: false,
+      modelInstalled: false,
+      models: [],
+      configuredModel: settings.ollamaModel,
+      fallbackActive: false,
+      warm: false
+    }
+  }
 }
 
 export async function checkModelInstalled(
@@ -110,63 +301,193 @@ export async function checkModelInstalled(
   signal?: AbortSignal,
   baseUrl = getSettings().ollamaBaseUrl
 ): Promise<OllamaHealth> {
+  const settings = { ...getSettings(), ollamaModel: model, ollamaBaseUrl: baseUrl }
   try {
     const models = await fetchModels(baseUrl, signal)
-
-    return {
-      connected: true,
-      modelInstalled: models.includes(model),
-      models
-    }
+    return await buildHealth(settings, models, signal)
   } catch {
     return {
       connected: false,
       modelInstalled: false,
-      models: []
+      models: [],
+      configuredModel: model,
+      fallbackActive: false,
+      warm: false
     }
   }
 }
 
+async function prewarmModel(
+  baseUrl: string,
+  model: string,
+  signal?: AbortSignal
+): Promise<OllamaTiming | undefined> {
+  const parsed = await fetchJson(
+    `${normalizeBaseUrl(baseUrl)}/api/generate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        prompt: '',
+        stream: false,
+        keep_alive: KEEP_ALIVE,
+        options: { num_ctx: OLLAMA_CONTEXT_TOKENS, num_predict: 1 }
+      })
+    },
+    signal,
+    WARM_TIMEOUT_MS
+  )
+  return isRecord(parsed) ? parseTiming(parsed) : undefined
+}
+
+export async function warmConnection(
+  signal?: AbortSignal,
+  onProgress?: OllamaProgressCallback
+): Promise<OllamaHealth> {
+  const startedAt = performance.now()
+  const settings = getSettings()
+  notify(onProgress, startedAt, 'checking', 'Checking the local Ollama service.')
+  try {
+    const models = await fetchModels(settings.ollamaBaseUrl, signal, true)
+    const activeModel = chooseActiveModel(settings.ollamaModel, models)
+    if (!activeModel) return await buildHealth(settings, models, signal)
+
+    notify(onProgress, startedAt, 'loading', `Loading ${activeModel} locally.`, activeModel)
+    const timing = await prewarmModel(settings.ollamaBaseUrl, activeModel, signal)
+    if (timing) lastTimingByModel.set(activeModel, timing)
+    return await buildHealth(settings, models, signal)
+  } catch {
+    return {
+      connected: false,
+      modelInstalled: false,
+      models: [],
+      configuredModel: settings.ollamaModel,
+      fallbackActive: false,
+      warm: false
+    }
+  }
+}
+
+function parseStreamLine(line: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(line)
+    return isRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+async function readChatStream(
+  response: Response,
+  timed: ReturnType<typeof createTimedSignal>
+): Promise<ParsedChatStream | null> {
+  if (!response.body) return null
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let pending = ''
+  let content = ''
+  let bytes = 0
+  let sawDone = false
+  let timing: OllamaTiming | undefined
+
+  const consumeLine = (line: string): boolean => {
+    const trimmed = line.trim()
+    if (!trimmed) return true
+    const parsed = parseStreamLine(trimmed)
+    if (!parsed || !isRecord(parsed.message)) return false
+    if (parsed.message.role !== 'assistant' || typeof parsed.message.content !== 'string') {
+      return false
+    }
+    content += parsed.message.content
+    if (parsed.done === true) {
+      sawDone = true
+      timing = parseTiming(parsed)
+    }
+    return true
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    timed.activity()
+    bytes += value.byteLength
+    if (bytes > MAX_STREAM_BYTES) return null
+    pending += decoder.decode(value, { stream: true })
+    const lines = pending.split(/\r?\n/)
+    pending = lines.pop() ?? ''
+    for (const line of lines) if (!consumeLine(line)) return null
+  }
+
+  pending += decoder.decode()
+  if (pending.trim() && !consumeLine(pending)) return null
+  const normalized = content.trim()
+  return sawDone && normalized ? { content: normalized, ...(timing ? { timing } : {}) } : null
+}
+
 export async function chat(
   messages: ChatMessage[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: OllamaProgressCallback
 ): Promise<ActionResult<{ response: string }>> {
-  return sendChatRequest(messages, undefined, signal)
+  return sendChatRequest(messages, undefined, signal, onProgress)
 }
 
 export async function structuredChat(
   messages: ChatMessage[],
   _format: Record<string, unknown>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: OllamaProgressCallback
 ): Promise<ActionResult<{ response: string }>> {
   // Ollama 0.32 cannot compile the full Zod-generated schema into a grammar.
-  // JSON mode still constrains output syntax; the application validates it strictly before use.
-  return sendChatRequest(messages, 'json', signal)
+  // JSON mode constrains syntax; the application still validates every field before execution.
+  return sendChatRequest(messages, 'json', signal, onProgress)
 }
 
 async function sendChatRequest(
   messages: ChatMessage[],
-  format: Record<string, unknown> | 'json' | undefined,
-  signal?: AbortSignal
+  format: 'json' | undefined,
+  signal?: AbortSignal,
+  onProgress?: OllamaProgressCallback
 ): Promise<ActionResult<{ response: string }>> {
-  const timedSignal = createTimedSignal(signal, REQUEST_TIMEOUT_MS)
-  const settings: OrbitSettings = getSettings()
+  const startedAt = performance.now()
+  const settings = getSettings()
+  const timed = createTimedSignal(signal, IDLE_TIMEOUT_MS, HARD_TIMEOUT_MS)
+  let activeModel = settings.ollamaModel
 
   try {
-    const response = await fetch(`${settings.ollamaBaseUrl}/api/chat`, {
+    const models = await fetchModels(settings.ollamaBaseUrl, timed.signal)
+    const selectedModel = chooseActiveModel(settings.ollamaModel, models)
+    if (!selectedModel) {
+      return {
+        ok: false,
+        code: 'OLLAMA_MODEL_MISSING',
+        message: `Neither ${settings.ollamaModel} nor ${FALLBACK_MODEL} is installed.`,
+        recoverable: true
+      }
+    }
+    activeModel = selectedModel
+    notify(onProgress, startedAt, 'loading', `Preparing ${activeModel}.`, activeModel)
+
+    const response = await fetch(`${normalizeBaseUrl(settings.ollamaBaseUrl)}/api/chat`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: settings.ollamaModel,
+        model: activeModel,
         messages,
-        think: settings.thinkMode,
-        stream: false,
+        think: false,
+        stream: true,
+        keep_alive: KEEP_ALIVE,
+        options: {
+          num_ctx: OLLAMA_CONTEXT_TOKENS,
+          num_predict: OLLAMA_MAX_OUTPUT_TOKENS,
+          temperature: 0.1
+        },
         ...(format ? { format } : {})
       }),
-      signal: timedSignal.signal
+      signal: timed.signal
     })
+    timed.activity()
 
     if (!response.ok) {
       return {
@@ -177,11 +498,9 @@ async function sendChatRequest(
       }
     }
 
-    let parsed: unknown
-
-    try {
-      parsed = await response.json()
-    } catch {
+    notify(onProgress, startedAt, 'generating', 'Generating a local response.', activeModel)
+    const parsed = await readChatStream(response, timed)
+    if (!parsed) {
       return {
         ok: false,
         code: 'OLLAMA_INVALID_RESPONSE',
@@ -190,34 +509,33 @@ async function sendChatRequest(
       }
     }
 
-    const content = parseChatResponse(parsed)
-
-    if (!content) {
-      return {
-        ok: false,
-        code: 'OLLAMA_INVALID_RESPONSE',
-        message: 'Ollama returned an invalid response.',
-        recoverable: true
-      }
+    if (parsed.timing) {
+      lastTimingByModel.set(activeModel, parsed.timing)
+      if (activeModel === settings.ollamaModel) recordWarmPerformance(activeModel, parsed.timing)
     }
+    notify(onProgress, startedAt, 'validating', 'Validating the local response.', activeModel)
 
     return {
       ok: true,
-      message: 'Orbit responded.',
-      data: {
-        response: content
-      }
+      message:
+        activeModel === settings.ollamaModel
+          ? 'Orbit responded.'
+          : `Orbit responded using the ${activeModel} fallback.`,
+      data: { response: parsed.content }
     }
   } catch (error: unknown) {
-    if (timedSignal.didTimeout()) {
+    const timeoutKind = timed.didTimeout()
+    if (timeoutKind) {
       return {
         ok: false,
-        code: 'OLLAMA_TIMEOUT',
-        message: 'Ollama took too long to respond.',
+        code: timeoutKind === 'idle' ? 'OLLAMA_IDLE_TIMEOUT' : 'OLLAMA_HARD_TIMEOUT',
+        message:
+          timeoutKind === 'idle'
+            ? 'Ollama stopped sending response data for 30 seconds.'
+            : 'Ollama exceeded the two-minute safety limit.',
         recoverable: true
       }
     }
-
     if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
       return {
         ok: false,
@@ -226,7 +544,7 @@ async function sendChatRequest(
         recoverable: true
       }
     }
-
+    modelCache = undefined
     return {
       ok: false,
       code: 'OLLAMA_NETWORK_ERROR',
@@ -234,6 +552,13 @@ async function sendChatRequest(
       recoverable: true
     }
   } finally {
-    timedSignal.dispose()
+    timed.dispose()
   }
+}
+
+export function resetOllamaServiceForTests(): void {
+  modelCache = undefined
+  lastTimingByModel = new Map()
+  warmSamplesByModel = new Map()
+  disqualifiedModels = new Set()
 }

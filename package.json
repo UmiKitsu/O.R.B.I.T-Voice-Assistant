@@ -7,8 +7,10 @@
   "homepage": "https://electron-vite.org",
   "scripts": {
     "setup:whisper": "node scripts/download-whisper-model.mjs",
+    "setup:whisper-vulkan": "node scripts/verify-whisper-vulkan.mjs",
     "setup:wake-word": "node scripts/verify-wake-word-model.mjs",
-    "prebuild": "npm run setup:whisper && npm run setup:wake-word",
+    "setup:kokoro": "node scripts/download-kokoro-model.mjs",
+    "prebuild": "npm run setup:whisper && npm run setup:whisper-vulkan && npm run setup:wake-word && npm run setup:kokoro",
     "format": "prettier --write .",
     "lint": "eslint --cache .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",

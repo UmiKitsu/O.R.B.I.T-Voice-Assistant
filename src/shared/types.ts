@@ -3,7 +3,9 @@ export type OrbitStatus =
   | 'ready'
   | 'listening'
   | 'transcribing'
+  | 'preparing-ai'
   | 'thinking'
+  | 'synthesizing'
   | 'awaiting-confirmation'
   | 'executing'
   | 'speaking'
@@ -24,11 +26,37 @@ export type OllamaHealth = {
   connected: boolean
   modelInstalled: boolean
   models: string[]
+  configuredModel: string
+  activeModel?: string
+  fallbackActive: boolean
+  warm: boolean
+  processor?: 'gpu' | 'cpu' | 'mixed' | 'unknown'
+  timing?: OllamaTiming
 }
+
+export type OllamaTiming = {
+  loadMs: number
+  promptMs: number
+  generationMs: number
+  totalMs: number
+}
+
+export type AssistantProgressPhase = 'checking' | 'loading' | 'generating' | 'validating'
+
+export type AssistantProgress = {
+  phase: AssistantProgressPhase
+  message: string
+  elapsedMs: number
+  model?: string
+}
+
+export type TranscriptionBackend = 'vulkan-turbo' | 'cpu-turbo' | 'cpu-small'
 
 export type Transcription = {
   text: string
   detectedLanguage?: string
+  backend: TranscriptionBackend
+  model: 'large-v3-turbo-q5_0' | 'small'
 }
 
 export type RecognitionLanguage = 'auto' | 'en'
@@ -65,6 +93,8 @@ export type VoiceDiagnostics = {
   transcriptionLatencyMs: number
   peakLevel: number
   rmsLevel: number
+  transcriptionBackend: TranscriptionBackend
+  transcriptionModel: 'large-v3-turbo-q5_0' | 'small'
   detectedLanguage?: string
   route: VoiceRoutePreview
 }
@@ -111,10 +141,41 @@ export type WakeWordEvent =
       result: WakeWordTestResult
     }
 
+export type SpeechEngine = 'kokoro' | 'windows'
+export type KokoroVoice =
+  'bm_george' | 'bm_lewis' | 'bm_daniel' | 'am_adam' | 'am_michael' | 'bf_emma' | 'af_heart'
+
+export type SpeechSynthesisEvent =
+  | {
+      type: 'started'
+      requestId: string
+      engine: 'kokoro'
+    }
+  | {
+      type: 'audio'
+      requestId: string
+      chunkIndex: number
+      sampleRate: number
+      samples: Float32Array
+      final: boolean
+    }
+  | {
+      type: 'cancelled'
+      requestId: string
+    }
+  | {
+      type: 'error'
+      requestId: string
+      code: string
+      message: string
+    }
+
 export type OrbitSettings = {
   ollamaBaseUrl: string
   ollamaModel: string
   thinkMode: boolean
+  speechEngine: SpeechEngine
+  kokoroVoice: KokoroVoice
   speechRate: number
   speechVolume: number
   launchAtStartup: boolean

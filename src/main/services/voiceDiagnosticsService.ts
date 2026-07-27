@@ -103,6 +103,8 @@ export async function diagnoseWakeCandidateRecording(
     ? {
         ...stats,
         transcriptionLatencyMs,
+        transcriptionBackend: result.data.backend,
+        transcriptionModel: result.data.model,
         detectedLanguage: result.data.detectedLanguage,
         route: previewVoiceRoute(transcript.normalizedText)
       }
@@ -163,6 +165,8 @@ export async function diagnoseVoiceRecording(
   const diagnostics: VoiceDiagnostics = {
     ...stats,
     transcriptionLatencyMs,
+    transcriptionBackend: result.data.backend,
+    transcriptionModel: result.data.model,
     detectedLanguage: result.data.detectedLanguage,
     route: previewVoiceRoute(transcript.normalizedText)
   }

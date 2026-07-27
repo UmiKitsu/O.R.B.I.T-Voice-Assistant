@@ -5,12 +5,19 @@ import { ensureOllamaRunning } from './ollamaStartupService'
 const connected: OllamaHealth = {
   connected: true,
   modelInstalled: true,
-  models: ['qwen3:8b']
+  models: ['qwen3:8b'],
+  configuredModel: 'qwen3.5:9b-q4_K_M',
+  activeModel: 'qwen3:8b',
+  fallbackActive: true,
+  warm: false
 }
 const disconnected: OllamaHealth = {
   connected: false,
   modelInstalled: false,
-  models: []
+  models: [],
+  configuredModel: 'qwen3.5:9b-q4_K_M',
+  fallbackActive: false,
+  warm: false
 }
 
 describe('ensureOllamaRunning', () => {

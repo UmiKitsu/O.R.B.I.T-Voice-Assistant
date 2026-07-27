@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ActionResult, ChatMessage } from '../../shared/types'
+import type { ActionResult, AssistantProgress, ChatMessage } from '../../shared/types'
 import type { CapabilityRegistry } from '../capabilities/capabilityRegistry'
 import { structuredChat } from '../services/ollamaService'
 import { assistantOutputSchema, type AssistantOutput } from './actionPlanSchemas'
@@ -11,12 +11,23 @@ type CapabilityDescription = {
   parameters: unknown
 }
 
+function compactJsonSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(compactJsonSchema)
+  if (typeof value !== 'object' || value === null) return value
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !['\u0024schema', 'title', 'description', 'default'].includes(key))
+      .map(([key, nested]) => [key, compactJsonSchema(nested)])
+  )
+}
+
 export function describeRegisteredCapabilities(
   registry: CapabilityRegistry
 ): CapabilityDescription[] {
   return registry.list().map((capability) => ({
     name: capability.name,
-    parameters: z.toJSONSchema(capability.parameterSchema)
+    parameters: compactJsonSchema(z.toJSONSchema(capability.parameterSchema))
   }))
 }
 
@@ -75,12 +86,14 @@ export function parseAndValidateAssistantOutput(
 export async function planAssistantRequest(
   messages: ChatMessage[],
   registry: CapabilityRegistry,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: (progress: AssistantProgress) => void
 ): Promise<ActionResult<AssistantOutput>> {
   const result = await structuredChat(
     [createPlanningSystemMessage(registry), ...messages],
     z.toJSONSchema(assistantOutputSchema),
-    signal
+    signal,
+    onProgress
   )
 
   if (!result.ok) return result

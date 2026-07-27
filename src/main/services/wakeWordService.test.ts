@@ -154,6 +154,34 @@ function successfulFallback(command = true): unknown {
   }
 }
 
+function successfulCommandDiagnosis(): unknown {
+  return {
+    ok: true,
+    message: 'Command transcribed with the standard backend.',
+    data: {
+      transcript: {
+        rawText: 'open Spotify',
+        normalizedText: 'open Spotify',
+        corrections: []
+      },
+      diagnostics: {
+        durationMs: 800,
+        transcriptionLatencyMs: 180,
+        peakLevel: 0.18,
+        rmsLevel: 0.04,
+        transcriptionBackend: 'vulkan-turbo',
+        transcriptionModel: 'large-v3-turbo-q5_0',
+        detectedLanguage: 'en',
+        route: {
+          kind: 'deterministic',
+          summary: 'Open a registered application',
+          capability: 'application.launch',
+          parameters: { application: 'Spotify' }
+        }
+      }
+    }
+  }
+}
 async function flushAsyncWork(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
@@ -278,16 +306,17 @@ describe('wake-word diagnostic mode', () => {
 })
 
 describe('armed hybrid recognition', () => {
-  it('reuses one fallback transcription when Orbit and a command share a segment', async () => {
+  it('uses Small only for wake detection and retranscribes the preserved command with Turbo', async () => {
     const webContents = sender(51)
     mocks.diagnoseWakeCandidateRecording.mockResolvedValue(successfulFallback(true))
+    mocks.diagnoseVoiceRecording.mockResolvedValue(successfulCommandDiagnosis())
     await startWakeWord(webContents as never)
 
     mocks.workers[0].emit('message', wakeCandidate(false))
     await flushAsyncWork()
 
     expect(mocks.diagnoseWakeCandidateRecording).toHaveBeenCalledOnce()
-    expect(mocks.diagnoseVoiceRecording).not.toHaveBeenCalled()
+    expect(mocks.diagnoseVoiceRecording).toHaveBeenCalledOnce()
     expect(mocks.workers[0].messages).toContainEqual({
       type: 'fallback-result',
       candidateId: 7,

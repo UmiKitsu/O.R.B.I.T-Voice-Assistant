@@ -5,7 +5,7 @@ import { access, unlink, writeFile } from 'node:fs/promises'
 import { availableParallelism } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
-import type { ActionResult, Transcription } from '../../shared/types'
+import type { ActionResult, Transcription, TranscriptionBackend } from '../../shared/types'
 import {
   hasAudiblePcm16Samples,
   isPcmWav,
@@ -22,9 +22,18 @@ const SHORT_WAKE_AUDIO_CONTEXT = 256
 const WHISPER_COMMAND_PROMPT =
   'Orbit Orbit. Open, launch, focus, play, pause, next, previous, volume up, volume down, mute, unmute, search, maximize, minimize, restore, stop speaking, disable Orbit. Buksan, i-play, patugtugin, hanapin. YouTube, Google, Chrome, Spotify, Calculator, File Explorer, Visual Studio Code.'
 
-function whisperResourcePath(filename: string): string {
+export type TranscriptionProfile = 'standard' | 'wake-candidate'
+
+type WhisperCandidate = {
+  executable: string
+  model: string
+  backend: TranscriptionBackend
+  modelName: Transcription['model']
+}
+
+function whisperRoot(): string {
   const resourceRoot = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
-  return join(resourceRoot, 'whisper', filename)
+  return join(resourceRoot, 'whisper')
 }
 
 function unavailableResult(filename: string): ActionResult<Transcription> {
@@ -45,9 +54,58 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+export async function resolveWhisperCandidates(
+  profile: TranscriptionProfile
+): Promise<WhisperCandidate[]> {
+  const root = whisperRoot()
+  const cpuExecutable = join(root, 'whisper-cli.exe')
+  const smallModel = join(root, 'ggml-small.bin')
+  const turboModel = join(root, 'ggml-large-v3-turbo-q5_0.bin')
+  const vulkanExecutable = join(root, 'vulkan', 'whisper-cli.exe')
+
+  if (profile === 'wake-candidate') {
+    return (await pathExists(cpuExecutable)) && (await pathExists(smallModel))
+      ? [
+          {
+            executable: cpuExecutable,
+            model: smallModel,
+            backend: 'cpu-small',
+            modelName: 'small'
+          }
+        ]
+      : []
+  }
+
+  const candidates: WhisperCandidate[] = []
+  if ((await pathExists(vulkanExecutable)) && (await pathExists(turboModel))) {
+    candidates.push({
+      executable: vulkanExecutable,
+      model: turboModel,
+      backend: 'vulkan-turbo',
+      modelName: 'large-v3-turbo-q5_0'
+    })
+  }
+  if ((await pathExists(cpuExecutable)) && (await pathExists(turboModel))) {
+    candidates.push({
+      executable: cpuExecutable,
+      model: turboModel,
+      backend: 'cpu-turbo',
+      modelName: 'large-v3-turbo-q5_0'
+    })
+  }
+  if ((await pathExists(cpuExecutable)) && (await pathExists(smallModel))) {
+    candidates.push({
+      executable: cpuExecutable,
+      model: smallModel,
+      backend: 'cpu-small',
+      modelName: 'small'
+    })
+  }
+  return candidates
+}
+
 function runWhisper(
-  executablePath: string,
-  modelPath: string,
+  candidate: WhisperCandidate,
   audioPath: string,
   signal: AbortSignal,
   optimizeShortWakeCandidate: boolean
@@ -68,7 +126,7 @@ function runWhisper(
     try {
       const arguments_ = [
         '-m',
-        basename(modelPath),
+        basename(candidate.model),
         '-f',
         audioPath,
         '-l',
@@ -82,16 +140,22 @@ function runWhisper(
       if (optimizeShortWakeCandidate) {
         arguments_.push('--audio-ctx', String(SHORT_WAKE_AUDIO_CONTEXT), '--beam-size', '1')
       }
-      child = spawn(executablePath, arguments_, {
-        // whisper.cpp's Windows CLI does not reliably parse non-ASCII model paths.
-        // Run beside the fixed bundled model and pass only its trusted filename.
-        cwd: dirname(executablePath),
+      child = spawn(candidate.executable, arguments_, {
+        // The development folder contains Unicode punctuation. Using the fixed model directory as
+        // cwd lets whisper.cpp receive a trusted ASCII model filename while backend DLLs still load
+        // from the executable's own directory.
+        cwd: dirname(candidate.model),
         shell: false,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe']
       })
     } catch {
-      resolve(unavailableResult('whisper-cli.exe'))
+      resolve({
+        ok: false,
+        code: 'WHISPER_BACKEND_UNAVAILABLE',
+        message: 'The selected local speech-recognition backend could not start.',
+        recoverable: true
+      })
       return
     }
 
@@ -141,13 +205,27 @@ function runWhisper(
       }
     })
     child.on('error', () => {
-      finish(unavailableResult('whisper-cli.exe'))
+      finish({
+        ok: false,
+        code: 'WHISPER_BACKEND_UNAVAILABLE',
+        message: 'The selected local speech-recognition backend could not start.',
+        recoverable: true
+      })
     })
     child.on('close', (exitCode) => {
       if (settled) return
+      if (exitCode !== 0) {
+        finish({
+          ok: false,
+          code: 'WHISPER_BACKEND_FAILED',
+          message: 'The selected local speech-recognition backend failed.',
+          recoverable: true
+        })
+        return
+      }
 
       const text = normalizeWhisperOutput(stdout)
-      if (exitCode !== 0 || !text) {
+      if (!text) {
         finish({
           ok: false,
           code: 'TRANSCRIPTION_UNCLEAR',
@@ -163,17 +241,28 @@ function runWhisper(
         data: {
           text,
           detectedLanguage:
-            recognitionLanguage === 'en' ? 'en' : parseWhisperDetectedLanguage(stderr)
+            recognitionLanguage === 'en' ? 'en' : parseWhisperDetectedLanguage(stderr),
+          backend: candidate.backend,
+          model: candidate.modelName
         }
       })
     })
   })
 }
 
+function shouldTryNextBackend(result: ActionResult<Transcription>): boolean {
+  return (
+    !result.ok &&
+    (result.code === 'WHISPER_BACKEND_UNAVAILABLE' ||
+      result.code === 'WHISPER_BACKEND_FAILED' ||
+      result.code === 'TRANSCRIPTION_TIMEOUT')
+  )
+}
+
 export async function transcribeRecording(
   audio: Uint8Array,
   signal: AbortSignal,
-  profile: 'standard' | 'wake-candidate' = 'standard'
+  profile: TranscriptionProfile = 'standard'
 ): Promise<ActionResult<Transcription>> {
   if (!isPcmWav(audio)) {
     return {
@@ -194,10 +283,10 @@ export async function transcribeRecording(
     }
   }
 
-  const executablePath = whisperResourcePath('whisper-cli.exe')
-  const modelPath = whisperResourcePath('ggml-small.bin')
-  if (!(await pathExists(executablePath))) return unavailableResult('whisper-cli.exe')
-  if (!(await pathExists(modelPath))) return unavailableResult('ggml-small.bin')
+  const candidates = await resolveWhisperCandidates(profile)
+  if (candidates.length === 0) {
+    return unavailableResult(profile === 'wake-candidate' ? 'ggml-small.bin' : 'Whisper models')
+  }
 
   const audioPath = join(app.getPath('temp'), `orbit-recording-${randomUUID()}.wav`)
 
@@ -206,13 +295,13 @@ export async function transcribeRecording(
     const durationMs = ((audio.byteLength - 44) / 2 / 16_000) * 1_000
     const optimizeShortWakeCandidate =
       profile === 'wake-candidate' && durationMs <= SHORT_WAKE_CANDIDATE_MAX_MS
-    return await runWhisper(
-      executablePath,
-      modelPath,
-      audioPath,
-      signal,
-      optimizeShortWakeCandidate
-    )
+
+    let lastResult: ActionResult<Transcription> | undefined
+    for (const candidate of candidates) {
+      lastResult = await runWhisper(candidate, audioPath, signal, optimizeShortWakeCandidate)
+      if (lastResult.ok || !shouldTryNextBackend(lastResult)) return lastResult
+    }
+    return lastResult ?? unavailableResult('Whisper models')
   } catch {
     return {
       ok: false,

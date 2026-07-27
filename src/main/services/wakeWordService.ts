@@ -245,13 +245,11 @@ async function transcribeWakeCandidate(
     return
   }
 
-  if (hasCommand && diagnosis.transcript && diagnosis.diagnostics) {
+  if (hasCommand) {
+    // Whisper Small decides only whether the leading wake phrase is trusted. Preserve the same
+    // in-memory PCM and let the more accurate standard backend produce the command transcript.
     emitState(session, 'detected')
-    emit(session, {
-      type: 'transcription',
-      transcript: diagnosis.transcript,
-      diagnostics: diagnosis.diagnostics
-    })
+    await transcribeCommand(session, message.samples)
   }
 }
 

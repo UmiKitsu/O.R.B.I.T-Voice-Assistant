@@ -32,6 +32,9 @@ describe('settings validation', () => {
   it('accepts the complete defaults and strict partial updates', () => {
     expect(orbitSettingsSchema.safeParse(DEFAULT_ORBIT_SETTINGS).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ speechVolume: 0.4 }).success).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ speechEngine: 'kokoro' }).success).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ kokoroVoice: 'bm_george' }).success).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ kokoroVoice: 'unknown' }).success).toBe(false)
     expect(orbitSettingsPatchSchema.safeParse({ recognitionLanguage: 'en' }).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ wakeRecognitionMode: 'hybrid' }).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ wakeRecognitionMode: 'cloud' }).success).toBe(false)
@@ -55,10 +58,14 @@ describe('settings validation', () => {
     const {
       recognitionLanguage: _recognitionLanguage,
       wakeRecognitionMode: _wakeRecognitionMode,
+      speechEngine: _speechEngine,
+      kokoroVoice: _kokoroVoice,
       ...legacy
     } = DEFAULT_ORBIT_SETTINGS
     void _recognitionLanguage
     void _wakeRecognitionMode
+    void _speechEngine
+    void _kokoroVoice
     expect(parseLegacySettingsForImport({ ...legacy, speechVolume: 0.7 })).toEqual({
       ...DEFAULT_ORBIT_SETTINGS,
       speechVolume: 0.7
@@ -85,20 +92,46 @@ describe('settings validation', () => {
     expect((storage.store as OrbitSettings).confirmationTimeoutSeconds).toBe(20)
   })
 
-  it('adds current recognition defaults to existing settings', () => {
+  it('adds current recognition and speech defaults to existing settings', () => {
     const {
       recognitionLanguage: _recognitionLanguage,
       wakeRecognitionMode: _wakeRecognitionMode,
+      speechEngine: _speechEngine,
+      kokoroVoice: _kokoroVoice,
       ...legacy
     } = DEFAULT_ORBIT_SETTINGS
     void _recognitionLanguage
     void _wakeRecognitionMode
+    void _speechEngine
+    void _kokoroVoice
     const storage = memoryStorage({ ...legacy, speechVolume: 0.6 })
     setSettingsStorageForTests(storage)
 
-    expect(getSettings().recognitionLanguage).toBe('auto')
-    expect(getSettings().wakeRecognitionMode).toBe('hybrid')
+    expect(getSettings()).toMatchObject({
+      recognitionLanguage: 'auto',
+      wakeRecognitionMode: 'hybrid',
+      speechEngine: 'kokoro',
+      kokoroVoice: 'bm_george'
+    })
     expect(storage.store).toEqual({ ...DEFAULT_ORBIT_SETTINGS, speechVolume: 0.6 })
+  })
+
+  it('preserves an existing Ollama model choice while adding speech defaults', () => {
+    const {
+      speechEngine: _speechEngine,
+      kokoroVoice: _kokoroVoice,
+      ...legacy
+    } = DEFAULT_ORBIT_SETTINGS
+    void _speechEngine
+    void _kokoroVoice
+    const storage = memoryStorage({ ...legacy, ollamaModel: 'qwen3:8b' })
+    setSettingsStorageForTests(storage)
+
+    expect(getSettings()).toMatchObject({
+      ollamaModel: 'qwen3:8b',
+      speechEngine: 'kokoro',
+      kokoroVoice: 'bm_george'
+    })
   })
 
   it('removes deprecated automatic voice flags without resetting other settings', () => {

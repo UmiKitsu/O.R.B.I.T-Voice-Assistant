@@ -5,14 +5,17 @@ import icon from '../../resources/icon.png?asset'
 import { registerAssistantHandlers } from './ipc/assistantHandlers'
 import { registerAudioHandlers } from './ipc/audioHandlers'
 import { registerSettingsHandlers } from './ipc/settingsHandlers'
+import { registerSpeechHandlers } from './ipc/speechHandlers'
 import { flushLogs, initializeLogger, logOperationalEvent } from './services/loggerService'
 import { ensureOllamaRunning } from './services/ollamaStartupService'
 import { initializeSettingsService } from './services/settingsService'
 import { stopAllWakeWordSessions } from './services/wakeWordService'
+import { stopAllSpeechSynthesis } from './services/speechSynthesisService'
 
 registerAssistantHandlers()
 registerAudioHandlers()
 registerSettingsHandlers()
+registerSpeechHandlers()
 
 function createWindow(): void {
   // Create the browser window.
@@ -87,6 +90,7 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   logOperationalEvent({ event: 'app.closed' })
   stopAllWakeWordSessions()
+  stopAllSpeechSynthesis()
   void flushLogs().finally(() => {
     logsFlushedForQuit = true
     app.quit()

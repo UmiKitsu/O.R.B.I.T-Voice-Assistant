@@ -1,6 +1,11 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipcChannels'
-import type { ActionResult, AssistantResponse, OllamaHealth } from '../../shared/types'
+import type {
+  ActionResult,
+  AssistantProgress,
+  AssistantResponse,
+  OllamaHealth
+} from '../../shared/types'
 import { ConfirmationFlow, parseConfirmationResponse } from '../assistant/confirmationFlow'
 import { planAssistantRequest } from '../assistant/actionPlanner'
 import { executeActionPlan } from '../assistant/actionPlanExecutor'
@@ -21,7 +26,7 @@ import {
   createCapabilityRegistry,
   createCapabilityRuntime
 } from '../capabilities/capabilityRuntime'
-import { checkConnection } from '../services/ollamaService'
+import { checkConnection, warmConnection } from '../services/ollamaService'
 import { logOperationalEvent } from '../services/loggerService'
 import { getSettings } from '../services/settingsService'
 
@@ -70,6 +75,10 @@ function getOrCreateSession(event: IpcMainInvokeEvent): AssistantSession {
   return session
 }
 
+function emitAssistantProgress(event: IpcMainInvokeEvent, progress: AssistantProgress): void {
+  if (!event.sender.isDestroyed()) event.sender.send(IPC_CHANNELS.assistantProgress, progress)
+}
+
 function healthResult(health: OllamaHealth): ActionResult<OllamaHealth> {
   const model = getSettings().ollamaModel
   if (!health.connected) {
@@ -94,15 +103,22 @@ function healthResult(health: OllamaHealth): ActionResult<OllamaHealth> {
 
   return {
     ok: true,
-    message: `Ollama is running and ${model} is installed.`,
+    message: health.fallbackActive
+      ? `Ollama is ready. ${health.activeModel} is active because ${model} is unavailable or unsuitable.`
+      : `Ollama is ready and ${health.activeModel ?? model} is ${health.warm ? 'warmed' : 'installed'}.`,
     data: health
   }
 }
 
 export function registerAssistantHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.ollamaHealth, async (): Promise<ActionResult<OllamaHealth>> => {
-    return healthResult(await checkConnection())
-  })
+  ipcMain.handle(
+    IPC_CHANNELS.ollamaHealth,
+    async (event: IpcMainInvokeEvent): Promise<ActionResult<OllamaHealth>> => {
+      return healthResult(
+        await warmConnection(undefined, (progress) => emitAssistantProgress(event, progress))
+      )
+    }
+  )
 
   ipcMain.handle(
     IPC_CHANNELS.assistantAsk,
@@ -205,6 +221,11 @@ export function registerAssistantHandlers(): void {
       activeRequests.set(senderId, controller)
 
       try {
+        emitAssistantProgress(event, {
+          phase: 'checking',
+          message: 'Checking the local AI service.',
+          elapsedMs: 0
+        })
         const health = healthResult(await checkConnection(controller.signal))
 
         if (!health.ok) {
@@ -220,7 +241,8 @@ export function registerAssistantHandlers(): void {
         const planned = await planAssistantRequest(
           planningMessages,
           capabilityRegistry,
-          controller.signal
+          controller.signal,
+          (progress) => emitAssistantProgress(event, progress)
         )
 
         if (!planned.ok) return planned

@@ -1,26 +1,63 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { structuredChat } from './ollamaService'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { resetOllamaServiceForTests, structuredChat } from './ollamaService'
 
-describe('structuredChat', () => {
+const PRIMARY_MODEL = 'qwen3.5:9b-q4_K_M'
+const FALLBACK_MODEL = 'qwen3:8b'
+
+function tagsResponse(models = [PRIMARY_MODEL, FALLBACK_MODEL]): Response {
+  return Response.json({ models: models.map((name) => ({ name })) })
+}
+
+function streamResponse(lines: unknown[]): Response {
+  return new Response(`${lines.map((line) => JSON.stringify(line)).join('\n')}\n`, {
+    status: 200,
+    headers: { 'Content-Type': 'application/x-ndjson' }
+  })
+}
+
+function validStream(content = '{"kind":"conversation","response":"Hi"}'): Response {
+  const midpoint = Math.floor(content.length / 2)
+  return streamResponse([
+    { message: { role: 'assistant', content: content.slice(0, midpoint) }, done: false },
+    {
+      message: { role: 'assistant', content: content.slice(midpoint) },
+      done: true,
+      load_duration: 2_000_000,
+      prompt_eval_duration: 3_000_000,
+      eval_duration: 4_000_000,
+      total_duration: 9_000_000
+    }
+  ])
+}
+
+function installFetch(
+  chatResponse: Response,
+  models = [PRIMARY_MODEL, FALLBACK_MODEL]
+): Mock<typeof fetch> {
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.endsWith('/api/tags')) return tagsResponse(models)
+    if (url.endsWith('/api/chat')) return chatResponse
+    throw new Error(`Unexpected Ollama URL: ${url}`)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+describe('structuredChat streaming', () => {
   afterEach(() => {
+    resetOllamaServiceForTests()
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
   it.each([
-    ['wrong role', { message: { role: 'user', content: 'Hello' } }],
-    ['missing message', { response: 'Hello' }],
-    ['empty content', { message: { role: 'assistant', content: '   ' } }],
-    ['non-string content', { message: { role: 'assistant', content: 42 } }]
-  ])('rejects an Ollama response with %s', async (_case, body) => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn<typeof fetch>().mockResolvedValue(
-        new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' }
-        })
-      )
-    )
+    ['wrong role', { message: { role: 'user', content: 'Hello' }, done: true }],
+    ['missing message', { response: 'Hello', done: true }],
+    ['empty content', { message: { role: 'assistant', content: '   ' }, done: true }],
+    ['non-string content', { message: { role: 'assistant', content: 42 }, done: true }]
+  ])('rejects an NDJSON response with %s', async (_case, line) => {
+    installFetch(streamResponse([line]))
 
     await expect(structuredChat([], {})).resolves.toMatchObject({
       ok: false,
@@ -28,11 +65,18 @@ describe('structuredChat', () => {
     })
   })
 
-  it('rejects malformed JSON and unsuccessful HTTP responses', async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response('not-json', { status: 200 }))
-      .mockResolvedValueOnce(new Response('failed', { status: 500 }))
+  it('rejects malformed NDJSON and unsuccessful HTTP responses', async () => {
+    const responses = [
+      new Response('not-json\n', { status: 200 }),
+      new Response('failed', { status: 500 })
+    ]
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/tags')) return tagsResponse()
+      const response = responses.shift()
+      if (!response) throw new Error('No mocked chat response remains.')
+      return response
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(structuredChat([], {})).resolves.toMatchObject({
@@ -44,28 +88,67 @@ describe('structuredChat', () => {
       code: 'OLLAMA_CHAT_FAILED'
     })
   })
-  it('sends a non-thinking, non-streaming request with the supplied JSON schema', async () => {
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          message: { role: 'assistant', content: '{"kind":"conversation","response":"Hi"}' }
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      )
-    )
-    vi.stubGlobal('fetch', fetchMock)
+
+  it('streams non-thinking JSON with bounded context and a fifteen-minute keep-alive', async () => {
+    const fetchMock = installFetch(validStream())
     const format = { type: 'object', additionalProperties: false }
 
     await expect(
       structuredChat([{ role: 'user', content: 'Hello' }], format)
-    ).resolves.toMatchObject({ ok: true })
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { response: '{"kind":"conversation","response":"Hi"}' }
+    })
 
-    const request = fetchMock.mock.calls[0]?.[1]
-    expect(JSON.parse(String(request?.body))).toMatchObject({
-      model: 'qwen3:8b',
+    const chatCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/api/chat'))
+    const body = JSON.parse(String(chatCall?.[1]?.body))
+    expect(body).toMatchObject({
+      model: PRIMARY_MODEL,
       think: false,
-      stream: false,
-      format: 'json'
+      stream: true,
+      keep_alive: '15m',
+      format: 'json',
+      options: {
+        num_ctx: 8_192,
+        num_predict: 512,
+        temperature: 0.1
+      }
+    })
+  })
+
+  it('uses the installed qwen3:8b performance fallback when the configured model is absent', async () => {
+    const fetchMock = installFetch(validStream(), [FALLBACK_MODEL])
+
+    await expect(structuredChat([], {})).resolves.toMatchObject({
+      ok: true,
+      message: expect.stringContaining(FALLBACK_MODEL)
+    })
+    const chatCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/api/chat'))
+    expect(JSON.parse(String(chatCall?.[1]?.body)).model).toBe(FALLBACK_MODEL)
+  })
+
+  it('reports a 30-second inactivity timeout for a stalled stream', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/tags')) return tagsResponse()
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            init?.signal?.addEventListener('abort', () => {
+              controller.error(new DOMException('Aborted', 'AbortError'))
+            })
+          }
+        })
+      )
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const pending = structuredChat([], {})
+    await vi.advanceTimersByTimeAsync(30_000)
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      code: 'OLLAMA_IDLE_TIMEOUT'
     })
   })
 })

@@ -2,10 +2,12 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipcChannels'
 import type {
   ActionResult,
+  AssistantProgress,
   AssistantResponse,
   MicrophoneTestResult,
   OllamaHealth,
   OrbitSettings,
+  SpeechSynthesisEvent,
   VoiceDiagnostics,
   WakeWordEvent
 } from '../shared/types'
@@ -74,6 +76,11 @@ function isVoiceDiagnostics(value: unknown): value is VoiceDiagnostics {
     typeof diagnostics.rmsLevel === 'number' &&
     diagnostics.rmsLevel >= 0 &&
     diagnostics.rmsLevel <= 1 &&
+    (diagnostics.transcriptionBackend === 'vulkan-turbo' ||
+      diagnostics.transcriptionBackend === 'cpu-turbo' ||
+      diagnostics.transcriptionBackend === 'cpu-small') &&
+    (diagnostics.transcriptionModel === 'large-v3-turbo-q5_0' ||
+      diagnostics.transcriptionModel === 'small') &&
     (diagnostics.detectedLanguage === undefined || typeof diagnostics.detectedLanguage === 'string')
   )
 }
@@ -159,6 +166,58 @@ function isWakeWordEvent(value: unknown): value is WakeWordEvent {
   )
 }
 
+function isAssistantProgress(value: unknown): value is AssistantProgress {
+  if (typeof value !== 'object' || value === null) return false
+  const progress = value as Record<string, unknown>
+  const allowedKeys = new Set(['phase', 'message', 'elapsedMs', 'model'])
+  return (
+    !Object.keys(progress).some((key) => !allowedKeys.has(key)) &&
+    (progress.phase === 'checking' ||
+      progress.phase === 'loading' ||
+      progress.phase === 'generating' ||
+      progress.phase === 'validating') &&
+    typeof progress.message === 'string' &&
+    progress.message.length <= 300 &&
+    typeof progress.elapsedMs === 'number' &&
+    Number.isFinite(progress.elapsedMs) &&
+    progress.elapsedMs >= 0 &&
+    progress.elapsedMs <= 120_000 &&
+    (progress.model === undefined ||
+      (typeof progress.model === 'string' && progress.model.length <= 200))
+  )
+}
+
+function isSpeechSynthesisEvent(value: unknown): value is SpeechSynthesisEvent {
+  if (typeof value !== 'object' || value === null || !('type' in value)) return false
+  const event = value as Record<string, unknown>
+  if (typeof event.requestId !== 'string' || event.requestId.length > 100) return false
+  if (event.type === 'started') return event.engine === 'kokoro'
+  if (event.type === 'cancelled') return Object.keys(event).length === 2
+  if (event.type === 'error') {
+    return (
+      typeof event.code === 'string' &&
+      event.code.length <= 100 &&
+      typeof event.message === 'string' &&
+      event.message.length <= 500
+    )
+  }
+  if (event.type !== 'audio') return false
+  if (!(event.samples instanceof Float32Array) || event.samples.length > 720_000) return false
+  for (const sample of event.samples)
+    if (!Number.isFinite(sample) || Math.abs(sample) > 1.01) return false
+  return (
+    typeof event.chunkIndex === 'number' &&
+    Number.isInteger(event.chunkIndex) &&
+    event.chunkIndex >= 0 &&
+    event.chunkIndex <= 100 &&
+    typeof event.sampleRate === 'number' &&
+    Number.isInteger(event.sampleRate) &&
+    event.sampleRate >= 8_000 &&
+    event.sampleRate <= 48_000 &&
+    typeof event.final === 'boolean'
+  )
+}
+
 const orbit = Object.freeze({
   checkOllama: (): Promise<ActionResult<OllamaHealth>> =>
     ipcRenderer.invoke(IPC_CHANNELS.ollamaHealth),
@@ -167,6 +226,23 @@ const orbit = Object.freeze({
     ipcRenderer.invoke(IPC_CHANNELS.assistantAsk, { message }),
 
   cancelAssistant: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.assistantCancel),
+  onAssistantProgress: (listener: (progress: AssistantProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: unknown): void => {
+      if (isAssistantProgress(value)) listener(value)
+    }
+    ipcRenderer.on(IPC_CHANNELS.assistantProgress, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.assistantProgress, handler)
+  },
+  synthesizeSpeech: (text: string): Promise<ActionResult<{ requestId: string }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.speechSynthesize, { text }),
+  cancelSpeech: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.speechCancel),
+  onSpeechSynthesisEvent: (listener: (event: SpeechSynthesisEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: unknown): void => {
+      if (isSpeechSynthesisEvent(value)) listener(value)
+    }
+    ipcRenderer.on(IPC_CHANNELS.speechEvent, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.speechEvent, handler)
+  },
 
   getSettings: (): Promise<ActionResult<OrbitSettings>> =>
     ipcRenderer.invoke(IPC_CHANNELS.settingsGet),

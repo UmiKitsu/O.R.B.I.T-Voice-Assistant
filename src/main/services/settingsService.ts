@@ -4,6 +4,16 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import type { OrbitSettings } from '../../shared/types'
 
+export const KOKORO_VOICES = [
+  'bm_george',
+  'bm_lewis',
+  'bm_daniel',
+  'am_adam',
+  'am_michael',
+  'bf_emma',
+  'af_heart'
+] as const
+
 const applicationAliasesSchema = z.record(
   z.string().trim().min(1).max(100),
   z.array(z.string().trim().min(1).max(100)).max(20)
@@ -23,6 +33,8 @@ export const orbitSettingsSchema = z
     }, 'The Ollama URL must be an HTTP or HTTPS base URL without credentials.'),
     ollamaModel: z.string().trim().min(1).max(200),
     thinkMode: z.boolean(),
+    speechEngine: z.enum(['kokoro', 'windows']),
+    kokoroVoice: z.enum(KOKORO_VOICES),
     speechRate: z.number().min(0.5).max(2),
     speechVolume: z.number().min(0).max(1),
     launchAtStartup: z.boolean(),
@@ -39,8 +51,10 @@ export const orbitSettingsPatchSchema = orbitSettingsSchema.partial().strict()
 
 export const DEFAULT_ORBIT_SETTINGS: Readonly<OrbitSettings> = Object.freeze({
   ollamaBaseUrl: 'http://localhost:11434',
-  ollamaModel: 'qwen3:8b',
+  ollamaModel: 'qwen3.5:9b-q4_K_M',
   thinkMode: false,
+  speechEngine: 'kokoro',
+  kokoroVoice: 'bm_george',
   speechRate: 1,
   speechVolume: 1,
   launchAtStartup: false,
@@ -77,6 +91,14 @@ export function migrateLegacySettings(value: unknown): { value: unknown; changed
   let changed = 'speechEnabled' in migrated || 'wakeWordEnabled' in migrated
   delete migrated.speechEnabled
   delete migrated.wakeWordEnabled
+  if (!('speechEngine' in migrated)) {
+    migrated.speechEngine = 'kokoro'
+    changed = true
+  }
+  if (!('kokoroVoice' in migrated)) {
+    migrated.kokoroVoice = 'bm_george'
+    changed = true
+  }
   if (!('recognitionLanguage' in migrated)) {
     migrated.recognitionLanguage = 'auto'
     changed = true

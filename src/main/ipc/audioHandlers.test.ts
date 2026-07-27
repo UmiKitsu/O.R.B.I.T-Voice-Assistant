@@ -86,6 +86,8 @@ describe('microphone test IPC', () => {
         diagnostics: {
           durationMs: 500,
           transcriptionLatencyMs: 200,
+          transcriptionBackend: 'vulkan-turbo',
+          transcriptionModel: 'large-v3-turbo-q5_0',
           peakLevel: 0.4,
           rmsLevel: 0.1,
           route: {

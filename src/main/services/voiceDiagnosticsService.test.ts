@@ -52,7 +52,12 @@ describe('voice diagnostics', () => {
     mocks.transcribeRecording.mockResolvedValue({
       ok: true,
       message: 'Recording transcribed locally.',
-      data: { text: 'Or bit, open Spotfy.', detectedLanguage: 'en' }
+      data: {
+        text: 'Or bit, open Spotfy.',
+        detectedLanguage: 'en',
+        backend: 'cpu-small',
+        model: 'small'
+      }
     })
 
     const result = await diagnoseWakeCandidateRecording(
@@ -72,6 +77,8 @@ describe('voice diagnostics', () => {
         },
         diagnostics: {
           detectedLanguage: 'en',
+          transcriptionBackend: 'cpu-small',
+          transcriptionModel: 'small',
           route: {
             kind: 'deterministic',
             capability: 'application.launch',
@@ -92,7 +99,7 @@ describe('voice diagnostics', () => {
     mocks.transcribeRecording.mockResolvedValue({
       ok: true,
       message: 'Recording transcribed locally.',
-      data: { text: 'Orbit' }
+      data: { text: 'Orbit', backend: 'cpu-small', model: 'small' }
     })
 
     const result = await diagnoseWakeCandidateRecording(
@@ -118,7 +125,11 @@ describe('voice diagnostics', () => {
     mocks.transcribeRecording.mockResolvedValue({
       ok: true,
       message: 'Recording transcribed locally.',
-      data: { text: 'Please explain orbital mechanics' }
+      data: {
+        text: 'Please explain orbital mechanics',
+        backend: 'cpu-small',
+        model: 'small'
+      }
     })
 
     const result = await diagnoseWakeCandidateRecording(

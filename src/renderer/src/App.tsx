@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ActionResult,
+  AssistantProgress,
   ConfirmationPrompt,
   OllamaHealth,
   OrbitStatus,
@@ -21,6 +22,7 @@ function App(): React.JSX.Element {
   const [assistantError, setAssistantError] = useState<string | null>(null)
   const [connectionResult, setConnectionResult] = useState<ActionResult<OllamaHealth> | null>(null)
   const [isTestingConnection, setIsTestingConnection] = useState(false)
+  const [assistantProgress, setAssistantProgress] = useState<AssistantProgress | null>(null)
   const [wakeWordState, setWakeWordState] = useState<WakeWordState>('off')
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationPrompt | null>(null)
   const [voiceTranscript, setVoiceTranscript] = useState<VoiceTranscript | null>(null)
@@ -68,9 +70,15 @@ function App(): React.JSX.Element {
     speak,
     stop: stopSpeaking,
     speaking,
+    synthesizing,
+    fallbackNotice,
     voices,
     selectedVoice,
     setSelectedVoice,
+    engine: speechEngine,
+    setEngine: setSpeechEngine,
+    kokoroVoice,
+    setKokoroVoice,
     rate,
     setRate,
     volume,
@@ -115,6 +123,8 @@ function App(): React.JSX.Element {
         if (!active || !result.ok || !result.data) return
         setRate(result.data.speechRate)
         setVolume(result.data.speechVolume)
+        setSpeechEngine(result.data.speechEngine)
+        setKokoroVoice(result.data.kokoroVoice)
         setRecognitionLanguage(result.data.recognitionLanguage)
         setWakeRecognitionMode(result.data.wakeRecognitionMode)
       })
@@ -123,8 +133,17 @@ function App(): React.JSX.Element {
     return () => {
       active = false
     }
-  }, [setRate, setVolume])
+  }, [setKokoroVoice, setRate, setSpeechEngine, setVolume])
 
+  useEffect(() => {
+    return window.orbit.onAssistantProgress((progress) => {
+      setAssistantProgress(progress)
+      if (!isEnabled.current) return
+      setStatus(
+        progress.phase === 'checking' || progress.phase === 'loading' ? 'preparing-ai' : 'thinking'
+      )
+    })
+  }, [])
   const saveSettings = (patch: Parameters<typeof window.orbit.updateSettings>[0]): void => {
     void window.orbit.updateSettings(patch).catch(() => undefined)
   }
@@ -140,7 +159,26 @@ function App(): React.JSX.Element {
       setWakeWordState('error')
       setAssistantError(result.message)
       setStatus('error')
+      return
     }
+
+    setStatus('preparing-ai')
+    void window.orbit
+      .checkOllama()
+      .then((health) => {
+        if (!isEnabled.current) return
+        setConnectionResult(health)
+        if (!health.ok) setAssistantError(health.message)
+      })
+      .catch(() => {
+        if (isEnabled.current) setAssistantError('Orbit could not warm the local AI service.')
+      })
+      .finally(() => {
+        if (isEnabled.current && !requestInFlight.current) {
+          setAssistantProgress(null)
+          setStatus('ready')
+        }
+      })
   }
 
   const disableOrbit = async (): Promise<void> => {
@@ -148,6 +186,7 @@ function App(): React.JSX.Element {
     requestGeneration.current += 1
     stopSpeaking()
     setAssistantError(null)
+    setAssistantProgress(null)
     setPendingConfirmation(null)
     clearWakeAcknowledgement()
     clearVoiceTranscript()
@@ -185,6 +224,7 @@ function App(): React.JSX.Element {
       const generation = requestGeneration.current + 1
       requestGeneration.current = generation
       setAssistantError(null)
+      setAssistantProgress(null)
       setStatus('thinking')
 
       let awaitingConfirmation = false
@@ -232,6 +272,7 @@ function App(): React.JSX.Element {
           requestGeneration.current === generation &&
           isEnabled.current
         ) {
+          setAssistantProgress(null)
           setStatus('ready')
         }
       }
@@ -278,6 +319,8 @@ function App(): React.JSX.Element {
   const testConnection = async (): Promise<void> => {
     setIsTestingConnection(true)
     setConnectionResult(null)
+    setAssistantProgress(null)
+    if (isEnabled.current) setStatus('preparing-ai')
     try {
       setConnectionResult(await window.orbit.checkOllama())
     } catch {
@@ -289,6 +332,8 @@ function App(): React.JSX.Element {
       })
     } finally {
       setIsTestingConnection(false)
+      setAssistantProgress(null)
+      if (isEnabled.current && !requestInFlight.current) setStatus('ready')
     }
   }
 
@@ -460,7 +505,7 @@ function App(): React.JSX.Element {
       wakeWordState === 'capturing' ||
       wakeWordState === 'transcribing'
     if (!wakeWordOwnsAudio) {
-      if (status === 'ready' && !speaking) {
+      if (status === 'ready' && !speaking && !synthesizing) {
         void resumeWakeWord().then((result) => {
           if (active && !result.ok && isEnabled.current) {
             setWakeWordState('error')
@@ -482,11 +527,17 @@ function App(): React.JSX.Element {
     resumeWakeWord,
     speaking,
     status,
+    synthesizing,
     wakeWordState,
     wakeWordTestPhase
   ])
 
-  const displayedStatus = status === 'ready' && speaking ? 'speaking' : status
+  const displayedStatus =
+    status === 'ready' && synthesizing
+      ? 'synthesizing'
+      : status === 'ready' && speaking
+        ? 'speaking'
+        : status
   const statusLabel = displayedStatus
     .split('-')
     .map((word) => word[0].toUpperCase() + word.slice(1))
@@ -495,8 +546,10 @@ function App(): React.JSX.Element {
     disabled: 'Enable Orbit to begin local voice listening.',
     ready: 'Say “ORBIT” followed by your command.',
     listening: 'Listening for your command…',
+    'preparing-ai': 'Loading the local AI model...',
     transcribing: 'Transcribing your command locally…',
     thinking: 'Preparing a response…',
+    synthesizing: 'Generating the Kokoro voice locally...',
     'awaiting-confirmation': 'Your confirmation is required.',
     executing: 'Executing the confirmed action…',
     speaking: 'Speaking the response…',
@@ -505,7 +558,9 @@ function App(): React.JSX.Element {
   const primaryStatusLabel = wakeAcknowledged ? 'Orbit heard you' : statusLabel
   const primaryStatusMessage = wakeAcknowledged
     ? 'Listening for your command…'
-    : statusMessage[displayedStatus]
+    : (displayedStatus === 'preparing-ai' || displayedStatus === 'thinking') && assistantProgress
+      ? assistantProgress.message
+      : statusMessage[displayedStatus]
   const commandWasCorrected =
     voiceTranscript !== null &&
     voiceTranscript.rawText.toLocaleLowerCase() !==
@@ -627,8 +682,15 @@ function App(): React.JSX.Element {
                     <dd>{(voiceDiagnostics.durationMs / 1000).toFixed(1)} s</dd>
                   </div>
                   <div>
-                    <dt>Whisper</dt>
-                    <dd>{(voiceDiagnostics.transcriptionLatencyMs / 1000).toFixed(2)} s</dd>
+                    <dt>Recognition</dt>
+                    <dd>
+                      {(voiceDiagnostics.transcriptionLatencyMs / 1000).toFixed(2)} s /{' '}
+                      {voiceDiagnostics.transcriptionBackend === 'vulkan-turbo'
+                        ? 'Vulkan Turbo'
+                        : voiceDiagnostics.transcriptionBackend === 'cpu-turbo'
+                          ? 'CPU Turbo'
+                          : 'CPU Small'}
+                    </dd>
                   </div>
                   <div>
                     <dt>Peak</dt>
@@ -686,6 +748,12 @@ function App(): React.JSX.Element {
                 </div>
               </dl>
             </div>
+          ) : null}
+
+          {fallbackNotice ? (
+            <p className="connection-result" role="status">
+              {fallbackNotice}
+            </p>
           ) : null}
 
           {assistantError ? (
@@ -747,36 +815,72 @@ function App(): React.JSX.Element {
           <span className="trigger-counts">
             Wake detections: {wakeDetectionCount} · marked false: {falseTriggerCount}
           </span>
-          {status === 'thinking' ? (
+          {status === 'thinking' || status === 'preparing-ai' ? (
             <button type="button" onClick={cancelResponse}>
               Cancel Response
             </button>
           ) : null}
-          <button type="button" onClick={stopSpeaking} disabled={!speaking}>
+          <button type="button" onClick={stopSpeaking} disabled={!speaking && !synthesizing}>
             Stop Speaking
           </button>
         </footer>
 
         <fieldset className="speech-settings">
-          <legend>Windows speech</legend>
+          <legend>Speech output</legend>
           <label>
-            Voice
+            Engine
             <select
-              value={selectedVoice?.voiceURI ?? ''}
-              onChange={(event) =>
-                setSelectedVoice(
-                  voices.find((voice) => voice.voiceURI === event.target.value) ?? null
-                )
-              }
+              value={speechEngine}
+              onChange={(event) => {
+                const nextEngine = event.target.value === 'windows' ? 'windows' : 'kokoro'
+                setSpeechEngine(nextEngine)
+                saveSettings({ speechEngine: nextEngine })
+              }}
             >
-              {voices.length === 0 ? <option value="">No installed voices found</option> : null}
-              {voices.map((voice) => (
-                <option value={voice.voiceURI} key={voice.voiceURI}>
-                  {voice.name} ({voice.lang})
-                </option>
-              ))}
+              <option value="kokoro">Kokoro neural voice (recommended)</option>
+              <option value="windows">Windows speech fallback</option>
             </select>
           </label>
+          {speechEngine === 'kokoro' ? (
+            <label>
+              Voice
+              <select
+                value={kokoroVoice}
+                onChange={(event) => {
+                  const voice = event.target.value as typeof kokoroVoice
+                  setKokoroVoice(voice)
+                  saveSettings({ kokoroVoice: voice })
+                }}
+              >
+                <option value="bm_george">George (British male)</option>
+                <option value="bm_lewis">Lewis (British male)</option>
+                <option value="bm_daniel">Daniel (British male)</option>
+                <option value="am_adam">Adam (American male)</option>
+                <option value="am_michael">Michael (American male)</option>
+                <option value="bf_emma">Emma (British female)</option>
+                <option value="af_heart">Heart (American female)</option>
+              </select>
+            </label>
+          ) : (
+            <label>
+              Windows voice
+              <select
+                value={selectedVoice?.voiceURI ?? ''}
+                onChange={(event) =>
+                  setSelectedVoice(
+                    voices.find((voice) => voice.voiceURI === event.target.value) ?? null
+                  )
+                }
+              >
+                {voices.length === 0 ? <option value="">No installed voices found</option> : null}
+                {voices.map((voice) => (
+                  <option value={voice.voiceURI} key={voice.voiceURI}>
+                    {voice.name} ({voice.lang})
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             Rate: {rate.toFixed(1)}
             <input
@@ -837,12 +941,40 @@ function App(): React.JSX.Element {
         </fieldset>
 
         {connectionResult ? (
-          <p
+          <div
             className={`connection-result ${connectionResult.ok ? 'connection-success' : 'connection-error'}`}
             role="status"
           >
-            {connectionResult.message}
-          </p>
+            <p>{connectionResult.message}</p>
+            {connectionResult.ok && connectionResult.data ? (
+              <dl className="voice-metrics">
+                <div>
+                  <dt>Model</dt>
+                  <dd>
+                    {connectionResult.data.activeModel ?? connectionResult.data.configuredModel}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Processor</dt>
+                  <dd>{connectionResult.data.processor ?? 'unknown'}</dd>
+                </div>
+                <div>
+                  <dt>Warm</dt>
+                  <dd>{connectionResult.data.warm ? 'yes' : 'no'}</dd>
+                </div>
+                <div>
+                  <dt>Fallback</dt>
+                  <dd>{connectionResult.data.fallbackActive ? 'active' : 'no'}</dd>
+                </div>
+                {connectionResult.data.timing ? (
+                  <div>
+                    <dt>Last load</dt>
+                    <dd>{(connectionResult.data.timing.totalMs / 1000).toFixed(2)} s</dd>
+                  </div>
+                ) : null}
+              </dl>
+            ) : null}
+          </div>
         ) : null}
       </section>
     </main>

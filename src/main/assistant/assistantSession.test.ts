@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ActionPlan } from './actionPlanSchemas'
 import {
+  MAX_RETAINED_CHARACTERS,
+  MAX_RETAINED_MESSAGES,
   createAssistantSession,
   createSessionContextMessage,
   recordSuccessfulExchange
@@ -58,5 +60,23 @@ describe('assistant session context', () => {
     const session = createAssistantSession()
     expect(session.context).toEqual({})
     expect(session.messages).toEqual([])
+  })
+  it('retains only the newest eight conversation messages', () => {
+    const session = createAssistantSession()
+    for (let index = 0; index < 6; index += 1) {
+      recordSuccessfulExchange(session, `User ${index}`, `Assistant ${index}`)
+    }
+
+    expect(session.messages).toHaveLength(MAX_RETAINED_MESSAGES)
+    expect(session.messages[0]).toEqual({ role: 'user', content: 'User 2' })
+    expect(session.messages.at(-1)).toEqual({ role: 'assistant', content: 'Assistant 5' })
+  })
+
+  it('caps retained context at twelve thousand characters', () => {
+    const session = createAssistantSession()
+    recordSuccessfulExchange(session, 'Short request', 'x'.repeat(MAX_RETAINED_CHARACTERS + 1_000))
+
+    expect(session.messages).toHaveLength(1)
+    expect(session.messages[0]?.content).toHaveLength(MAX_RETAINED_CHARACTERS)
   })
 })

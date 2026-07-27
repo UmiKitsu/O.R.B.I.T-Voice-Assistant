@@ -9,6 +9,7 @@ files:
   - '!scripts/smoke-wake-word.mjs'
   - '!resources/whisper/**'
   - '!resources/wake-word/**'
+  - '!resources/kokoro/**'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
@@ -26,6 +27,10 @@ win:
 extraResources:
   - from: resources/whisper
     to: whisper
+    filter:
+      - '**/*'
+  - from: resources/kokoro
+    to: kokoro
     filter:
       - '**/*'
   - from: resources/wake-word

@@ -1,6 +1,7 @@
 export const IPC_CHANNELS = {
   assistantAsk: 'orbit:assistant:ask',
   assistantCancel: 'orbit:assistant:cancel',
+  assistantProgress: 'orbit:assistant:progress',
   wakeWordStart: 'orbit:wake-word:start',
   wakeWordStop: 'orbit:wake-word:stop',
   wakeWordPause: 'orbit:wake-word:pause',
@@ -11,6 +12,9 @@ export const IPC_CHANNELS = {
   wakeWordEvent: 'orbit:wake-word:event',
   microphoneTestTranscribe: 'orbit:microphone-test:transcribe',
   microphoneTestCancel: 'orbit:microphone-test:cancel',
+  speechSynthesize: 'orbit:speech:synthesize',
+  speechCancel: 'orbit:speech:cancel',
+  speechEvent: 'orbit:speech:event',
   ollamaHealth: 'orbit:ollama:health',
   settingsGet: 'orbit:settings:get',
   settingsUpdate: 'orbit:settings:update',

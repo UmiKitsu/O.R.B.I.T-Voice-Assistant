@@ -138,3 +138,8 @@ dist
 # Downloaded local speech model (GitHub rejects files larger than 100 MB)
 resources/whisper/ggml-small.bin
 resources/whisper/ggml-small.bin.download
+resources/whisper/ggml-large-v3-turbo-q5_0.bin
+resources/whisper/ggml-large-v3-turbo-q5_0.bin.download
+resources/kokoro/kokoro-multi-lang-v1_0/
+resources/kokoro/*.download
+resources/kokoro/.kokoro-extract/
