@@ -3,8 +3,10 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerAssistantHandlers } from './ipc/assistantHandlers'
+import { registerAudioHandlers } from './ipc/audioHandlers'
 
 registerAssistantHandlers()
+registerAudioHandlers()
 
 function createWindow(): void {
   // Create the browser window.

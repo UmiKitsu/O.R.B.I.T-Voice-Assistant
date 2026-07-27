@@ -467,3 +467,45 @@ h1 {
     margin: -6px 20px 22px;
   }
 }
+
+.status-listening {
+  color: #ffc978;
+  border-color: rgba(255, 174, 72, 0.35);
+  background: rgba(218, 119, 24, 0.12);
+}
+
+.status-listening .status-dot {
+  background: #ffad45;
+  box-shadow: 0 0 0 4px rgba(255, 173, 69, 0.14);
+  animation: listening-pulse 1.3s ease-in-out infinite;
+}
+
+.status-transcribing {
+  color: #c7b8ff;
+  border-color: rgba(142, 112, 255, 0.34);
+  background: rgba(106, 76, 212, 0.12);
+}
+
+.status-transcribing .status-dot {
+  background: #9d83ff;
+  box-shadow: 0 0 0 4px rgba(157, 131, 255, 0.14);
+}
+
+.microphone-active {
+  color: #ffe0b0 !important;
+  border-color: rgba(255, 174, 72, 0.38) !important;
+  background: rgba(218, 119, 24, 0.16) !important;
+}
+
+.transcription-hint {
+  padding: 0 16px 12px;
+  color: #9ee6be;
+  font-size: 12px;
+}
+
+@keyframes listening-pulse {
+  50% {
+    transform: scale(1.25);
+    opacity: 0.7;
+  }
+}

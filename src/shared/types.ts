@@ -20,6 +20,10 @@ export type OllamaHealth = {
   models: string[]
 }
 
+export type Transcription = {
+  text: string
+}
+
 export type AssistantEffect = 'stop-speaking' | 'disable'
 
 export type AssistantResponse = {

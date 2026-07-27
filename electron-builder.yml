@@ -14,6 +14,11 @@ asarUnpack:
   - node_modules/loudness/impl/windows/*.exe
 win:
   executableName: titan-voice-assistant
+extraResources:
+  - from: resources/whisper
+    to: whisper
+    filter:
+      - '**/*'
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

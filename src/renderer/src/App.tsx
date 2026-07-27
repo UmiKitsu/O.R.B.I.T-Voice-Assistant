@@ -1,17 +1,22 @@
 import { FormEvent, useRef, useState } from 'react'
 import type { ActionResult, ChatMessage, OllamaHealth, TitanStatus } from '../../shared/types'
 import { useSpeech } from './hooks/useSpeech'
+import { useMicrophone } from './hooks/useMicrophone'
 
 function App(): React.JSX.Element {
   const [status, setStatus] = useState<TitanStatus>('disabled')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [draft, setDraft] = useState('')
+  const [isTranscribedDraft, setIsTranscribedDraft] = useState(false)
   const [conversationError, setConversationError] = useState<string | null>(null)
   const [connectionResult, setConnectionResult] = useState<ActionResult<OllamaHealth> | null>(null)
   const [isTestingConnection, setIsTestingConnection] = useState(false)
   const [speechEnabled, setSpeechEnabled] = useState(true)
   const isEnabled = useRef(false)
   const requestGeneration = useRef(0)
+  const messageInputRef = useRef<HTMLInputElement>(null)
+  const { startRecording, stopAndTranscribe, cancelRecording, cancelTranscription } =
+    useMicrophone()
   const {
     speak,
     stop: stopSpeaking,
@@ -34,6 +39,8 @@ function App(): React.JSX.Element {
   const disableTitan = async (): Promise<void> => {
     isEnabled.current = false
     stopSpeaking()
+    if (status === 'listening') cancelRecording()
+    if (status === 'transcribing') await cancelTranscription()
     requestGeneration.current += 1
     setConversationError(null)
     setStatus('disabled')
@@ -51,6 +58,7 @@ function App(): React.JSX.Element {
     setDraft('')
     setConversationError(null)
     setStatus('thinking')
+    setIsTranscribedDraft(false)
 
     try {
       const result = await window.titan.askAssistant(message)
@@ -88,6 +96,52 @@ function App(): React.JSX.Element {
     }
   }
 
+  const handleMicrophone = async (): Promise<void> => {
+    setConversationError(null)
+    stopSpeaking()
+
+    if (status === 'listening') {
+      setStatus('transcribing')
+      try {
+        const result = await stopAndTranscribe()
+        if (!isEnabled.current) return
+        if (result.ok && result.data?.text) {
+          setDraft(result.data.text)
+          setIsTranscribedDraft(true)
+          requestAnimationFrame(() => messageInputRef.current?.focus())
+        } else {
+          setConversationError(result.message)
+        }
+      } catch {
+        if (isEnabled.current) setConversationError('I could not understand the recording.')
+      } finally {
+        if (isEnabled.current) setStatus('ready')
+      }
+      return
+    }
+
+    if (status === 'transcribing') {
+      const result = await cancelTranscription()
+      setConversationError(result.message)
+      if (isEnabled.current) setStatus('ready')
+      return
+    }
+
+    const result = await startRecording()
+    if (result.ok) {
+      setIsTranscribedDraft(false)
+      setStatus('listening')
+    } else {
+      setConversationError(result.message)
+    }
+  }
+
+  const cancelActiveRecording = (): void => {
+    const result = cancelRecording()
+    setConversationError(result.message)
+    if (isEnabled.current) setStatus('ready')
+  }
+
   const cancelResponse = async (): Promise<void> => {
     requestGeneration.current += 1
     const result = await window.titan.cancelAssistant()
@@ -97,8 +151,12 @@ function App(): React.JSX.Element {
 
   const clearConversation = async (): Promise<void> => {
     requestGeneration.current += 1
+    if (status === 'listening') cancelRecording()
+    if (status === 'transcribing') await cancelTranscription()
     const result = await window.titan.clearConversation()
     setMessages([])
+    setDraft('')
+    setIsTranscribedDraft(false)
     setConversationError(result.ok ? null : result.message)
     if (isEnabled.current) setStatus('ready')
   }
@@ -126,6 +184,17 @@ function App(): React.JSX.Element {
     .map((word) => word[0].toUpperCase() + word.slice(1))
     .join(' ')
 
+  const inputUnavailable =
+    status === 'disabled' ||
+    status === 'thinking' ||
+    status === 'listening' ||
+    status === 'transcribing'
+  const microphoneLabel =
+    status === 'listening'
+      ? 'Stop and transcribe'
+      : status === 'transcribing'
+        ? 'Cancel transcription'
+        : 'Start recording'
   return (
     <main className="app-shell">
       <section className="assistant-card" aria-labelledby="app-title">
@@ -157,7 +226,11 @@ function App(): React.JSX.Element {
               <h2 id="conversation-title">Conversation</h2>
               <p>Your current session stays on this device.</p>
             </div>
-            <button type="button" onClick={clearConversation} disabled={messages.length === 0}>
+            <button
+              type="button"
+              onClick={clearConversation}
+              disabled={messages.length === 0 && !draft}
+            >
               Clear Conversation
             </button>
           </div>
@@ -167,7 +240,7 @@ function App(): React.JSX.Element {
               <div className="empty-conversation">
                 <span aria-hidden="true">T</span>
                 <h3>Ready when you are</h3>
-                <p>Enable T.I.T.A.N. and enter a message to begin.</p>
+                <p>Enable T.I.T.A.N. and type or record a message to begin.</p>
               </div>
             ) : (
               messages.map((message, index) => (
@@ -193,21 +266,27 @@ function App(): React.JSX.Element {
               Message T.I.T.A.N.
             </label>
             <input
+              ref={messageInputRef}
               id="message-input"
               type="text"
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="Type a message..."
+              onChange={(event) => {
+                setDraft(event.target.value)
+                setIsTranscribedDraft(false)
+              }}
+              placeholder={status === 'listening' ? 'Listening...' : 'Type a message...'}
               maxLength={4000}
-              disabled={status === 'disabled' || status === 'thinking'}
+              disabled={inputUnavailable}
             />
-            <button
-              type="submit"
-              disabled={status === 'disabled' || status === 'thinking' || draft.trim().length === 0}
-            >
+            <button type="submit" disabled={inputUnavailable || draft.trim().length === 0}>
               {status === 'thinking' ? 'Thinking...' : 'Send'}
             </button>
           </form>
+          {isTranscribedDraft ? (
+            <p className="transcription-hint" role="status">
+              Review the recognized text, correct it if needed, then press Send.
+            </p>
+          ) : null}
         </section>
 
         <footer className="control-bar">
@@ -219,10 +298,21 @@ function App(): React.JSX.Element {
               Cancel Response
             </button>
           ) : null}
-          <button type="button" disabled title="Speech-to-text will be added in a later phase">
+          <button
+            className={status === 'listening' ? 'microphone-active' : ''}
+            type="button"
+            onClick={handleMicrophone}
+            disabled={status === 'disabled' || status === 'thinking'}
+            aria-pressed={status === 'listening'}
+          >
             <span aria-hidden="true">●</span>
-            Microphone — Coming Soon
+            {microphoneLabel}
           </button>
+          {status === 'listening' ? (
+            <button type="button" onClick={cancelActiveRecording}>
+              Cancel Recording
+            </button>
+          ) : null}
           <button type="button" onClick={stopSpeaking} disabled={!speaking}>
             Stop Speaking
           </button>
