@@ -12,6 +12,7 @@ const now = new Date(2026, 6, 27, 2, 30, 0)
 const openExternalUrl = vi.fn(async () => undefined)
 const sendMediaKey = vi.fn(() => true)
 const setAudioMuted = vi.fn(async () => undefined)
+const setAudioVolume = vi.fn(async () => undefined)
 const launchApplication = vi.fn(async () => undefined)
 
 function runtime(): PolicyEngine {
@@ -20,6 +21,7 @@ function runtime(): PolicyEngine {
     openExternalUrl,
     sendMediaKey,
     setAudioMuted,
+    setAudioVolume,
     launchApplication
   })
 }
@@ -58,7 +60,8 @@ describe('Phase 11 capabilities', () => {
       'javascript:alert(1)',
       'data:text/plain,test',
       'https://user:password@example.com',
-      'ftp://example.com'
+      'ftp://example.com',
+      'https://example.com/\nscript:run'
     ]) {
       await expect(execute('browser.openUrl', { url })).resolves.toMatchObject({
         status: 'invalid-parameters'
@@ -96,6 +99,18 @@ describe('Phase 11 capabilities', () => {
       result: { ok: true }
     })
     expect(sendMediaKey).toHaveBeenCalledWith(action)
+  })
+
+  it('sets an exact validated volume percentage', async () => {
+    await expect(execute('audio.setVolume', { volume: 30 })).resolves.toMatchObject({
+      status: 'executed',
+      result: { ok: true, message: 'Volume set to 30 percent.' }
+    })
+    expect(setAudioVolume).toHaveBeenCalledWith(30)
+
+    await expect(execute('audio.setVolume', { volume: 101 })).resolves.toMatchObject({
+      status: 'invalid-parameters'
+    })
   })
 
   it.each([

@@ -3,6 +3,7 @@ import type { CapabilityRegistry } from '../capabilities/capabilityRegistry'
 import { logOperationalEvent } from '../services/loggerService'
 import { blockedCapabilities } from './blockedCapabilities'
 import { ConfirmationManager, type PendingConfirmation } from './confirmationManager'
+import { confirmationRequiredCapabilities } from './confirmationRequiredCapabilities'
 
 export type PolicyRequest = {
   capability: string
@@ -67,6 +68,9 @@ export class PolicyEngine {
     }
 
     const parameters = parsedParameters.data
+    const requiresConfirmation =
+      capability.risk === 'confirmation-required' ||
+      confirmationRequiredCapabilities.has(capability.name)
 
     if (capability.risk === 'blocked') {
       this.logPolicyDecision(request.capability, 'blocked')
@@ -76,7 +80,7 @@ export class PolicyEngine {
       }
     }
 
-    if (capability.risk === 'confirmation-required' && !request.confirmationRequestId) {
+    if (requiresConfirmation && !request.confirmationRequestId) {
       this.logPolicyDecision(request.capability, 'allowed')
       return {
         status: 'confirmation-required',
@@ -90,7 +94,7 @@ export class PolicyEngine {
     }
 
     if (
-      capability.risk === 'confirmation-required' &&
+      requiresConfirmation &&
       !this.confirmations.consume(request.confirmationRequestId ?? '', capability.name, parameters)
     ) {
       this.logPolicyDecision(request.capability, 'blocked')

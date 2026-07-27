@@ -18,6 +18,8 @@ describe('protected target detection', () => {
     ['powershell', { processName: 'pwsh.exe' }],
     ['command-prompt', { title: 'Administrator: Command Prompt' }],
     ['windows-terminal', { processName: 'WindowsTerminal.exe' }],
+    ['developer-console', { title: 'Chrome DevTools - Console' }],
+    ['script-interpreter', { processName: 'python.exe' }],
     ['registry-editor', { title: 'Registry Editor' }],
     ['disk-management', { title: 'Disk Management' }],
     ['task-scheduler', { title: 'Task Scheduler' }],

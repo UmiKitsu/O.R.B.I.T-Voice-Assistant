@@ -2,7 +2,9 @@ import { z } from 'zod'
 import type { ActionResult } from '../../shared/types'
 import {
   performMediaControl,
+  setAudioVolume,
   type AudioMuteController,
+  type AudioVolumeController,
   type MediaControlAction,
   type MediaKeySender
 } from '../services/mediaControlService'
@@ -25,7 +27,8 @@ const capabilityActions = {
 export function registerMediaCapabilities(
   registry: CapabilityRegistry,
   sender?: MediaKeySender,
-  muteController?: AudioMuteController
+  muteController?: AudioMuteController,
+  volumeController?: AudioVolumeController
 ): void {
   for (const [name, action] of Object.entries(capabilityActions)) {
     const definition: CapabilityDefinition<Record<string, never>, ActionResult> = {
@@ -40,4 +43,19 @@ export function registerMediaCapabilities(
 
     registry.register(definition, noParametersSchema, emptyActionResultSchema)
   }
+
+  const setVolume: CapabilityDefinition<{ volume: number }, ActionResult> = {
+    name: 'audio.setVolume',
+    risk: 'automatic',
+    timeoutMs: 2_000,
+    execute: async ({ volume }, signal) => {
+      if (signal.aborted) throw new Error('The action was cancelled.')
+      return setAudioVolume(volume, volumeController)
+    }
+  }
+  registry.register(
+    setVolume,
+    z.object({ volume: z.number().int().min(0).max(100) }).strict(),
+    emptyActionResultSchema
+  )
 }

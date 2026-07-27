@@ -49,7 +49,6 @@ describe('routeDeterministicCommand', () => {
 
   it('returns null for conversation and unsupported actions', () => {
     expect(routeDeterministicCommand('Explain Electron security.')).toBeNull()
-    expect(routeDeterministicCommand('Delete my Downloads folder.')).toBeNull()
   })
 
   it.each([

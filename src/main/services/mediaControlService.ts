@@ -8,6 +8,7 @@ export type MediaControlAction =
 export type MediaKeyAction = Exclude<MediaControlAction, 'mute' | 'unmute'>
 export type MediaKeySender = (action: MediaKeyAction) => boolean
 export type AudioMuteController = (muted: boolean) => Promise<void>
+export type AudioVolumeController = (volume: number) => Promise<void>
 
 const virtualKeys: Record<MediaKeyAction, number> = {
   playPause: 0xb3,
@@ -107,6 +108,27 @@ export const sendWindowsMediaKey: MediaKeySender = (action) => {
 
 export const setWindowsAudioMuted: AudioMuteController = async (muted) => {
   await loudness.setMuted(muted)
+}
+
+export const setWindowsAudioVolume: AudioVolumeController = async (volume) => {
+  await loudness.setVolume(volume)
+}
+
+export async function setAudioVolume(
+  volume: number,
+  controller: AudioVolumeController = setWindowsAudioVolume
+): Promise<ActionResult> {
+  try {
+    await controller(volume)
+    return { ok: true, message: `Volume set to ${volume} percent.` }
+  } catch {
+    return {
+      ok: false,
+      code: 'AUDIO_VOLUME_FAILED',
+      message: 'The volume could not be changed.',
+      recoverable: true
+    }
+  }
 }
 
 export async function performMediaControl(

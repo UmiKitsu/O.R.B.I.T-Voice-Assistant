@@ -5,8 +5,20 @@ export const MAX_EXTERNAL_URL_LENGTH = 2_048
 
 export type ExternalUrlOpener = (url: string) => Promise<void>
 
+function containsControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0
+    return codePoint <= 0x1f || codePoint === 0x7f
+  })
+}
+
 export function validateExternalUrl(value: string): URL | null {
-  if (value.length === 0 || value.length > MAX_EXTERNAL_URL_LENGTH) return null
+  if (
+    value.length === 0 ||
+    value.length > MAX_EXTERNAL_URL_LENGTH ||
+    containsControlCharacter(value)
+  )
+    return null
 
   try {
     const url = new URL(value)

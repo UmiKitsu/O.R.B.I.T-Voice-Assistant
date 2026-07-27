@@ -44,6 +44,35 @@ describe('structured action planning', () => {
       )
     ).toBeNull()
     expect(parseAndValidateAssistantOutput('{not-json', registry)).toBeNull()
+    expect(
+      parseAndValidateAssistantOutput(
+        JSON.stringify({ kind: 'conversation', response: '   ' }),
+        registry
+      )
+    ).toBeNull()
+    expect(
+      parseAndValidateAssistantOutput(
+        JSON.stringify({
+          kind: 'action_plan',
+          summary: '',
+          actions: [{ capability: 'test.first', parameters: {} }]
+        }),
+        registry
+      )
+    ).toBeNull()
+    expect(
+      parseAndValidateAssistantOutput(
+        JSON.stringify({
+          kind: 'action_plan',
+          summary: 'Too many actions',
+          actions: Array.from({ length: 6 }, () => ({
+            capability: 'test.first',
+            parameters: {}
+          }))
+        }),
+        registry
+      )
+    ).toBeNull()
   })
 
   it('rejects unknown capabilities and invalid capability parameters', () => {
@@ -70,6 +99,22 @@ describe('structured action planning', () => {
           kind: 'action_plan',
           summary: 'Wrong parameters',
           actions: [{ capability: 'test.first', parameters: { value: 42 } }]
+        }),
+        registry
+      )
+    ).toBeNull()
+    expect(
+      parseAndValidateAssistantOutput(
+        JSON.stringify({
+          kind: 'action_plan',
+          summary: 'Executable field injection',
+          actions: [
+            {
+              capability: 'test.first',
+              parameters: { value: 'safe' },
+              command: 'powershell.exe'
+            }
+          ]
         }),
         registry
       )

@@ -35,6 +35,15 @@ describe('settings validation', () => {
     expect(
       titanSettingsPatchSchema.safeParse({ ollamaBaseUrl: 'http://token@localhost:11434' }).success
     ).toBe(false)
+    expect(titanSettingsPatchSchema.safeParse({ ollamaBaseUrl: 'file:///C:/ollama' }).success).toBe(
+      false
+    )
+    expect(titanSettingsPatchSchema.safeParse({ confirmationTimeoutSeconds: 301 }).success).toBe(
+      false
+    )
+    expect(
+      titanSettingsPatchSchema.safeParse({ applicationAliases: { chrome: [''] } }).success
+    ).toBe(false)
   })
 
   it('resets invalid loaded settings before returning them', () => {

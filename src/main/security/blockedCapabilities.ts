@@ -8,6 +8,7 @@ export const blockedCapabilities = new Set([
   'filesystem.delete',
   'filesystem.createDirectory',
   'filesystem.deleteDirectory',
+  'filesystem.changePermissions',
 
   'browser.download',
   'browser.upload',

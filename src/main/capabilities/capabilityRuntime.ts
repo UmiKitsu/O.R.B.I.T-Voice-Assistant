@@ -1,6 +1,10 @@
 import type { ExternalUrlOpener } from '../services/browserService'
 import type { ApplicationLauncher } from '../services/applicationDiscoveryService'
-import type { AudioMuteController, MediaKeySender } from '../services/mediaControlService'
+import type {
+  AudioMuteController,
+  AudioVolumeController,
+  MediaKeySender
+} from '../services/mediaControlService'
 import type { WindowController } from '../services/windowInputService'
 import { ConfirmationManager } from '../security/confirmationManager'
 import { PolicyEngine } from '../security/policyEngine'
@@ -18,6 +22,7 @@ export type CapabilityRuntimeDependencies = {
   openExternalUrl?: ExternalUrlOpener
   sendMediaKey?: MediaKeySender
   setAudioMuted?: AudioMuteController
+  setAudioVolume?: AudioVolumeController
   launchApplication?: ApplicationLauncher
   windowController?: WindowController
 }
@@ -28,7 +33,12 @@ export function createCapabilityRegistry(
   const registry = new CapabilityRegistry()
   registerSystemCapabilities(registry, dependencies.now)
   registerBrowserCapabilities(registry, dependencies.openExternalUrl)
-  registerMediaCapabilities(registry, dependencies.sendMediaKey, dependencies.setAudioMuted)
+  registerMediaCapabilities(
+    registry,
+    dependencies.sendMediaKey,
+    dependencies.setAudioMuted,
+    dependencies.setAudioVolume
+  )
   registerApplicationCapabilities(registry, dependencies.launchApplication)
   registerAssistantCapabilities(registry)
   registerWindowInputCapabilities(registry, dependencies.windowController)

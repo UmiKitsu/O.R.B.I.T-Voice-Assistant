@@ -11,6 +11,8 @@ export type ProtectedTargetReason =
   | 'powershell'
   | 'command-prompt'
   | 'windows-terminal'
+  | 'developer-console'
+  | 'script-interpreter'
   | 'registry-editor'
   | 'disk-management'
   | 'task-scheduler'
@@ -42,6 +44,14 @@ const protectedPatterns: ReadonlyArray<{
   {
     reason: 'windows-terminal',
     pattern: /\b(?:windows terminal|windowsterminal|wt(?:\.exe)?)\b/i
+  },
+  {
+    reason: 'developer-console',
+    pattern: /\b(?:developer tools|devtools|debug console|javascript console)\b/i
+  },
+  {
+    reason: 'script-interpreter',
+    pattern: /\b(?:pythonw?|node|wscript|cscript|ruby|perl)(?:\.exe)?\b/i
   },
   { reason: 'registry-editor', pattern: /\b(?:registry editor|regedit(?:\.exe)?)\b/i },
   {
@@ -89,6 +99,8 @@ const reasonLabels: Record<ProtectedTargetReason, string> = {
   powershell: 'PowerShell',
   'command-prompt': 'Command Prompt',
   'windows-terminal': 'Windows Terminal',
+  'developer-console': 'a developer console',
+  'script-interpreter': 'a script interpreter',
   'registry-editor': 'Registry Editor',
   'disk-management': 'Disk Management',
   'task-scheduler': 'Task Scheduler',

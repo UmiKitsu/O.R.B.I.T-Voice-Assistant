@@ -17,6 +17,7 @@ const permanentlyBlocked = [
 const confirmationRequired = [
   'system.restart',
   'system.shutdown',
+  'application.closeAll',
   'network.disableWifi',
   'communication.sendMessage'
 ]
