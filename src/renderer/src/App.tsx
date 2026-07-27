@@ -3,11 +3,12 @@ import type {
   ActionResult,
   ConfirmationPrompt,
   OllamaHealth,
-  TitanStatus,
+  OrbitStatus,
   VoiceDiagnostics,
   VoiceTranscript,
   WakeWordEvent,
-  WakeWordState
+  WakeWordState,
+  WakeWordTestResult
 } from '../../shared/types'
 import { ConfirmationDialog } from './ConfirmationDialog'
 import { useMicrophoneTest } from './hooks/useMicrophoneTest'
@@ -16,7 +17,7 @@ import { useWakeWord } from './hooks/useWakeWord'
 import { TRANSCRIPT_READY_HOLD_MS, WAKE_ACKNOWLEDGEMENT_MS } from './voiceCueTiming'
 
 function App(): React.JSX.Element {
-  const [status, setStatus] = useState<TitanStatus>('disabled')
+  const [status, setStatus] = useState<OrbitStatus>('disabled')
   const [assistantError, setAssistantError] = useState<string | null>(null)
   const [connectionResult, setConnectionResult] = useState<ActionResult<OllamaHealth> | null>(null)
   const [isTestingConnection, setIsTestingConnection] = useState(false)
@@ -29,12 +30,15 @@ function App(): React.JSX.Element {
   const [recognitionLanguage, setRecognitionLanguage] = useState<'auto' | 'en'>('auto')
   const [wakeDetectionCount, setWakeDetectionCount] = useState(0)
   const [falseTriggerCount, setFalseTriggerCount] = useState(0)
+  const [wakeWordTestPhase, setWakeWordTestPhase] = useState<'idle' | 'listening'>('idle')
+  const [wakeWordTestResult, setWakeWordTestResult] = useState<WakeWordTestResult | null>(null)
   const isEnabled = useRef(false)
   const requestGeneration = useRef(0)
   const requestInFlight = useRef(false)
   const wakeCommandHandler = useRef<((message: string) => Promise<void>) | null>(null)
   const wakeAcknowledgementTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const transcriptClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wakeWordTestWasEnabled = useRef(false)
   const {
     microphoneName: wakeMicrophoneName,
     inputLevel: wakeInputLevel,
@@ -102,7 +106,7 @@ function App(): React.JSX.Element {
   )
   useEffect(() => {
     let active = true
-    void window.titan
+    void window.orbit
       .getSettings()
       .then((result) => {
         if (!active || !result.ok || !result.data) return
@@ -117,11 +121,11 @@ function App(): React.JSX.Element {
     }
   }, [setRate, setVolume])
 
-  const saveSettings = (patch: Parameters<typeof window.titan.updateSettings>[0]): void => {
-    void window.titan.updateSettings(patch).catch(() => undefined)
+  const saveSettings = (patch: Parameters<typeof window.orbit.updateSettings>[0]): void => {
+    void window.orbit.updateSettings(patch).catch(() => undefined)
   }
 
-  const enableTitan = async (): Promise<void> => {
+  const enableOrbit = async (): Promise<void> => {
     isEnabled.current = true
     setAssistantError(null)
     setWakeWordState('starting')
@@ -135,7 +139,7 @@ function App(): React.JSX.Element {
     }
   }
 
-  const disableTitan = async (): Promise<void> => {
+  const disableOrbit = async (): Promise<void> => {
     isEnabled.current = false
     requestGeneration.current += 1
     stopSpeaking()
@@ -145,7 +149,13 @@ function App(): React.JSX.Element {
     clearVoiceTranscript()
     setWakeWordState('off')
     setStatus('disabled')
-    await Promise.all([stopWakeWord(), window.titan.cancelAssistant(), microphoneTest.cancel()])
+    setWakeWordTestPhase('idle')
+    await Promise.all([
+      stopWakeWord(),
+      window.orbit.cancelWakeWordTest(),
+      window.orbit.cancelAssistant(),
+      microphoneTest.cancel()
+    ])
   }
 
   const submitMessage = async (message: string): Promise<void> => {
@@ -163,7 +173,7 @@ function App(): React.JSX.Element {
     try {
       const pauseResult = await pauseWakeWord()
       if (!pauseResult.ok) {
-        setAssistantError('T.I.T.A.N. could not pause voice listening.')
+        setAssistantError('Orbit could not pause voice listening.')
         return
       }
       if (!isEnabled.current) return
@@ -175,7 +185,7 @@ function App(): React.JSX.Element {
 
       let awaitingConfirmation = false
       try {
-        const result = await window.titan.askAssistant(normalizedMessage)
+        const result = await window.orbit.askAssistant(normalizedMessage)
         if (requestGeneration.current !== generation) return
 
         if (result.ok) {
@@ -210,7 +220,7 @@ function App(): React.JSX.Element {
         }
       } catch {
         if (requestGeneration.current === generation) {
-          setAssistantError('T.I.T.A.N. could not send the request to the main process.')
+          setAssistantError('Orbit could not send the request to the main process.')
         }
       } finally {
         if (
@@ -236,7 +246,7 @@ function App(): React.JSX.Element {
     setStatus('executing')
     setAssistantError(null)
     try {
-      const result = await window.titan.confirmAction(confirmation.requestId, approved)
+      const result = await window.orbit.confirmAction(confirmation.requestId, approved)
       setPendingConfirmation(null)
       if (result.ok) {
         const response = result.data?.response
@@ -246,7 +256,7 @@ function App(): React.JSX.Element {
       }
     } catch {
       setPendingConfirmation(null)
-      setAssistantError('T.I.T.A.N. could not complete the confirmation request.')
+      setAssistantError('Orbit could not complete the confirmation request.')
     } finally {
       if (isEnabled.current) setStatus('ready')
     }
@@ -256,7 +266,7 @@ function App(): React.JSX.Element {
     requestGeneration.current += 1
     clearWakeAcknowledgement()
     clearVoiceTranscript()
-    const result = await window.titan.cancelAssistant()
+    const result = await window.orbit.cancelAssistant()
     setAssistantError(result.message)
     if (isEnabled.current) setStatus('ready')
   }
@@ -265,7 +275,7 @@ function App(): React.JSX.Element {
     setIsTestingConnection(true)
     setConnectionResult(null)
     try {
-      setConnectionResult(await window.titan.checkOllama())
+      setConnectionResult(await window.orbit.checkOllama())
     } catch {
       setConnectionResult({
         ok: false,
@@ -303,8 +313,51 @@ function App(): React.JSX.Element {
     if (isEnabled.current) setStatus('ready')
   }
 
+  const restoreAfterWakeWordTest = useCallback(async (): Promise<void> => {
+    if (wakeWordTestWasEnabled.current) {
+      setWakeWordState('armed')
+      setStatus('ready')
+      await resumeWakeWord()
+    } else {
+      await stopWakeWord()
+      setWakeWordState('off')
+      setStatus('disabled')
+    }
+  }, [resumeWakeWord, stopWakeWord])
+
+  const startWakeWordTest = async (): Promise<void> => {
+    if (wakeWordTestPhase !== 'idle' || microphoneTest.phase !== 'idle') return
+    stopSpeaking()
+    setAssistantError(null)
+    setWakeWordTestResult(null)
+    wakeWordTestWasEnabled.current = isEnabled.current
+
+    const runtime = await resumeWakeWord()
+    if (!runtime.ok) {
+      setAssistantError(runtime.message)
+      await restoreAfterWakeWordTest()
+      return
+    }
+
+    setWakeWordTestPhase('listening')
+    setStatus('listening')
+    const result = await window.orbit.startWakeWordTest()
+    if (!result.ok) {
+      setWakeWordTestPhase('idle')
+      setAssistantError(result.message)
+      await restoreAfterWakeWordTest()
+    }
+  }
+
+  const cancelWakeWordTest = async (): Promise<void> => {
+    await window.orbit.cancelWakeWordTest()
+    setWakeWordTestPhase('idle')
+    setWakeWordTestResult(null)
+    await restoreAfterWakeWordTest()
+  }
+
   useEffect(() => {
-    return window.titan.onWakeWordEvent((event: WakeWordEvent) => {
+    return window.orbit.onWakeWordEvent((event: WakeWordEvent) => {
       if (event.type === 'state') {
         setWakeWordState(event.state)
         if (event.state === 'detected') {
@@ -325,7 +378,19 @@ function App(): React.JSX.Element {
         return
       }
 
+      if (event.type === 'test-result') {
+        setWakeWordTestPhase('idle')
+        setWakeWordTestResult(event.result)
+        void restoreAfterWakeWordTest()
+        return
+      }
+
       if (event.type === 'error') {
+        if (wakeWordTestPhase === 'listening') {
+          setWakeWordTestPhase('idle')
+          setWakeWordTestResult(null)
+          void restoreAfterWakeWordTest()
+        }
         clearWakeAcknowledgement()
         clearVoiceTranscript()
         setWakeWordState(event.fatal ? 'error' : 'paused')
@@ -340,7 +405,14 @@ function App(): React.JSX.Element {
       setWakeWordState('paused')
       void wakeCommandHandler.current?.(event.transcript.normalizedText)
     })
-  }, [acknowledgeWakeWord, clearVoiceTranscript, clearWakeAcknowledgement, stopSpeaking])
+  }, [
+    acknowledgeWakeWord,
+    clearVoiceTranscript,
+    clearWakeAcknowledgement,
+    restoreAfterWakeWordTest,
+    stopSpeaking,
+    wakeWordTestPhase
+  ])
 
   useEffect(() => {
     if (transcriptClearTimer.current) clearTimeout(transcriptClearTimer.current)
@@ -361,6 +433,12 @@ function App(): React.JSX.Element {
   useEffect(() => {
     let active = true
     if (!isEnabled.current || wakeWordState === 'error') {
+      return () => {
+        active = false
+      }
+    }
+
+    if (wakeWordTestPhase === 'listening') {
       return () => {
         active = false
       }
@@ -394,16 +472,24 @@ function App(): React.JSX.Element {
     return () => {
       active = false
     }
-  }, [microphoneTest.phase, pauseWakeWord, resumeWakeWord, speaking, status, wakeWordState])
+  }, [
+    microphoneTest.phase,
+    pauseWakeWord,
+    resumeWakeWord,
+    speaking,
+    status,
+    wakeWordState,
+    wakeWordTestPhase
+  ])
 
   const displayedStatus = status === 'ready' && speaking ? 'speaking' : status
   const statusLabel = displayedStatus
     .split('-')
     .map((word) => word[0].toUpperCase() + word.slice(1))
     .join(' ')
-  const statusMessage: Record<TitanStatus, string> = {
-    disabled: 'Enable T.I.T.A.N. to begin local voice listening.',
-    ready: 'Say “TITAN” followed by your command.',
+  const statusMessage: Record<OrbitStatus, string> = {
+    disabled: 'Enable Orbit to begin local voice listening.',
+    ready: 'Say “ORBIT” followed by your command.',
     listening: 'Listening for your command…',
     transcribing: 'Transcribing your command locally…',
     thinking: 'Preparing a response…',
@@ -412,7 +498,7 @@ function App(): React.JSX.Element {
     speaking: 'Speaking the response…',
     error: 'Voice listening needs your attention.'
   }
-  const primaryStatusLabel = wakeAcknowledged ? 'T.I.T.A.N. heard you' : statusLabel
+  const primaryStatusLabel = wakeAcknowledged ? 'Orbit heard you' : statusLabel
   const primaryStatusMessage = wakeAcknowledged
     ? 'Listening for your command…'
     : statusMessage[displayedStatus]
@@ -425,8 +511,10 @@ function App(): React.JSX.Element {
   const activeInputLevel =
     microphoneTest.phase === 'idle' ? wakeInputLevel : microphoneTest.inputLevel
   const microphoneActive =
-    microphoneTest.phase !== 'idle' || (status !== 'disabled' && wakeWordState !== 'off')
-  const wakeDetected = wakeDetectionCount > 0
+    microphoneTest.phase !== 'idle' ||
+    wakeWordTestPhase === 'listening' ||
+    (status !== 'disabled' && wakeWordState !== 'off')
+  const wakeDetected = wakeDetectionCount > 0 || wakeWordTestResult?.detected === true
   const wakeStageComplete = wakeDetected || microphoneTest.phase !== 'idle' || voiceTranscriptIsTest
   const commandCaptured = voiceDiagnostics !== null || wakeWordState === 'transcribing'
   const routeDescription = voiceDiagnostics
@@ -439,10 +527,10 @@ function App(): React.JSX.Element {
       <section className="assistant-card" aria-labelledby="app-title">
         <header className="app-header">
           <div className="brand-mark" aria-hidden="true">
-            T
+            O
           </div>
           <div>
-            <h1 id="app-title">T.I.T.A.N.</h1>
+            <h1 id="app-title">Orbit</h1>
             <p>Local Voice Assistant</p>
           </div>
           <div className="header-statuses">
@@ -460,7 +548,7 @@ function App(): React.JSX.Element {
               aria-live="polite"
             >
               <span aria-hidden="true" />
-              Voice: {wakeWordState === 'armed' ? 'armed (waiting for TITAN)' : wakeWordState}
+              Voice: {wakeWordState === 'armed' ? 'armed (waiting for ORBIT)' : wakeWordState}
             </div>
           </div>
         </header>
@@ -468,9 +556,9 @@ function App(): React.JSX.Element {
         <button
           className={`enable-button ${status === 'disabled' ? '' : 'disable-button'}`}
           type="button"
-          onClick={() => void (status === 'disabled' ? enableTitan() : disableTitan())}
+          onClick={() => void (status === 'disabled' ? enableOrbit() : disableOrbit())}
         >
-          {status === 'disabled' ? 'Enable T.I.T.A.N.' : 'Disable T.I.T.A.N.'}
+          {status === 'disabled' ? 'Enable Orbit' : 'Disable Orbit'}
         </button>
 
         <section
@@ -478,7 +566,7 @@ function App(): React.JSX.Element {
           aria-live="polite"
         >
           <div className="voice-orb" aria-hidden="true">
-            <span>T</span>
+            <span>O</span>
           </div>
           {displayedStatus === 'listening' ? (
             <div className="voice-waveform" aria-hidden="true">
@@ -511,7 +599,7 @@ function App(): React.JSX.Element {
             <li className={wakeStageComplete ? 'pipeline-complete' : ''}>
               {microphoneTest.phase !== 'idle' || voiceTranscriptIsTest
                 ? 'Wake word skipped for test'
-                : 'TITAN detected'}
+                : 'ORBIT detected'}
             </li>
             <li className={commandCaptured ? 'pipeline-complete' : ''}>Command captured</li>
             <li className={voiceTranscript ? 'pipeline-complete' : ''}>Text transcribed</li>
@@ -555,6 +643,17 @@ function App(): React.JSX.Element {
             </div>
           ) : null}
 
+          {wakeWordTestResult ? (
+            <p
+              className={wakeWordTestResult.detected ? 'connection-success' : 'assistant-error'}
+              role="status"
+            >
+              {wakeWordTestResult.detected
+                ? `Orbit detected in ${wakeWordTestResult.latencyMs ?? 0} ms.`
+                : 'Orbit was not detected within eight seconds. Speak clearly at a normal volume and try again.'}
+            </p>
+          ) : null}
+
           {assistantError ? (
             <p className="assistant-error" role="alert">
               {assistantError}
@@ -575,7 +674,11 @@ function App(): React.JSX.Element {
             {isTestingConnection ? 'Testing Ollama...' : 'Test Ollama'}
           </button>
           {microphoneTest.phase === 'idle' ? (
-            <button type="button" onClick={() => void startMicrophoneTest()}>
+            <button
+              type="button"
+              onClick={() => void startMicrophoneTest()}
+              disabled={wakeWordTestPhase === 'listening'}
+            >
               Test Microphone
             </button>
           ) : microphoneTest.phase === 'recording' ? (
@@ -585,6 +688,19 @@ function App(): React.JSX.Element {
           ) : (
             <button type="button" onClick={() => void cancelMicrophoneTest()}>
               Cancel Transcription
+            </button>
+          )}
+          {wakeWordTestPhase === 'idle' ? (
+            <button
+              type="button"
+              onClick={() => void startWakeWordTest()}
+              disabled={microphoneTest.phase !== 'idle'}
+            >
+              Test Wake Word
+            </button>
+          ) : (
+            <button type="button" onClick={() => void cancelWakeWordTest()}>
+              Cancel Wake Test
             </button>
           )}
           <button

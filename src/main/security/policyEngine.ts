@@ -47,7 +47,7 @@ export class PolicyEngine {
       this.logPolicyDecision(request.capability, 'blocked')
       return {
         status: 'blocked',
-        message: 'That action is blocked because it would violate T.I.T.A.N. safety policy.'
+        message: 'That action is blocked because it would violate Orbit safety policy.'
       }
     }
 
@@ -76,7 +76,7 @@ export class PolicyEngine {
       this.logPolicyDecision(request.capability, 'blocked')
       return {
         status: 'blocked',
-        message: 'That action is blocked because it would violate T.I.T.A.N. safety policy.'
+        message: 'That action is blocked because it would violate Orbit safety policy.'
       }
     }
 

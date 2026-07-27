@@ -18,7 +18,7 @@ const TRANSCRIPTION_TIMEOUT_MS = 45_000
 const MAX_PROCESS_OUTPUT_LENGTH = 1_000_000
 const WHISPER_THREADS = Math.max(1, Math.min(10, availableParallelism()))
 const WHISPER_COMMAND_PROMPT =
-  'T.I.T.A.N. Titan. Open, launch, focus, play, pause, next, previous, volume up, volume down, mute, unmute, search, maximize, minimize, restore, stop speaking, disable Titan. Buksan, i-play, patugtugin, hanapin. YouTube, Google, Chrome, Spotify, Calculator, File Explorer, Visual Studio Code.'
+  'Orbit Orbit. Open, launch, focus, play, pause, next, previous, volume up, volume down, mute, unmute, search, maximize, minimize, restore, stop speaking, disable Orbit. Buksan, i-play, patugtugin, hanapin. YouTube, Google, Chrome, Spotify, Calculator, File Explorer, Visual Studio Code.'
 
 function whisperResourcePath(filename: string): string {
   const resourceRoot = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
@@ -195,7 +195,7 @@ export async function transcribeRecording(
   if (!(await pathExists(executablePath))) return unavailableResult('whisper-cli.exe')
   if (!(await pathExists(modelPath))) return unavailableResult('ggml-small.bin')
 
-  const audioPath = join(app.getPath('temp'), `titan-recording-${randomUUID()}.wav`)
+  const audioPath = join(app.getPath('temp'), `orbit-recording-${randomUUID()}.wav`)
 
   try {
     await writeFile(audioPath, audio, { flag: 'wx' })

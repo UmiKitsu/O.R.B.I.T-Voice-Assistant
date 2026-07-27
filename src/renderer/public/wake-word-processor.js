@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-class TitanWakeWordProcessor extends AudioWorkletProcessor {
+class OrbitWakeWordProcessor extends AudioWorkletProcessor {
   constructor() {
     super()
     this.chunk = new Float32Array(1600)
@@ -27,4 +27,4 @@ class TitanWakeWordProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('titan-wake-word-processor', TitanWakeWordProcessor)
+registerProcessor('orbit-wake-word-processor', OrbitWakeWordProcessor)

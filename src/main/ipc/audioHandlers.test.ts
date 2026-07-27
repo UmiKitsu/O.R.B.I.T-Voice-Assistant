@@ -3,7 +3,9 @@ import { IPC_CHANNELS } from '../../shared/ipcChannels'
 
 const mocks = vi.hoisted(() => ({
   handles: new Map<string, (...args: unknown[]) => unknown>(),
-  diagnoseVoiceRecording: vi.fn()
+  diagnoseVoiceRecording: vi.fn(),
+  startWakeWordTest: vi.fn(() => ({ ok: true, message: 'Wake test started.' })),
+  cancelWakeWordTest: vi.fn(() => ({ ok: true, message: 'Wake test cancelled.' }))
 }))
 
 vi.mock('electron', () => ({
@@ -20,10 +22,12 @@ vi.mock('../services/voiceDiagnosticsService', () => ({
 }))
 
 vi.mock('../services/wakeWordService', () => ({
+  cancelWakeWordTest: mocks.cancelWakeWordTest,
   pauseWakeWord: vi.fn(),
   resumeWakeWord: vi.fn(),
   sendWakeWordAudio: vi.fn(),
   startWakeWord: vi.fn(),
+  startWakeWordTest: mocks.startWakeWordTest,
   stopWakeWord: vi.fn()
 }))
 
@@ -57,6 +61,19 @@ beforeEach(() => {
   mocks.handles.clear()
   mocks.diagnoseVoiceRecording.mockReset()
   registerAudioHandlers()
+})
+
+describe('wake-word test IPC', () => {
+  it('starts and cancels only the detector without invoking transcription', () => {
+    const start = mocks.handles.get(IPC_CHANNELS.wakeWordTestStart)
+    const cancel = mocks.handles.get(IPC_CHANNELS.wakeWordTestCancel)
+
+    expect(start?.(event(12))).toMatchObject({ ok: true })
+    expect(cancel?.(event(12))).toMatchObject({ ok: true })
+    expect(mocks.startWakeWordTest).toHaveBeenCalledWith(12)
+    expect(mocks.cancelWakeWordTest).toHaveBeenCalledWith(12)
+    expect(mocks.diagnoseVoiceRecording).not.toHaveBeenCalled()
+  })
 })
 
 describe('microphone test IPC', () => {

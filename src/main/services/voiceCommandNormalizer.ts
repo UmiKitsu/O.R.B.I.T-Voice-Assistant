@@ -260,7 +260,7 @@ function normalizeFixedGrammar(
   }
 
   if (command === 'stop') replaceWord(words, 1, ['speaking'], corrections)
-  if (command === 'disable') replaceWord(words, 1, ['titan'], corrections)
+  if (command === 'disable') replaceWord(words, 1, ['orbit'], corrections)
   if (command === 'clear') replaceWord(words, 1, ['conversation'], corrections)
 }
 

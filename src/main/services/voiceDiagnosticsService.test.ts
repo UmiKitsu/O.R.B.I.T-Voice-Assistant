@@ -3,11 +3,11 @@ import { prepareVoiceTranscript, previewVoiceRoute } from './voiceDiagnosticsSer
 
 describe('voice diagnostics', () => {
   it('normalizes Filipino-accent wake and application spellings', () => {
-    expect(prepareVoiceTranscript('Taytan, open Spotfy.')).toEqual({
+    expect(prepareVoiceTranscript('Or bit, open Spotfy.')).toEqual({
       rawText: 'open Spotfy.',
       normalizedText: 'open Spotify.',
       corrections: [
-        { from: 'Taytan', to: 'Titan', kind: 'wake-word' },
+        { from: 'Or bit', to: 'Orbit', kind: 'wake-word' },
         { from: 'Spotfy', to: 'Spotify', kind: 'application' }
       ]
     })

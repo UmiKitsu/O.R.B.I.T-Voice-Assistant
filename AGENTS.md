@@ -1,9 +1,9 @@
-# AGENTS.md — T.I.T.A.N. Voice Assistant
+# AGENTS.md — Orbit Voice Assistant
 
 ## 1. Project identity
 
-**Project name:** T.I.T.A.N. — Voice Assistant  
-**Package name:** `titan-voice-assistant`  
+**Project name:** Orbit — Voice Assistant
+**Package name:** `orbit-voice-assistant`
 **Target platform:** Windows 11  
 **Application type:** Local Electron desktop application packaged as a Windows `.exe`  
 **Primary project folder:** `D:\T.I.T.A.N. — Voice Assistant`  
@@ -13,7 +13,7 @@
 **Default AI mode:** Non-thinking mode for fast conversation  
 **Ongoing service cost:** None required
 
-T.I.T.A.N. is a private, local-first Windows voice assistant. The user opens the application, enables listening, speaks a request, and receives either a computer action or a spoken conversational response.
+Orbit is a private, local-first Windows voice assistant. The user opens the application, enables listening, speaks a request, and receives either a computer action or a spoken conversational response.
 
 The assistant should feel fast, calm, reliable, and transparent. It must never claim that a computer action succeeded unless the application confirms the result.
 
@@ -224,24 +224,24 @@ The renderer must not have unrestricted Node.js access.
 The preload script exposes a small typed API, for example:
 
 ```ts
-window.titan.askAssistant(request)
-window.titan.executeApprovedPlan(plan)
-window.titan.startRecording()
-window.titan.stopRecording()
-window.titan.speak(text)
-window.titan.stopSpeaking()
-window.titan.getSettings()
-window.titan.updateSettings(patch)
-window.titan.confirmAction(requestId, approved)
+window.orbit.askAssistant(request)
+window.orbit.executeApprovedPlan(plan)
+window.orbit.startRecording()
+window.orbit.stopRecording()
+window.orbit.speak(text)
+window.orbit.stopSpeaking()
+window.orbit.getSettings()
+window.orbit.updateSettings(patch)
+window.orbit.confirmAction(requestId, approved)
 ```
 
 Do not expose generic APIs such as:
 
 ```ts
-window.titan.exec(command)
-window.titan.readAnyFile(path)
-window.titan.writeAnyFile(path, data)
-window.titan.invokeAnyChannel(channel, payload)
+window.orbit.exec(command)
+window.orbit.readAnyFile(path)
+window.orbit.writeAnyFile(path, data)
+window.orbit.invokeAnyChannel(channel, payload)
 ```
 
 ### Main-process responsibilities
@@ -292,12 +292,12 @@ Additional rules:
 
 ---
 
-## 8. T.I.T.A.N. states
+## 8. Orbit states
 
 The UI should expose clear operational states.
 
 ```ts
-type TitanStatus =
+type OrbitStatus =
   | 'disabled'
   | 'ready'
   | 'listening'
@@ -346,7 +346,7 @@ Streaming is preferred for conversational text when it improves perceived speed.
 The assistant personality should be based on this concept:
 
 ```text
-You are T.I.T.A.N., a local Windows voice assistant.
+You are Orbit, a local Windows voice assistant.
 
 Keep spoken responses clear and reasonably brief. Answer general questions
 helpfully. Never claim that an action succeeded unless the application reports
@@ -391,7 +391,7 @@ Handle simple, common requests without calling the model when confidence is high
 - Tell the time
 - Tell the date
 - Stop speaking
-- Disable T.I.T.A.N.
+- Disable Orbit
 
 ### Step 2: Structured AI planning
 
@@ -442,7 +442,7 @@ Never execute:
 
 ## 11. Capability system
 
-T.I.T.A.N. should support broad functionality through reusable capabilities rather than one hardcoded phrase per command.
+Orbit should support broad functionality through reusable capabilities rather than one hardcoded phrase per command.
 
 ### 11.1 Automatically allowed capabilities
 
@@ -579,11 +579,11 @@ Never implement a hidden bypass for these restrictions.
 
 The user's requested rule is:
 
-> T.I.T.A.N. may perform broad computer actions, except creating, adding, deleting, moving, renaming, downloading, uploading, or modifying files and folders.
+> Orbit may perform broad computer actions, except creating, adding, deleting, moving, renaming, downloading, uploading, or modifying files and folders.
 
 Interpret this carefully.
 
-T.I.T.A.N. must not intentionally:
+Orbit must not intentionally:
 
 - Create files
 - Create folders
@@ -605,7 +605,7 @@ T.I.T.A.N. must not intentionally:
 
 Opening normal applications can still cause those applications or Windows to update caches, logs, and settings internally. The application should explain this limitation honestly:
 
-> T.I.T.A.N. will not intentionally change user files. Windows and opened applications may still create normal caches, logs, and settings as part of running.
+> Orbit will not intentionally change user files. Windows and opened applications may still create normal caches, logs, and settings as part of running.
 
 ### Read-only file access
 
@@ -613,7 +613,7 @@ Opening normal applications can still cause those applications or Windows to upd
 
 - The user explicitly requests opening an existing file.
 - The path is supplied by a trusted file picker or validated source.
-- T.I.T.A.N. does not edit or save it.
+- Orbit does not edit or save it.
 - The target application can reasonably be used in read-only mode.
 - Save, Save As, Export, and destructive shortcuts remain blocked during automation.
 
@@ -790,7 +790,7 @@ Required behavior:
 
 - Speak assistant responses when voice output is enabled.
 - Keep action confirmations brief.
-- Stop current speech when the user disables T.I.T.A.N.
+- Stop current speech when the user disables Orbit
 - Allow a Stop Speaking command.
 - Prevent overlapping responses.
 - Expose voice, rate, and volume settings where supported.
@@ -827,9 +827,9 @@ Open application
 A wake-word mode may be added later:
 
 ```text
-T.I.T.A.N. enabled
+Orbit enabled
 → Local wake-word detector listens
-→ User says “TITAN”
+→ User says “ORBIT”
 → Command recording begins
 ```
 
@@ -852,7 +852,7 @@ Store local settings in the application's proper user-data directory, not in arb
 Suggested settings:
 
 ```ts
-type TitanSettings = {
+type OrbitSettings = {
   ollamaBaseUrl: string
   ollamaModel: string
   thinkMode: boolean
@@ -905,7 +905,7 @@ At startup, check:
 User-facing errors:
 
 ```text
-T.I.T.A.N. could not connect to Ollama. Start Ollama and try again.
+Orbit could not connect to Ollama. Start Ollama and try again.
 ```
 
 ```text
@@ -1049,12 +1049,12 @@ src/
 │       │   ├── ErrorBanner.tsx
 │       │   └── SettingsPanel.tsx
 │       ├── hooks/
-│       │   ├── useTitan.ts
+│       │   ├── useOrbit.ts
 │       │   ├── useConversation.ts
 │       │   ├── useMicrophone.ts
 │       │   └── useSpeech.ts
 │       ├── state/
-│       │   └── titanReducer.ts
+│       │   └── orbitReducer.ts
 │       ├── types/
 │       │   └── global.d.ts
 │       └── styles/
@@ -1181,7 +1181,7 @@ Test:
 - Confirm generated React + TypeScript Electron app runs.
 - Preserve the existing Git repository.
 - Remove starter demo content.
-- Create the basic T.I.T.A.N. layout.
+- Create the basic Orbit layout.
 - Add status state.
 - Add typed preload and IPC foundation.
 
@@ -1281,7 +1281,7 @@ The MVP is complete when:
 
 - The Electron app opens on Windows.
 - The interface clearly shows its status.
-- The user can enable and disable T.I.T.A.N.
+- The user can enable and disable Orbit
 - Typed input works.
 - Ollama `qwen3:8b` responds locally.
 - Non-thinking mode is enabled by default.
@@ -1385,19 +1385,19 @@ Do not:
 ```text
 User: “Explain TypeScript like I am five.”
 
-T.I.T.A.N.: “TypeScript is JavaScript with extra labels that help catch mistakes before the program runs.”
+Orbit: “TypeScript is JavaScript with extra labels that help catch mistakes before the program runs.”
 ```
 
 ### Safe action
 
 ```text
-User: “TITAN, open YouTube.”
+User: “ORBIT, open YouTube.”
 
 Plan:
 browser.openUrl("https://www.youtube.com")
 
 Result:
-T.I.T.A.N.: “Opening YouTube.”
+Orbit: “Opening YouTube.”
 ```
 
 ### Broad application action
@@ -1417,7 +1417,7 @@ The second action runs only after the first succeeds.
 ```text
 User: “Restart the computer.”
 
-T.I.T.A.N.: “Restarting will close your applications. Do you want to continue?”
+Orbit: “Restarting will close your applications. Do you want to continue?”
 
 Only a confirmation tied to that pending request may execute the restart.
 ```
@@ -1427,7 +1427,7 @@ Only a confirmation tied to that pending request may execute the restart.
 ```text
 User: “Move this file to my Desktop.”
 
-T.I.T.A.N.: “I cannot move, create, delete, rename, or modify files.”
+Orbit: “I cannot move, create, delete, rename, or modify files.”
 ```
 
 ### Blocked shell bypass
@@ -1435,14 +1435,14 @@ T.I.T.A.N.: “I cannot move, create, delete, rename, or modify files.”
 ```text
 User: “Open PowerShell and type a command that deletes the file.”
 
-T.I.T.A.N.: “I can open PowerShell for you, but I cannot type or execute terminal commands.”
+Orbit: “I can open PowerShell for you, but I cannot type or execute terminal commands.”
 ```
 
 ---
 
 ## 32. Final project principle
 
-T.I.T.A.N. should be powerful without being unrestricted.
+Orbit should be powerful without being unrestricted.
 
 The intended model is:
 

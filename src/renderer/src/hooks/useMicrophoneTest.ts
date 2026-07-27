@@ -131,7 +131,7 @@ export function useMicrophoneTest(
       setDurationMs(Math.round(performance.now() - startedAtRef.current))
       setPhase('transcribing')
       try {
-        const nextResult = await window.titan.transcribeMicrophoneTest(encodePcm16Wav(samples))
+        const nextResult = await window.orbit.transcribeMicrophoneTest(encodePcm16Wav(samples))
         if (generation !== generationRef.current) return
         setResult(nextResult)
         onResult(nextResult)
@@ -160,7 +160,7 @@ export function useMicrophoneTest(
   const start = useCallback(async (): Promise<ActionResult> => {
     if (recordingRef.current) return { ok: true, message: 'Microphone test is recording.' }
     generationRef.current += 1
-    await window.titan.cancelMicrophoneTest().catch(() => undefined)
+    await window.orbit.cancelMicrophoneTest().catch(() => undefined)
     setResult(null)
     setDurationMs(0)
     chunksRef.current = []
@@ -184,7 +184,7 @@ export function useMicrophoneTest(
         new URL('wake-word-processor.js', document.baseURI).toString()
       )
       const source = context.createMediaStreamSource(stream)
-      const worklet = new AudioWorkletNode(context, 'titan-wake-word-processor', {
+      const worklet = new AudioWorkletNode(context, 'orbit-wake-word-processor', {
         numberOfInputs: 1,
         numberOfOutputs: 1,
         outputChannelCount: [1]
@@ -229,7 +229,7 @@ export function useMicrophoneTest(
     chunksRef.current = []
     sampleCountRef.current = 0
     await releaseCapture()
-    await window.titan.cancelMicrophoneTest().catch(() => undefined)
+    await window.orbit.cancelMicrophoneTest().catch(() => undefined)
     setPhase('idle')
   }, [releaseCapture])
 

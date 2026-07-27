@@ -1,10 +1,10 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipcChannels'
-import type { ActionResult, TitanSettings } from '../../shared/types'
+import type { ActionResult, OrbitSettings } from '../../shared/types'
 import { getSettings, updateSettings } from '../services/settingsService'
 
 export function registerSettingsHandlers(): void {
-  ipcMain.handle(IPC_CHANNELS.settingsGet, (): ActionResult<TitanSettings> => {
+  ipcMain.handle(IPC_CHANNELS.settingsGet, (): ActionResult<OrbitSettings> => {
     return {
       ok: true,
       message: 'Settings loaded.',
@@ -14,7 +14,7 @@ export function registerSettingsHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.settingsUpdate,
-    (_event, patch: unknown): ActionResult<TitanSettings> => {
+    (_event, patch: unknown): ActionResult<OrbitSettings> => {
       const settings = updateSettings(patch)
       if (!settings) {
         return {

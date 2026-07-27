@@ -11,10 +11,13 @@ export type WakeWordWorkerInput =
   | { type: 'audio'; samples: Float32Array }
   | { type: 'pause' }
   | { type: 'resume' }
+  | { type: 'test-start' }
+  | { type: 'test-cancel' }
   | { type: 'shutdown' }
 
 export type WakeWordWorkerOutput =
   | { type: 'ready' }
   | { type: 'state'; state: 'detected' | 'capturing' | 'paused' | 'armed' }
   | { type: 'command'; samples: Float32Array }
+  | { type: 'test-detected'; latencyMs: number }
   | { type: 'error'; message: string }

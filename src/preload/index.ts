@@ -5,7 +5,7 @@ import type {
   AssistantResponse,
   MicrophoneTestResult,
   OllamaHealth,
-  TitanSettings,
+  OrbitSettings,
   VoiceDiagnostics,
   WakeWordEvent
 } from '../shared/types'
@@ -96,6 +96,25 @@ function isWakeWordEvent(value: unknown): value is WakeWordEvent {
       isVoiceDiagnostics(event.diagnostics)
     )
   }
+  if (event.type === 'test-result') {
+    if (
+      Object.keys(event).length !== 2 ||
+      typeof event.result !== 'object' ||
+      event.result === null
+    ) {
+      return false
+    }
+    const result = event.result as Record<string, unknown>
+    return (
+      (Object.keys(result).length === 1 || Object.keys(result).length === 2) &&
+      typeof result.detected === 'boolean' &&
+      (result.latencyMs === undefined ||
+        (typeof result.latencyMs === 'number' &&
+          Number.isFinite(result.latencyMs) &&
+          result.latencyMs >= 0 &&
+          result.latencyMs <= 10_000))
+    )
+  }
   return (
     event.type === 'error' &&
     Object.keys(event).length === 4 &&
@@ -105,7 +124,7 @@ function isWakeWordEvent(value: unknown): value is WakeWordEvent {
   )
 }
 
-const titan = Object.freeze({
+const orbit = Object.freeze({
   checkOllama: (): Promise<ActionResult<OllamaHealth>> =>
     ipcRenderer.invoke(IPC_CHANNELS.ollamaHealth),
 
@@ -114,14 +133,18 @@ const titan = Object.freeze({
 
   cancelAssistant: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.assistantCancel),
 
-  getSettings: (): Promise<ActionResult<TitanSettings>> =>
+  getSettings: (): Promise<ActionResult<OrbitSettings>> =>
     ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
-  updateSettings: (patch: Partial<TitanSettings>): Promise<ActionResult<TitanSettings>> =>
+  updateSettings: (patch: Partial<OrbitSettings>): Promise<ActionResult<OrbitSettings>> =>
     ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, patch),
   startWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordStart),
   stopWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordStop),
   pauseWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordPause),
   resumeWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordResume),
+  startWakeWordTest: (): Promise<ActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.wakeWordTestStart),
+  cancelWakeWordTest: (): Promise<ActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.wakeWordTestCancel),
   sendWakeWordAudio: (samples: Float32Array): void =>
     ipcRenderer.send(IPC_CHANNELS.wakeWordAudioChunk, { samples }),
   transcribeMicrophoneTest: (audio: Uint8Array): Promise<ActionResult<MicrophoneTestResult>> =>
@@ -142,4 +165,4 @@ const titan = Object.freeze({
     })
 })
 
-contextBridge.exposeInMainWorld('titan', titan)
+contextBridge.exposeInMainWorld('orbit', orbit)

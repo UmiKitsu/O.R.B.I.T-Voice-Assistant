@@ -53,7 +53,7 @@ function getSendInput(): { sendInput: SendInputFunction; size: number } {
 
   if (!sendInputFunction || !inputSize) {
     const user32 = koffi.load('user32.dll')
-    const mouseInput = koffi.struct('TITAN_MOUSEINPUT', {
+    const mouseInput = koffi.struct('ORBIT_MOUSEINPUT', {
       dx: 'long',
       dy: 'long',
       mouseData: 'uint32_t',
@@ -61,25 +61,25 @@ function getSendInput(): { sendInput: SendInputFunction; size: number } {
       time: 'uint32_t',
       dwExtraInfo: 'uintptr_t'
     })
-    const keyboardInput = koffi.struct('TITAN_KEYBDINPUT', {
+    const keyboardInput = koffi.struct('ORBIT_KEYBDINPUT', {
       wVk: 'uint16_t',
       wScan: 'uint16_t',
       dwFlags: 'uint32_t',
       time: 'uint32_t',
       dwExtraInfo: 'uintptr_t'
     })
-    const hardwareInput = koffi.struct('TITAN_HARDWAREINPUT', {
+    const hardwareInput = koffi.struct('ORBIT_HARDWAREINPUT', {
       uMsg: 'uint32_t',
       wParamL: 'uint16_t',
       wParamH: 'uint16_t'
     })
-    const input = koffi.struct('TITAN_INPUT', {
+    const input = koffi.struct('ORBIT_INPUT', {
       type: 'uint32_t',
       u: koffi.union({ mi: mouseInput, ki: keyboardInput, hi: hardwareInput })
     })
 
     sendInputFunction = user32.func(
-      'unsigned int __stdcall SendInput(unsigned int cInputs, TITAN_INPUT *pInputs, int cbSize)'
+      'unsigned int __stdcall SendInput(unsigned int cInputs, ORBIT_INPUT *pInputs, int cbSize)'
     ) as SendInputFunction
     inputSize = koffi.sizeof(input)
   }

@@ -1,4 +1,4 @@
-# titan-voice-assistant
+# orbit-voice-assistant
 
 An Electron application with React and TypeScript
 
@@ -16,10 +16,17 @@ $ npm install
 
 ### Local Whisper model
 
-The 148 MB Whisper model is intentionally excluded from Git. Download and verify it before development:
+The 488 MB multilingual Whisper Small model is intentionally excluded from Git. Download and verify it before development:
 
 ```bash
 $ npm run setup:whisper
+```
+
+The fixed Orbit wake-word model is bundled in the repository. Verify its pinned
+checksums before development or packaging:
+
+```bash
+npm run setup:wake-word
 ```
 
 Production builds run this check automatically and download the model only when it is missing or invalid.

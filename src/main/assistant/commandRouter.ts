@@ -39,8 +39,8 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
     return actionPlan('Stop speaking', 'assistant.stopSpeaking')
   }
 
-  if (/^disable (?:titan|t\.i\.t\.a\.n)$/.test(lower)) {
-    return actionPlan('Disable T.I.T.A.N.', 'assistant.disable')
+  if (/^disable orbit$/.test(lower)) {
+    return actionPlan('Disable Orbit', 'assistant.disable')
   }
 
   if (

@@ -103,13 +103,13 @@ function loadNativeFunctions(): NativeFunctions {
 
   const user32 = koffi.load('user32.dll')
   const kernel32 = koffi.load('kernel32.dll')
-  const rectType = koffi.struct('TITAN_RECT', {
+  const rectType = koffi.struct('ORBIT_RECT', {
     left: 'long',
     top: 'long',
     right: 'long',
     bottom: 'long'
   })
-  koffi.struct('TITAN_GUITHREADINFO', {
+  koffi.struct('ORBIT_GUITHREADINFO', {
     cbSize: 'uint32_t',
     flags: 'uint32_t',
     hwndActive: 'uintptr_t',
@@ -120,7 +120,7 @@ function loadNativeFunctions(): NativeFunctions {
     hwndCaret: 'uintptr_t',
     rcCaret: rectType
   })
-  const mouseInput = koffi.struct('TITAN_WINDOW_MOUSEINPUT', {
+  const mouseInput = koffi.struct('ORBIT_WINDOW_MOUSEINPUT', {
     dx: 'long',
     dy: 'long',
     mouseData: 'uint32_t',
@@ -128,24 +128,24 @@ function loadNativeFunctions(): NativeFunctions {
     time: 'uint32_t',
     dwExtraInfo: 'uintptr_t'
   })
-  const keyboardInput = koffi.struct('TITAN_WINDOW_KEYBDINPUT', {
+  const keyboardInput = koffi.struct('ORBIT_WINDOW_KEYBDINPUT', {
     wVk: 'uint16_t',
     wScan: 'uint16_t',
     dwFlags: 'uint32_t',
     time: 'uint32_t',
     dwExtraInfo: 'uintptr_t'
   })
-  const hardwareInput = koffi.struct('TITAN_WINDOW_HARDWAREINPUT', {
+  const hardwareInput = koffi.struct('ORBIT_WINDOW_HARDWAREINPUT', {
     uMsg: 'uint32_t',
     wParamL: 'uint16_t',
     wParamH: 'uint16_t'
   })
-  const input = koffi.struct('TITAN_WINDOW_INPUT', {
+  const input = koffi.struct('ORBIT_WINDOW_INPUT', {
     type: 'uint32_t',
     u: koffi.union({ mi: mouseInput, ki: keyboardInput, hi: hardwareInput })
   })
   const callbackPrototype = koffi.proto(
-    'bool __stdcall TITAN_ENUMWINDOWSPROC(uintptr_t windowHandle, intptr_t parameter)'
+    'bool __stdcall ORBIT_ENUMWINDOWSPROC(uintptr_t windowHandle, intptr_t parameter)'
   )
   const enumWindowsCallback = koffi.register((windowHandle: number) => {
     enumeratedWindows?.push(windowHandle)
@@ -163,7 +163,7 @@ function loadNativeFunctions(): NativeFunctions {
       'bool __stdcall CloseHandle(uintptr_t handle)'
     ) as NativeFunctions['closeHandle'],
     enumWindows: user32.func(
-      'bool __stdcall EnumWindows(TITAN_ENUMWINDOWSPROC *callback, intptr_t parameter)'
+      'bool __stdcall EnumWindows(ORBIT_ENUMWINDOWSPROC *callback, intptr_t parameter)'
     ) as NativeFunctions['enumWindows'],
     isWindowVisible: user32.func(
       'bool __stdcall IsWindowVisible(uintptr_t windowHandle)'
@@ -181,7 +181,7 @@ function loadNativeFunctions(): NativeFunctions {
       'uint32_t __stdcall GetWindowThreadProcessId(uintptr_t windowHandle, uint32_t *processId)'
     ) as NativeFunctions['getWindowThreadProcessId'],
     getGuiThreadInfo: user32.func(
-      'bool __stdcall GetGUIThreadInfo(uint32_t threadId, _Inout_ TITAN_GUITHREADINFO *info)'
+      'bool __stdcall GetGUIThreadInfo(uint32_t threadId, _Inout_ ORBIT_GUITHREADINFO *info)'
     ) as NativeFunctions['getGuiThreadInfo'],
     sendMessage: user32.func(
       'intptr_t __stdcall SendMessageW(uintptr_t windowHandle, uint32_t message, uintptr_t wParam, intptr_t lParam)'
@@ -193,7 +193,7 @@ function loadNativeFunctions(): NativeFunctions {
       'bool __stdcall SetForegroundWindow(uintptr_t windowHandle)'
     ) as NativeFunctions['setForegroundWindow'],
     getWindowRect: user32.func(
-      'bool __stdcall GetWindowRect(uintptr_t windowHandle, _Out_ TITAN_RECT *rect)'
+      'bool __stdcall GetWindowRect(uintptr_t windowHandle, _Out_ ORBIT_RECT *rect)'
     ) as NativeFunctions['getWindowRect'],
     moveWindow: user32.func(
       'bool __stdcall MoveWindow(uintptr_t windowHandle, int x, int y, int width, int height, bool repaint)'
@@ -202,7 +202,7 @@ function loadNativeFunctions(): NativeFunctions {
       'bool __stdcall PostMessageW(uintptr_t windowHandle, uint32_t message, uintptr_t wParam, intptr_t lParam)'
     ) as NativeFunctions['postMessage'],
     sendInput: user32.func(
-      'unsigned int __stdcall SendInput(unsigned int count, TITAN_WINDOW_INPUT *inputs, int inputSize)'
+      'unsigned int __stdcall SendInput(unsigned int count, ORBIT_WINDOW_INPUT *inputs, int inputSize)'
     ) as NativeFunctions['sendInput'],
     inputSize: koffi.sizeof(input),
     enumWindowsCallback

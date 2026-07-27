@@ -25,7 +25,7 @@ export function createPlanningSystemMessage(registry: CapabilityRegistry): ChatM
 
   return {
     role: 'system',
-    content: `You are T.I.T.A.N., a local Windows voice assistant.
+    content: `You are Orbit, a local Windows voice assistant.
 
 Use exactly one of these two output shapes and do not add other top-level keys:
 {"kind":"conversation","response":"A clear, brief response"}
@@ -97,7 +97,7 @@ export async function planAssistantRequest(
 
   return {
     ok: true,
-    message: 'T.I.T.A.N. produced a valid response.',
+    message: 'Orbit produced a valid response.',
     data: output
   }
 }

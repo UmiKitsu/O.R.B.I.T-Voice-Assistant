@@ -78,7 +78,7 @@ export async function diagnoseVoiceRecording(
     return {
       ok: false,
       code: 'EMPTY_WAKE_WORD_COMMAND',
-      message: 'T.I.T.A.N. heard the wake phrase, but no command followed it.',
+      message: 'Orbit heard the wake phrase, but no command followed it.',
       recoverable: true
     }
   }

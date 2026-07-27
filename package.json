@@ -1,5 +1,5 @@
 {
-  "name": "titan-voice-assistant",
+  "name": "orbit-voice-assistant",
   "version": "1.0.0",
   "description": "A private local-first Windows voice assistant powered by Ollama.",
   "main": "./out/main/index.js",
@@ -7,7 +7,8 @@
   "homepage": "https://electron-vite.org",
   "scripts": {
     "setup:whisper": "node scripts/download-whisper-model.mjs",
-    "prebuild": "npm run setup:whisper",
+    "setup:wake-word": "node scripts/verify-wake-word-model.mjs",
+    "prebuild": "npm run setup:whisper && npm run setup:wake-word",
     "format": "prettier --write .",
     "lint": "eslint --cache .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",

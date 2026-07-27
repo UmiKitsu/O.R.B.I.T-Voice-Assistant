@@ -42,7 +42,7 @@ export function registerAssistantCapabilities(registry: CapabilityRegistry): voi
     actionResultSchema(assistantEffectDataSchema)
   )
   registry.register(
-    controlCapability('assistant.disable', 'T.I.T.A.N. disabled.', 'disable'),
+    controlCapability('assistant.disable', 'Orbit disabled.', 'disable'),
     noParametersSchema,
     actionResultSchema(assistantEffectDataSchema)
   )

@@ -33,6 +33,7 @@ let samplesAfterDetection = 0
 let lastSpeechSample = 0
 let noiseFloor = 0.003
 let cooldownUntil = 0
+let testStartedAt: number | undefined
 
 function post(message: WakeWordWorkerOutput, transfer?: ArrayBuffer[]): void {
   parentPort?.postMessage(message, transfer ?? [])
@@ -111,6 +112,14 @@ function processArmedAudio(samples: Float32Array): void {
   while (spotter.isReady(stream)) {
     spotter.decode(stream)
     if (spotter.getResult(stream).keyword.trim().length > 0) {
+      if (testStartedAt !== undefined) {
+        const latencyMs = Math.max(0, Date.now() - testStartedAt)
+        testStartedAt = undefined
+        mode = 'paused'
+        resetDetector()
+        post({ type: 'test-detected', latencyMs })
+        return
+      }
       captured = [...ring]
       samplesAfterDetection = 0
       lastSpeechSample = 0
@@ -163,15 +172,29 @@ parentPort?.on('message', (input: WakeWordWorkerInput) => {
       else if (mode === 'capturing') processCapturingAudio(input.samples)
       break
     case 'pause':
+      testStartedAt = undefined
       resetDetector()
       mode = 'paused'
       post({ type: 'state', state: 'paused' })
       break
     case 'resume':
       if (!spotter || !stream) break
+      testStartedAt = undefined
       resetDetector()
       mode = 'armed'
       post({ type: 'state', state: 'armed' })
+      break
+    case 'test-start':
+      if (!spotter || !stream) break
+      resetDetector()
+      testStartedAt = Date.now()
+      mode = 'armed'
+      break
+    case 'test-cancel':
+      testStartedAt = undefined
+      if (!spotter || !stream) break
+      resetDetector()
+      mode = 'armed'
       break
     case 'shutdown':
       parentPort?.close()

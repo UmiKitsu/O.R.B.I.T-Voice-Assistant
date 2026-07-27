@@ -14,6 +14,7 @@ import { diagnoseVoiceRecording } from './voiceDiagnosticsService'
 import { encodePcm16Wav, isValidWakeWordCommand } from './wakeWordValidation'
 
 const START_TIMEOUT_MS = 10_000
+const WAKE_WORD_TEST_TIMEOUT_MS = 8_000
 
 function wakeWordResourcePath(filename: string): string {
   const root = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
@@ -22,9 +23,9 @@ function wakeWordResourcePath(filename: string): string {
 
 function resources(): WakeWordWorkerResources {
   return {
-    encoder: wakeWordResourcePath('encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx'),
-    decoder: wakeWordResourcePath('decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx'),
-    joiner: wakeWordResourcePath('joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx'),
+    encoder: wakeWordResourcePath('encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx'),
+    decoder: wakeWordResourcePath('decoder-epoch-13-avg-2-chunk-16-left-64.onnx'),
+    joiner: wakeWordResourcePath('joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx'),
     tokens: wakeWordResourcePath('tokens.txt'),
     keywords: wakeWordResourcePath('keywords.txt')
   }
@@ -34,7 +35,7 @@ function stateMessage(state: WakeWordState): string {
   const messages: Record<WakeWordState, string> = {
     off: 'Wake-word listening is off.',
     starting: 'Starting local wake-word listening.',
-    armed: 'Listening locally for “TITAN”.',
+    armed: 'Listening locally for “ORBIT”.',
     detected: 'Wake phrase detected.',
     capturing: 'Listening for your command.',
     transcribing: 'Transcribing your command locally.',
@@ -48,6 +49,7 @@ type WakeWordSession = {
   worker: ReturnType<typeof CreateWakeWordWorker>
   sender: WebContents
   transcription?: AbortController
+  wakeTestTimeout?: ReturnType<typeof setTimeout>
   ready: boolean
 }
 
@@ -59,6 +61,17 @@ function emit(session: WakeWordSession, event: WakeWordEvent): void {
 
 function emitState(session: WakeWordSession, state: WakeWordState): void {
   emit(session, { type: 'state', state, message: stateMessage(state) })
+}
+
+function finishWakeWordTest(
+  session: WakeWordSession,
+  result: { detected: boolean; latencyMs?: number }
+): void {
+  if (!session.wakeTestTimeout) return
+  clearTimeout(session.wakeTestTimeout)
+  session.wakeTestTimeout = undefined
+  session.worker.postMessage({ type: 'test-cancel' } satisfies WakeWordWorkerInput)
+  emit(session, { type: 'test-result', result })
 }
 
 async function transcribeCommand(session: WakeWordSession, samples: unknown): Promise<void> {
@@ -86,7 +99,7 @@ async function transcribeCommand(session: WakeWordSession, samples: unknown): Pr
     emit(session, {
       type: 'error',
       code: result.ok ? 'EMPTY_WAKE_WORD_COMMAND' : result.code,
-      message: result.ok ? 'No command was heard after “TITAN”.' : result.message,
+      message: result.ok ? 'No command was heard after “ORBIT”.' : result.message,
       fatal: false
     })
     return
@@ -163,6 +176,9 @@ export async function startWakeWord(sender: WebContents): Promise<ActionResult> 
         case 'command':
           void transcribeCommand(session, message.samples)
           break
+        case 'test-detected':
+          finishWakeWordTest(session, { detected: true, latencyMs: message.latencyMs })
+          break
         case 'error':
           emit(session, {
             type: 'error',
@@ -216,12 +232,44 @@ export function sendWakeWordAudio(senderId: number, samples: Float32Array): void
   ])
 }
 
+export function startWakeWordTest(senderId: number): ActionResult {
+  const session = sessions.get(senderId)
+  if (!session?.ready) {
+    return {
+      ok: false,
+      code: 'WAKE_WORD_TEST_NOT_READY',
+      message: 'Start local voice listening before testing the Orbit wake word.',
+      recoverable: true
+    }
+  }
+  if (session.wakeTestTimeout) clearTimeout(session.wakeTestTimeout)
+  session.transcription?.abort()
+  session.transcription = undefined
+  session.worker.postMessage({ type: 'test-start' } satisfies WakeWordWorkerInput)
+  session.wakeTestTimeout = setTimeout(() => {
+    finishWakeWordTest(session, { detected: false })
+  }, WAKE_WORD_TEST_TIMEOUT_MS)
+  return { ok: true, message: 'Listening for Orbit for up to eight seconds.' }
+}
+
+export function cancelWakeWordTest(senderId: number): ActionResult {
+  const session = sessions.get(senderId)
+  if (!session?.wakeTestTimeout) {
+    return { ok: true, message: 'No wake-word test is running.' }
+  }
+  clearTimeout(session.wakeTestTimeout)
+  session.wakeTestTimeout = undefined
+  session.worker.postMessage({ type: 'test-cancel' } satisfies WakeWordWorkerInput)
+  return { ok: true, message: 'Wake-word test cancelled.' }
+}
+
 function changeWakeWordState(senderId: number, type: 'pause' | 'resume'): ActionResult {
   const session = sessions.get(senderId)
   if (!session?.ready) {
     return { ok: true, message: 'Wake-word listening is not running.' }
   }
   if (type === 'pause') {
+    cancelWakeWordTest(senderId)
     session.transcription?.abort()
     session.transcription = undefined
   }
@@ -241,6 +289,7 @@ export function stopWakeWord(senderId: number): ActionResult {
   const session = sessions.get(senderId)
   if (!session) return { ok: true, message: stateMessage('off') }
   sessions.delete(senderId)
+  if (session.wakeTestTimeout) clearTimeout(session.wakeTestTimeout)
   session.transcription?.abort()
   session.worker.postMessage({ type: 'shutdown' } satisfies WakeWordWorkerInput)
   void session.worker.terminate()

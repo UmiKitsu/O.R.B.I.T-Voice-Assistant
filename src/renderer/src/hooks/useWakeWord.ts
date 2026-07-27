@@ -65,16 +65,16 @@ export function useWakeWord(): WakeWordController {
   const start = useCallback(async (): Promise<ActionResult> => {
     if (streamRef.current && contextRef.current) {
       await contextRef.current.resume().catch(() => undefined)
-      return window.titan.resumeWakeWord()
+      return window.orbit.resumeWakeWord()
     }
     if (startPromiseRef.current) return startPromiseRef.current
 
     const generation = lifecycleGenerationRef.current
     const operation = (async (): Promise<ActionResult> => {
-      const runtime = await window.titan.startWakeWord()
+      const runtime = await window.orbit.startWakeWord()
       if (!runtime.ok) return runtime
       if (generation !== lifecycleGenerationRef.current) {
-        await window.titan.stopWakeWord()
+        await window.orbit.stopWakeWord()
         return { ok: true, message: 'Voice listening was stopped.' }
       }
 
@@ -85,13 +85,13 @@ export function useWakeWord(): WakeWordController {
         if (generation !== lifecycleGenerationRef.current) {
           stream.getTracks().forEach((track) => track.stop())
           await context.close()
-          await window.titan.stopWakeWord()
+          await window.orbit.stopWakeWord()
           return { ok: true, message: 'Voice listening was stopped.' }
         }
         if (context.sampleRate !== 16_000) {
           stream.getTracks().forEach((track) => track.stop())
           await context.close()
-          await window.titan.stopWakeWord()
+          await window.orbit.stopWakeWord()
           return {
             ok: false,
             code: 'WAKE_WORD_SAMPLE_RATE_UNAVAILABLE',
@@ -104,7 +104,7 @@ export function useWakeWord(): WakeWordController {
           new URL('wake-word-processor.js', document.baseURI).toString()
         )
         const source = context.createMediaStreamSource(stream)
-        const worklet = new AudioWorkletNode(context, 'titan-wake-word-processor', {
+        const worklet = new AudioWorkletNode(context, 'orbit-wake-word-processor', {
           numberOfInputs: 1,
           numberOfOutputs: 1,
           outputChannelCount: [1]
@@ -117,7 +117,7 @@ export function useWakeWord(): WakeWordController {
           for (const sample of event.data) energy += sample * sample
           const rms = Math.sqrt(energy / event.data.length)
           setInputLevel(Math.min(1, rms * 12))
-          window.titan.sendWakeWordAudio(event.data)
+          window.orbit.sendWakeWordAudio(event.data)
         }
         source.connect(worklet)
         worklet.connect(silentOutput)
@@ -127,7 +127,7 @@ export function useWakeWord(): WakeWordController {
           worklet.disconnect()
           stream.getTracks().forEach((track) => track.stop())
           await context.close()
-          await window.titan.stopWakeWord()
+          await window.orbit.stopWakeWord()
           return { ok: true, message: 'Voice listening was stopped.' }
         }
 
@@ -138,7 +138,7 @@ export function useWakeWord(): WakeWordController {
         return runtime
       } catch (error) {
         await releaseAudio()
-        await window.titan.stopWakeWord()
+        await window.orbit.stopWakeWord()
         return microphoneFailure(error)
       }
     })()
@@ -154,11 +154,11 @@ export function useWakeWord(): WakeWordController {
   const stop = useCallback(async (): Promise<ActionResult> => {
     lifecycleGenerationRef.current += 1
     await releaseAudio()
-    return window.titan.stopWakeWord()
+    return window.orbit.stopWakeWord()
   }, [releaseAudio])
 
   const pause = useCallback(async (): Promise<ActionResult> => {
-    const result = await window.titan.pauseWakeWord()
+    const result = await window.orbit.pauseWakeWord()
     const context = contextRef.current
     if (context?.state === 'running') await context.suspend().catch(() => undefined)
     return result
@@ -167,7 +167,7 @@ export function useWakeWord(): WakeWordController {
   const resume = useCallback(async (): Promise<ActionResult> => {
     const context = contextRef.current
     if (!context || !streamRef.current) return start()
-    const result = await window.titan.resumeWakeWord()
+    const result = await window.orbit.resumeWakeWord()
     if (result.ok && context.state === 'suspended') await context.resume().catch(() => undefined)
     return result
   }, [start])

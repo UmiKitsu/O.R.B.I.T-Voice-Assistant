@@ -1,0 +1,13 @@
+{
+  "model": "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20",
+  "source": "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20.tar.bz2",
+  "archiveSha256": "68447f4fbc67e70eee3a93961f36e81e98f47aef73ce7e7ca00885c6cd3616a6",
+  "keywordTokenizer": {
+    "tool": "sherpa-onnx 1.13.4 text2token",
+    "tokensType": "phone+ppinyin",
+    "keyword": "ORBIT",
+    "generatedTokens": "AO1 R B AH0 T",
+    "boost": 1.8,
+    "threshold": 0.22
+  }
+}

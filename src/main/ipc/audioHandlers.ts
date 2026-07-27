@@ -5,10 +5,12 @@ import { parseMicrophoneTestRequest } from '../services/speechToTextValidation'
 import { diagnoseVoiceRecording } from '../services/voiceDiagnosticsService'
 import { parseWakeWordAudioChunk } from '../services/wakeWordValidation'
 import {
+  cancelWakeWordTest,
   pauseWakeWord,
   resumeWakeWord,
   sendWakeWordAudio,
   startWakeWord,
+  startWakeWordTest,
   stopWakeWord
 } from '../services/wakeWordService'
 
@@ -69,6 +71,12 @@ export function registerAudioHandlers(): void {
   )
   ipcMain.handle(IPC_CHANNELS.wakeWordResume, (event: IpcMainInvokeEvent): ActionResult =>
     resumeWakeWord(event.sender.id)
+  )
+  ipcMain.handle(IPC_CHANNELS.wakeWordTestStart, (event: IpcMainInvokeEvent): ActionResult =>
+    startWakeWordTest(event.sender.id)
+  )
+  ipcMain.handle(IPC_CHANNELS.wakeWordTestCancel, (event: IpcMainInvokeEvent): ActionResult =>
+    cancelWakeWordTest(event.sender.id)
   )
   ipcMain.on(IPC_CHANNELS.wakeWordAudioChunk, (event: IpcMainInvokeEvent, request: unknown) => {
     const samples = parseWakeWordAudioChunk(request)

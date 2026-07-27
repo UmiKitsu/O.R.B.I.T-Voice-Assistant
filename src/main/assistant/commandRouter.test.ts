@@ -12,7 +12,7 @@ import { executeDeterministicAction } from './deterministicActionExecutor'
 describe('routeDeterministicCommand', () => {
   it.each([
     ['Stop speaking.', 'Stop speaking', 'assistant.stopSpeaking', {}],
-    ['Disable Titan.', 'Disable T.I.T.A.N.', 'assistant.disable', {}],
+    ['Disable Orbit.', 'Disable Orbit', 'assistant.disable', {}],
     ['What time is it?', 'Read the local system time', 'system.getTime', {}],
     ["What is today's date?", 'Read the local system date', 'system.getDate', {}],
     ['Play.', 'Play or pause media', 'media.playPause', {}],
@@ -56,11 +56,12 @@ describe('routeDeterministicCommand', () => {
 
   it('returns null for conversation and unsupported actions', () => {
     expect(routeDeterministicCommand('Explain Electron security.')).toBeNull()
+    expect(routeDeterministicCommand('Disable Titan.')).toBeNull()
   })
 
   it.each([
     ['Stop speaking.', 'Speech stopped.', 'stop-speaking'],
-    ['Disable Titan.', 'T.I.T.A.N. disabled.', 'disable']
+    ['Disable Orbit.', 'Orbit disabled.', 'disable']
   ])('executes %s through a registered policy capability', async (message, response, effect) => {
     await expect(executeDeterministicAction(message)).resolves.toEqual({
       ok: true,

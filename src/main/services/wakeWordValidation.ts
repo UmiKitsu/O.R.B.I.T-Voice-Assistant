@@ -39,24 +39,22 @@ export type StrippedWakePhrase = {
   text: string
   wakeWord?: {
     from: string
-    to: 'Titan'
+    to: 'Orbit'
   }
 }
 
 export function stripWakePhraseDetails(transcription: string): StrippedWakePhrase {
   const trimmed = transcription.trim()
-  const match = trimmed.match(
-    /^(?:hey[\s,.:;!—-]+)?(titan|taitan|taytan|tytan|tighten|tie[\s-]+tan)\b[\s,.:;!—-]*/i
-  )
+  const match = trimmed.match(/^(?:hey[\s,.:;!—-]+)?(orbit|or[\s-]+bit|orb[\s-]+it)\b[\s,.:;!—-]*/i)
   if (!match) return { text: trimmed }
 
   const heardWakeWord = match[1]
   return {
     text: trimmed.slice(match[0].length).trim(),
     wakeWord:
-      heardWakeWord.toLocaleLowerCase() === 'titan'
+      heardWakeWord.toLocaleLowerCase() === 'orbit'
         ? undefined
-        : { from: heardWakeWord, to: 'Titan' }
+        : { from: heardWakeWord, to: 'Orbit' }
   }
 }
 

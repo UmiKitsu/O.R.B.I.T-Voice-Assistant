@@ -60,7 +60,7 @@ app.whenReady().then(async () => {
   await ensureOllamaRunning()
   logOperationalEvent({ event: 'app.started' })
   // Set app user model id for windows
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.umikitsune.orbit')
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.

@@ -1,4 +1,4 @@
-export type TitanStatus =
+export type OrbitStatus =
   | 'disabled'
   | 'ready'
   | 'listening'
@@ -71,6 +71,11 @@ export type MicrophoneTestResult = {
   diagnostics: VoiceDiagnostics
 }
 
+export type WakeWordTestResult = {
+  detected: boolean
+  latencyMs?: number
+}
+
 export type WakeWordState =
   'off' | 'starting' | 'armed' | 'detected' | 'capturing' | 'transcribing' | 'paused' | 'error'
 
@@ -91,8 +96,12 @@ export type WakeWordEvent =
       message: string
       fatal: boolean
     }
+  | {
+      type: 'test-result'
+      result: WakeWordTestResult
+    }
 
-export type TitanSettings = {
+export type OrbitSettings = {
   ollamaBaseUrl: string
   ollamaModel: string
   thinkMode: boolean

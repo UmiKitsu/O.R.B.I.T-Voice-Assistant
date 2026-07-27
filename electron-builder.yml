@@ -1,5 +1,5 @@
-appId: com.umikitsune.titan
-productName: T.I.T.A.N. Voice Assistant
+appId: com.umikitsune.orbit
+productName: Orbit Voice Assistant
 directories:
   buildResources: build
 files:
@@ -17,7 +17,7 @@ asarUnpack:
   - node_modules/sherpa-onnx-node/**
   - node_modules/sherpa-onnx-win-x64/**
 win:
-  executableName: titan-voice-assistant
+  executableName: orbit-voice-assistant
   target:
     - nsis
     - portable

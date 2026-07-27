@@ -42,7 +42,7 @@ export function logOperationalEvent(entry: OperationalLogEvent): void {
   writeQueue = writeQueue
     .then(async () => {
       await mkdir(directory, { recursive: true })
-      await appendFile(join(directory, 'titan.log'), line, { encoding: 'utf8' })
+      await appendFile(join(directory, 'orbit.log'), line, { encoding: 'utf8' })
     })
     .catch(() => undefined)
 }

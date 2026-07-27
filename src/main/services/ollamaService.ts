@@ -1,4 +1,4 @@
-import type { ActionResult, ChatMessage, OllamaHealth, TitanSettings } from '../../shared/types'
+import type { ActionResult, ChatMessage, OllamaHealth, OrbitSettings } from '../../shared/types'
 import { getSettings } from './settingsService'
 
 const REQUEST_TIMEOUT_MS = 30_000
@@ -150,7 +150,7 @@ async function sendChatRequest(
   signal?: AbortSignal
 ): Promise<ActionResult<{ response: string }>> {
   const timedSignal = createTimedSignal(signal, REQUEST_TIMEOUT_MS)
-  const settings: TitanSettings = getSettings()
+  const settings: OrbitSettings = getSettings()
 
   try {
     const response = await fetch(`${settings.ollamaBaseUrl}/api/chat`, {
@@ -203,7 +203,7 @@ async function sendChatRequest(
 
     return {
       ok: true,
-      message: 'T.I.T.A.N. responded.',
+      message: 'Orbit responded.',
       data: {
         response: content
       }
@@ -230,7 +230,7 @@ async function sendChatRequest(
     return {
       ok: false,
       code: 'OLLAMA_NETWORK_ERROR',
-      message: 'T.I.T.A.N. could not connect to Ollama. Start Ollama and try again.',
+      message: 'Orbit could not connect to Ollama. Start Ollama and try again.',
       recoverable: true
     }
   } finally {

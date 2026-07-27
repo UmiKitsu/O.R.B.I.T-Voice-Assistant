@@ -76,7 +76,7 @@ function healthResult(health: OllamaHealth): ActionResult<OllamaHealth> {
     return {
       ok: false,
       code: 'OLLAMA_UNAVAILABLE',
-      message: 'T.I.T.A.N. could not connect to Ollama. Start Ollama and try again.',
+      message: 'Orbit could not connect to Ollama. Start Ollama and try again.',
       recoverable: true
     }
   }
@@ -140,7 +140,7 @@ export function registerAssistantHandlers(): void {
         return {
           ok: false,
           code: 'REQUEST_IN_PROGRESS',
-          message: 'T.I.T.A.N. is already responding to a message.',
+          message: 'Orbit is already responding to a message.',
           recoverable: true
         }
       }
@@ -175,7 +175,7 @@ export function registerAssistantHandlers(): void {
         recordSuccessfulExchange(session, message, response)
         return {
           ok: true,
-          message: 'T.I.T.A.N. needs a playback destination.',
+          message: 'Orbit needs a playback destination.',
           data: { response }
         }
       }
@@ -196,7 +196,7 @@ export function registerAssistantHandlers(): void {
         recordSuccessfulExchange(session, message, response)
         return {
           ok: true,
-          message: 'T.I.T.A.N. needs a playback destination.',
+          message: 'Orbit needs a playback destination.',
           data: { response }
         }
       }
@@ -239,7 +239,7 @@ export function registerAssistantHandlers(): void {
           output.kind === 'conversation'
             ? {
                 ok: true as const,
-                message: 'T.I.T.A.N. responded.',
+                message: 'Orbit responded.',
                 data: { response: output.response }
               }
             : await confirmationFlow.execute(output, senderId)

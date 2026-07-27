@@ -19,7 +19,7 @@ describe('wake-word validation', () => {
     expect(parseWakeWordAudioChunk({ samples: new Float32Array([1.1]) })).toBeNull()
   })
 
-  it.each(['Titan', 'TITAN', 'taitan', 'taytan', 'tytan', 'tighten', 'tie tan', 'Hey, taitan'])(
+  it.each(['Orbit', 'ORBIT', 'or bit', 'or-bit', 'orb it', 'Hey, or bit'])(
     'accepts %s as a leading wake phrase',
     (wakePhrase) => {
       expect(stripWakePhrase(`${wakePhrase}, open Spotify.`)).toBe('open Spotify.')
@@ -27,12 +27,12 @@ describe('wake-word validation', () => {
   )
 
   it('reports corrected wake spellings without stripping unrelated uses', () => {
-    expect(stripWakePhraseDetails('Taitan, open Spotify.')).toEqual({
+    expect(stripWakePhraseDetails('Or bit, open Spotify.')).toEqual({
       text: 'open Spotify.',
-      wakeWord: { from: 'Taitan', to: 'Titan' }
+      wakeWord: { from: 'Or bit', to: 'Orbit' }
     })
-    expect(stripWakePhrase('Explain the word titan')).toBe('Explain the word titan')
-    expect(stripWakePhrase('Titan')).toBe('')
+    expect(stripWakePhrase('Explain the word orbit')).toBe('Explain the word orbit')
+    expect(stripWakePhrase('Orbit')).toBe('')
   })
 
   it('bounds complete commands and produces a valid mono PCM WAV', () => {
