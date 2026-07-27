@@ -110,6 +110,10 @@ export function migrateLegacySettings(value: unknown): { value: unknown; changed
   return { value: migrated, changed }
 }
 
+export function parseSettingsJson(text: string): unknown {
+  return JSON.parse(text.replace(/^\uFEFF/, '')) as unknown
+}
+
 export function parseLegacySettingsForImport(value: unknown): OrbitSettings | undefined {
   const migrated = migrateLegacySettings(value)
   const parsed = orbitSettingsSchema.safeParse(migrated.value)
@@ -133,7 +137,7 @@ async function readLegacySettings(): Promise<OrbitSettings | undefined> {
   ]
   for (const candidate of candidates) {
     try {
-      const parsedJson: unknown = JSON.parse(await readFile(candidate, 'utf8'))
+      const parsedJson = parseSettingsJson(await readFile(candidate, 'utf8'))
       const parsedSettings = parseLegacySettingsForImport(parsedJson)
       if (parsedSettings) return parsedSettings
     } catch {
@@ -153,7 +157,9 @@ export async function initializeSettingsService(): Promise<void> {
   storage = new ElectronStore<OrbitSettings>({
     name: 'orbit-settings',
     cwd: userData,
-    defaults: cloneSettings(DEFAULT_ORBIT_SETTINGS)
+    defaults: cloneSettings(DEFAULT_ORBIT_SETTINGS),
+    clearInvalidConfig: true,
+    deserialize: (text) => parseSettingsJson(text) as OrbitSettings
   })
   if (importedSettings) storage.set(importedSettings)
   getSettings()

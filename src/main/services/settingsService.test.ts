@@ -4,6 +4,7 @@ import {
   DEFAULT_ORBIT_SETTINGS,
   getSettings,
   parseLegacySettingsForImport,
+  parseSettingsJson,
   setSettingsStorageForTests,
   orbitSettingsPatchSchema,
   orbitSettingsSchema,
@@ -29,6 +30,12 @@ afterEach(() => {
 })
 
 describe('settings validation', () => {
+  it('accepts UTF-8 BOM-prefixed settings JSON', () => {
+    expect(parseSettingsJson('\uFEFF{"speechEngine":"kokoro"}')).toEqual({
+      speechEngine: 'kokoro'
+    })
+  })
+
   it('accepts the complete defaults and strict partial updates', () => {
     expect(orbitSettingsSchema.safeParse(DEFAULT_ORBIT_SETTINGS).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ speechVolume: 0.4 }).success).toBe(true)
