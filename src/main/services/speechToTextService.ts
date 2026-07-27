@@ -14,11 +14,14 @@ import {
 } from './speechToTextValidation'
 import { getSettings } from './settingsService'
 
-const TRANSCRIPTION_TIMEOUT_MS = 45_000
+const VULKAN_TURBO_TIMEOUT_MS = 5_000
+const STANDARD_CPU_SMALL_TIMEOUT_MS = 7_000
+const WAKE_CPU_SMALL_TIMEOUT_MS = 4_000
 const MAX_PROCESS_OUTPUT_LENGTH = 1_000_000
 const WHISPER_THREADS = Math.max(1, Math.min(10, availableParallelism()))
 const SHORT_WAKE_CANDIDATE_MAX_MS = 5_000
 const SHORT_WAKE_AUDIO_CONTEXT = 256
+const STANDARD_COMMAND_AUDIO_CONTEXT = 768
 const WHISPER_COMMAND_PROMPT =
   'Orbit Orbit. Open, launch, focus, play, pause, next, previous, volume up, volume down, mute, unmute, search, maximize, minimize, restore, stop speaking, disable Orbit. Buksan, i-play, patugtugin, hanapin. YouTube, Google, Chrome, Spotify, Calculator, File Explorer, Visual Studio Code.'
 
@@ -29,6 +32,7 @@ type WhisperCandidate = {
   model: string
   backend: TranscriptionBackend
   modelName: Transcription['model']
+  timeoutMs: number
 }
 
 function whisperRoot(): string {
@@ -63,42 +67,44 @@ export async function resolveWhisperCandidates(
   const turboModel = join(root, 'ggml-large-v3-turbo-q5_0.bin')
   const vulkanExecutable = join(root, 'vulkan', 'whisper-cli.exe')
 
+  const [cpuAvailable, vulkanAvailable, smallAvailable, turboAvailable] = await Promise.all([
+    pathExists(cpuExecutable),
+    pathExists(vulkanExecutable),
+    pathExists(smallModel),
+    pathExists(turboModel)
+  ])
+
   if (profile === 'wake-candidate') {
-    return (await pathExists(cpuExecutable)) && (await pathExists(smallModel))
+    return smallAvailable && cpuAvailable
       ? [
           {
             executable: cpuExecutable,
             model: smallModel,
             backend: 'cpu-small',
-            modelName: 'small'
+            modelName: 'small',
+            timeoutMs: WAKE_CPU_SMALL_TIMEOUT_MS
           }
         ]
       : []
   }
 
   const candidates: WhisperCandidate[] = []
-  if ((await pathExists(vulkanExecutable)) && (await pathExists(turboModel))) {
+  if (turboAvailable && vulkanAvailable) {
     candidates.push({
       executable: vulkanExecutable,
       model: turboModel,
       backend: 'vulkan-turbo',
-      modelName: 'large-v3-turbo-q5_0'
+      modelName: 'large-v3-turbo-q5_0',
+      timeoutMs: VULKAN_TURBO_TIMEOUT_MS
     })
   }
-  if ((await pathExists(cpuExecutable)) && (await pathExists(turboModel))) {
-    candidates.push({
-      executable: cpuExecutable,
-      model: turboModel,
-      backend: 'cpu-turbo',
-      modelName: 'large-v3-turbo-q5_0'
-    })
-  }
-  if ((await pathExists(cpuExecutable)) && (await pathExists(smallModel))) {
+  if (smallAvailable && cpuAvailable) {
     candidates.push({
       executable: cpuExecutable,
       model: smallModel,
       backend: 'cpu-small',
-      modelName: 'small'
+      modelName: 'small',
+      timeoutMs: STANDARD_CPU_SMALL_TIMEOUT_MS
     })
   }
   return candidates
@@ -108,6 +114,7 @@ function runWhisper(
   candidate: WhisperCandidate,
   audioPath: string,
   signal: AbortSignal,
+  profile: TranscriptionProfile,
   optimizeShortWakeCandidate: boolean
 ): Promise<ActionResult<Transcription>> {
   return new Promise((resolve) => {
@@ -137,8 +144,11 @@ function runWhisper(
         WHISPER_COMMAND_PROMPT,
         '--no-timestamps'
       ]
+      arguments_.push('--beam-size', '1', '--best-of', '1', '--no-fallback')
       if (optimizeShortWakeCandidate) {
-        arguments_.push('--audio-ctx', String(SHORT_WAKE_AUDIO_CONTEXT), '--beam-size', '1')
+        arguments_.push('--audio-ctx', String(SHORT_WAKE_AUDIO_CONTEXT))
+      } else if (profile === 'standard') {
+        arguments_.push('--audio-ctx', String(STANDARD_COMMAND_AUDIO_CONTEXT))
       }
       child = spawn(candidate.executable, arguments_, {
         // The development folder contains Unicode punctuation. Using the fixed model directory as
@@ -172,7 +182,7 @@ function runWhisper(
     }
 
     const abort = (): void => {
-      child.kill()
+      child.kill('SIGKILL')
       finish({
         ok: false,
         code: 'TRANSCRIPTION_CANCELLED',
@@ -182,16 +192,20 @@ function runWhisper(
     }
 
     const timeout = setTimeout(() => {
-      child.kill()
+      child.kill('SIGKILL')
       finish({
         ok: false,
         code: 'TRANSCRIPTION_TIMEOUT',
         message: 'Transcription timed out.',
         recoverable: true
       })
-    }, TRANSCRIPTION_TIMEOUT_MS)
+    }, candidate.timeoutMs)
 
     signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) {
+      abort()
+      return
+    }
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => {
       if (stderr.length < MAX_PROCESS_OUTPUT_LENGTH) {
@@ -298,7 +312,13 @@ export async function transcribeRecording(
 
     let lastResult: ActionResult<Transcription> | undefined
     for (const candidate of candidates) {
-      lastResult = await runWhisper(candidate, audioPath, signal, optimizeShortWakeCandidate)
+      lastResult = await runWhisper(
+        candidate,
+        audioPath,
+        signal,
+        profile,
+        optimizeShortWakeCandidate
+      )
       if (lastResult.ok || !shouldTryNextBackend(lastResult)) return lastResult
     }
     return lastResult ?? unavailableResult('Whisper models')

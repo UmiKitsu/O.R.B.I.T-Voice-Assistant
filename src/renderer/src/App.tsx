@@ -685,11 +685,13 @@ function App(): React.JSX.Element {
                     <dt>Recognition</dt>
                     <dd>
                       {(voiceDiagnostics.transcriptionLatencyMs / 1000).toFixed(2)} s /{' '}
-                      {voiceDiagnostics.transcriptionBackend === 'vulkan-turbo'
-                        ? 'Vulkan Turbo'
-                        : voiceDiagnostics.transcriptionBackend === 'cpu-turbo'
-                          ? 'CPU Turbo'
-                          : 'CPU Small'}
+                      {voiceDiagnostics.transcriptionBackend === 'vulkan-small'
+                        ? 'Vulkan Small (fast)'
+                        : voiceDiagnostics.transcriptionBackend === 'vulkan-turbo'
+                          ? 'Vulkan Turbo'
+                          : voiceDiagnostics.transcriptionBackend === 'cpu-turbo'
+                            ? 'CPU Turbo'
+                            : 'CPU Small'}
                     </dd>
                   </div>
                   <div>

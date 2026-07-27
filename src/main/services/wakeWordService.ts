@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/ipcChannels'
 import type {
   ActionResult,
+  MicrophoneTestResult,
   WakeWordEvent,
   WakeWordState,
   WakeWordTestResult
@@ -21,6 +22,7 @@ import { diagnoseVoiceRecording, diagnoseWakeCandidateRecording } from './voiceD
 import { encodePcm16Wav, isValidWakeWordCommand } from './wakeWordValidation'
 
 const START_TIMEOUT_MS = 10_000
+const COMMAND_TRANSCRIPTION_DEADLINE_MS = 12_500
 const WAKE_WORD_TEST_LISTEN_MS = 8_000
 const WAKE_WORD_TEST_PROCESSING_GRACE_MS = 4_000
 
@@ -120,6 +122,37 @@ function failedWakeWordTestResult(
   return { detected: false, heardText, ...metrics }
 }
 
+async function diagnoseCommandWithDeadline(
+  audio: Uint8Array,
+  controller: AbortController
+): Promise<ActionResult<MicrophoneTestResult>> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<ActionResult<MicrophoneTestResult>>((resolve) => {
+    timeout = setTimeout(() => {
+      resolve({
+        ok: false,
+        code: 'TRANSCRIPTION_TIMEOUT',
+        message: 'Command transcription took too long. Please try again.',
+        recoverable: true
+      })
+      controller.abort()
+    }, COMMAND_TRANSCRIPTION_DEADLINE_MS)
+  })
+
+  try {
+    return await Promise.race([diagnoseVoiceRecording(audio, controller.signal), deadline])
+  } catch {
+    return {
+      ok: false,
+      code: 'TRANSCRIPTION_FAILED',
+      message: 'Command transcription failed. Please try again.',
+      recoverable: true
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
 async function transcribeCommand(session: WakeWordSession, samples: unknown): Promise<void> {
   if (!isValidWakeWordCommand(samples)) {
     emit(session, {
@@ -136,9 +169,10 @@ async function transcribeCommand(session: WakeWordSession, samples: unknown): Pr
   session.transcription = controller
   emitState(session, 'transcribing')
 
-  const result = await diagnoseVoiceRecording(encodePcm16Wav(samples), controller.signal)
-  if (session.transcription !== controller || controller.signal.aborted) return
+  const result = await diagnoseCommandWithDeadline(encodePcm16Wav(samples), controller)
+  if (session.transcription !== controller) return
   session.transcription = undefined
+  if (controller.signal.aborted && !result.ok && result.code === 'TRANSCRIPTION_CANCELLED') return
 
   if (!result.ok || !result.data) {
     logOperationalEvent({ event: 'wake-word.command-transcribed', outcome: 'failed' })
@@ -246,8 +280,8 @@ async function transcribeWakeCandidate(
   }
 
   if (hasCommand) {
-    // Whisper Small decides only whether the leading wake phrase is trusted. Preserve the same
-    // in-memory PCM and let the more accurate standard backend produce the command transcript.
+    // Small is trusted only to detect the wake phrase. Preserve the same in-memory PCM and let
+    // Vulkan Large-v3 Turbo produce the final command transcript for better command accuracy.
     emitState(session, 'detected')
     await transcribeCommand(session, message.samples)
   }

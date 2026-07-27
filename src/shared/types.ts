@@ -50,7 +50,11 @@ export type AssistantProgress = {
   model?: string
 }
 
-export type TranscriptionBackend = 'vulkan-turbo' | 'cpu-turbo' | 'cpu-small'
+export type TranscriptionBackend =
+  | 'vulkan-small'
+  | 'vulkan-turbo'
+  | 'cpu-turbo'
+  | 'cpu-small'
 
 export type Transcription = {
   text: string

@@ -93,14 +93,13 @@ afterEach(() => {
 })
 
 describe('Whisper backend selection and temporary audio cleanup', () => {
-  it('selects Vulkan Turbo first and keeps CPU Small as the final fallback', async () => {
+  it('uses Vulkan Turbo for commands and CPU Small only for wake fallback', async () => {
     await expect(resolveWhisperCandidates('standard')).resolves.toMatchObject([
-      { backend: 'vulkan-turbo', modelName: 'large-v3-turbo-q5_0' },
-      { backend: 'cpu-turbo', modelName: 'large-v3-turbo-q5_0' },
-      { backend: 'cpu-small', modelName: 'small' }
+      { backend: 'vulkan-turbo', modelName: 'large-v3-turbo-q5_0', timeoutMs: 5_000 },
+      { backend: 'cpu-small', modelName: 'small', timeoutMs: 7_000 }
     ])
     await expect(resolveWhisperCandidates('wake-candidate')).resolves.toMatchObject([
-      { backend: 'cpu-small', modelName: 'small' }
+      { backend: 'cpu-small', modelName: 'small', timeoutMs: 4_000 }
     ])
   })
 
@@ -123,12 +122,22 @@ describe('Whisper backend selection and temporary audio cleanup', () => {
       }
     })
     const arguments_ = mocks.spawn.mock.calls[0]?.[1] as string[]
-    expect(arguments_).toEqual(expect.arrayContaining(['--audio-ctx', '256', '--beam-size', '1']))
+    expect(arguments_).toEqual(
+      expect.arrayContaining([
+        '--audio-ctx',
+        '256',
+        '--beam-size',
+        '1',
+        '--best-of',
+        '1',
+        '--no-fallback'
+      ])
+    )
     expect(mocks.unlink).toHaveBeenCalledOnce()
     expect(mocks.unlink).toHaveBeenCalledWith(mocks.writeFile.mock.calls[0]?.[0])
   })
 
-  it('falls back from a failed Vulkan runtime to CPU Turbo without rewriting audio', async () => {
+  it('falls back from a failed Vulkan runtime directly to CPU Small without rewriting audio', async () => {
     const pending = transcribeRecording(audibleAudio(), new AbortController().signal)
     const vulkanChild = await waitForChild()
     vulkanChild.emit('close', 1)
@@ -137,7 +146,7 @@ describe('Whisper backend selection and temporary audio cleanup', () => {
 
     await expect(pending).resolves.toMatchObject({
       ok: true,
-      data: { backend: 'cpu-turbo', model: 'large-v3-turbo-q5_0' }
+      data: { backend: 'cpu-small', model: 'small' }
     })
     expect(mocks.writeFile).toHaveBeenCalledOnce()
     expect(mocks.unlink).toHaveBeenCalledOnce()
@@ -160,11 +169,12 @@ describe('Whisper backend selection and temporary audio cleanup', () => {
     const pending = transcribeRecording(audibleAudio(), new AbortController().signal)
 
     const children: InstanceType<typeof mocks.FakeChild>[] = []
-    for (let index = 1; index <= 3; index += 1) {
-      const child = await waitForChild(index)
-      children.push(child)
-      await vi.advanceTimersByTimeAsync(45_000)
-    }
+    const vulkanChild = await waitForChild(1)
+    children.push(vulkanChild)
+    await vi.advanceTimersByTimeAsync(5_000)
+    const cpuChild = await waitForChild(2)
+    children.push(cpuChild)
+    await vi.advanceTimersByTimeAsync(7_000)
 
     await expect(pending).resolves.toMatchObject({
       ok: false,
@@ -200,6 +210,9 @@ describe('Whisper backend selection and temporary audio cleanup', () => {
 
     const arguments_ = mocks.spawn.mock.calls[0]?.[1] as string[]
     expect(arguments_).not.toContain('--audio-ctx')
+    expect(arguments_).toEqual(
+      expect.arrayContaining(['--beam-size', '1', '--best-of', '1', '--no-fallback'])
+    )
     expect(mocks.unlink).toHaveBeenCalledOnce()
   })
 })

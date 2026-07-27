@@ -139,6 +139,8 @@ function successfulFallback(command = true): unknown {
             transcriptionLatencyMs: 90,
             peakLevel: 0.1,
             rmsLevel: 0.03,
+            transcriptionBackend: 'cpu-small',
+            transcriptionModel: 'small',
             detectedLanguage: 'en',
             route: {
               kind: 'deterministic',
@@ -182,6 +184,7 @@ function successfulCommandDiagnosis(): unknown {
     }
   }
 }
+
 async function flushAsyncWork(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
@@ -328,6 +331,56 @@ describe('armed hybrid recognition', () => {
       expect.objectContaining({
         type: 'transcription',
         transcript: expect.objectContaining({ normalizedText: 'open Spotify' })
+      })
+    )
+  })
+
+  it('reports unexpected transcription failures instead of remaining paused forever', async () => {
+    const webContents = sender(54)
+    mocks.diagnoseVoiceRecording.mockRejectedValue(new Error('native transcription failure'))
+    await startWakeWord(webContents as never)
+
+    mocks.workers[0].emit('message', {
+      type: 'command',
+      samples: new Float32Array(3_200).fill(0.05)
+    })
+    await flushAsyncWork()
+
+    expect(webContents.send).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        type: 'error',
+        code: 'TRANSCRIPTION_FAILED',
+        fatal: false
+      })
+    )
+  })
+
+  it('times out a hung command transcription and aborts its native work', async () => {
+    const webContents = sender(55)
+    let transcriptionSignal: AbortSignal | undefined
+    mocks.diagnoseVoiceRecording.mockImplementation(
+      (_audio: Uint8Array, signal: AbortSignal) => {
+        transcriptionSignal = signal
+        return new Promise(() => undefined)
+      }
+    )
+    await startWakeWord(webContents as never)
+
+    mocks.workers[0].emit('message', {
+      type: 'command',
+      samples: new Float32Array(3_200).fill(0.05)
+    })
+    await vi.advanceTimersByTimeAsync(12_500)
+    await flushAsyncWork()
+
+    expect(transcriptionSignal?.aborted).toBe(true)
+    expect(webContents.send).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        type: 'error',
+        code: 'TRANSCRIPTION_TIMEOUT',
+        fatal: false
       })
     )
   })

@@ -76,7 +76,8 @@ function isVoiceDiagnostics(value: unknown): value is VoiceDiagnostics {
     typeof diagnostics.rmsLevel === 'number' &&
     diagnostics.rmsLevel >= 0 &&
     diagnostics.rmsLevel <= 1 &&
-    (diagnostics.transcriptionBackend === 'vulkan-turbo' ||
+    (diagnostics.transcriptionBackend === 'vulkan-small' ||
+      diagnostics.transcriptionBackend === 'vulkan-turbo' ||
       diagnostics.transcriptionBackend === 'cpu-turbo' ||
       diagnostics.transcriptionBackend === 'cpu-small') &&
     (diagnostics.transcriptionModel === 'large-v3-turbo-q5_0' ||
