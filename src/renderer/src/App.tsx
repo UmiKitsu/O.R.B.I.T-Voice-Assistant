@@ -1,5 +1,6 @@
 import { FormEvent, useRef, useState } from 'react'
 import type { ActionResult, ChatMessage, OllamaHealth, TitanStatus } from '../../shared/types'
+import { useSpeech } from './hooks/useSpeech'
 
 function App(): React.JSX.Element {
   const [status, setStatus] = useState<TitanStatus>('disabled')
@@ -8,8 +9,21 @@ function App(): React.JSX.Element {
   const [conversationError, setConversationError] = useState<string | null>(null)
   const [connectionResult, setConnectionResult] = useState<ActionResult<OllamaHealth> | null>(null)
   const [isTestingConnection, setIsTestingConnection] = useState(false)
+  const [speechEnabled, setSpeechEnabled] = useState(true)
   const isEnabled = useRef(false)
   const requestGeneration = useRef(0)
+  const {
+    speak,
+    stop: stopSpeaking,
+    speaking,
+    voices,
+    selectedVoice,
+    setSelectedVoice,
+    rate,
+    setRate,
+    volume,
+    setVolume
+  } = useSpeech(speechEnabled)
 
   const enableTitan = (): void => {
     isEnabled.current = true
@@ -19,6 +33,7 @@ function App(): React.JSX.Element {
 
   const disableTitan = async (): Promise<void> => {
     isEnabled.current = false
+    stopSpeaking()
     requestGeneration.current += 1
     setConversationError(null)
     setStatus('disabled')
@@ -46,6 +61,7 @@ function App(): React.JSX.Element {
 
         if (response) {
           setMessages((current) => [...current, { role: 'assistant', content: response }])
+          speak(response)
         } else {
           setConversationError('Ollama returned an invalid response.')
         }
@@ -93,7 +109,8 @@ function App(): React.JSX.Element {
     }
   }
 
-  const statusLabel = status
+  const displayedStatus = status === 'ready' && speaking ? 'speaking' : status
+  const statusLabel = displayedStatus
     .split('-')
     .map((word) => word[0].toUpperCase() + word.slice(1))
     .join(' ')
@@ -109,7 +126,7 @@ function App(): React.JSX.Element {
             <h1 id="app-title">T.I.T.A.N.</h1>
             <p>Local Voice Assistant</p>
           </div>
-          <div className={`status-pill status-${status}`} role="status" aria-live="polite">
+          <div className={`status-pill status-${displayedStatus}`} role="status" aria-live="polite">
             <span className="status-dot" aria-hidden="true" />
             Status: {statusLabel}
           </div>
@@ -195,11 +212,65 @@ function App(): React.JSX.Element {
             <span aria-hidden="true">●</span>
             Microphone — Coming Soon
           </button>
-          <button type="button" disabled={status === 'disabled'}>
+          <button type="button" onClick={stopSpeaking} disabled={!speaking}>
             Stop Speaking
           </button>
-          <button type="button">Settings</button>
+          <label className="speech-toggle">
+            <input
+              type="checkbox"
+              checked={speechEnabled}
+              onChange={(event) => {
+                const nextEnabled = event.target.checked
+                if (!nextEnabled) stopSpeaking()
+                setSpeechEnabled(nextEnabled)
+              }}
+            />
+            Speak responses
+          </label>
         </footer>
+        <fieldset className="speech-settings" disabled={!speechEnabled}>
+          <legend>Windows speech</legend>
+          <label>
+            Voice
+            <select
+              value={selectedVoice?.voiceURI ?? ''}
+              onChange={(event) =>
+                setSelectedVoice(
+                  voices.find((voice) => voice.voiceURI === event.target.value) ?? null
+                )
+              }
+            >
+              {voices.length === 0 ? <option value="">No installed voices found</option> : null}
+              {voices.map((voice) => (
+                <option value={voice.voiceURI} key={voice.voiceURI}>
+                  {voice.name} ({voice.lang})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Rate: {rate.toFixed(1)}
+            <input
+              type="range"
+              min="0.5"
+              max="2"
+              step="0.1"
+              value={rate}
+              onChange={(event) => setRate(event.target.valueAsNumber)}
+            />
+          </label>
+          <label>
+            Volume: {Math.round(volume * 100)}%
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={volume}
+              onChange={(event) => setVolume(event.target.valueAsNumber)}
+            />
+          </label>
+        </fieldset>
         {connectionResult ? (
           <p
             className={`connection-result ${connectionResult.ok ? 'connection-success' : 'connection-error'}`}
