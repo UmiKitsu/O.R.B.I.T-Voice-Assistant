@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/ipcChannels'
 import type { ActionResult, Transcription } from '../../shared/types'
 import { transcribeRecording } from '../services/speechToTextService'
 import { isPcmWav } from '../services/speechToTextValidation'
+import { logOperationalEvent } from '../services/loggerService'
 
 const activeTranscriptions = new Map<number, AbortController>()
 
@@ -21,6 +22,10 @@ function parseTranscriptionRequest(value: unknown): Uint8Array | null {
 }
 
 export function registerAudioHandlers(): void {
+  ipcMain.handle(IPC_CHANNELS.speechRecordingStarted, (): ActionResult => {
+    logOperationalEvent({ event: 'recording.started' })
+    return { ok: true, message: 'Recording start logged.' }
+  })
   ipcMain.handle(
     IPC_CHANNELS.speechTranscribe,
     async (event: IpcMainInvokeEvent, request: unknown): Promise<ActionResult<Transcription>> => {
@@ -49,7 +54,12 @@ export function registerAudioHandlers(): void {
       const abortOnDestroyed = (): void => controller.abort()
       event.sender.once('destroyed', abortOnDestroyed)
       try {
-        return await transcribeRecording(audio, controller.signal)
+        const result = await transcribeRecording(audio, controller.signal)
+        logOperationalEvent({
+          event: 'transcription.completed',
+          outcome: result.ok ? 'succeeded' : 'failed'
+        })
+        return result
       } finally {
         event.sender.removeListener('destroyed', abortOnDestroyed)
         if (activeTranscriptions.get(senderId) === controller) {

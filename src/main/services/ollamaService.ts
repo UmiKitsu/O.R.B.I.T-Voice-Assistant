@@ -1,7 +1,6 @@
-import type { ActionResult, ChatMessage, OllamaHealth } from '../../shared/types'
+import type { ActionResult, ChatMessage, OllamaHealth, TitanSettings } from '../../shared/types'
+import { getSettings } from './settingsService'
 
-const OLLAMA_BASE_URL = 'http://localhost:11434'
-const DEFAULT_MODEL = 'qwen3:8b'
 const REQUEST_TIMEOUT_MS = 30_000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -75,11 +74,11 @@ function createTimedSignal(
   }
 }
 
-async function fetchModels(signal?: AbortSignal): Promise<string[]> {
+async function fetchModels(baseUrl: string, signal?: AbortSignal): Promise<string[]> {
   const timedSignal = createTimedSignal(signal, REQUEST_TIMEOUT_MS)
 
   try {
-    const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
+    const response = await fetch(`${baseUrl}/api/tags`, {
       method: 'GET',
       signal: timedSignal.signal
     })
@@ -102,15 +101,17 @@ async function fetchModels(signal?: AbortSignal): Promise<string[]> {
 }
 
 export async function checkConnection(signal?: AbortSignal): Promise<OllamaHealth> {
-  return checkModelInstalled(DEFAULT_MODEL, signal)
+  const settings = getSettings()
+  return checkModelInstalled(settings.ollamaModel, signal, settings.ollamaBaseUrl)
 }
 
 export async function checkModelInstalled(
   model: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  baseUrl = getSettings().ollamaBaseUrl
 ): Promise<OllamaHealth> {
   try {
-    const models = await fetchModels(signal)
+    const models = await fetchModels(baseUrl, signal)
 
     return {
       connected: true,
@@ -147,17 +148,18 @@ async function sendChatRequest(
   signal?: AbortSignal
 ): Promise<ActionResult<{ response: string }>> {
   const timedSignal = createTimedSignal(signal, REQUEST_TIMEOUT_MS)
+  const settings: TitanSettings = getSettings()
 
   try {
-    const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+    const response = await fetch(`${settings.ollamaBaseUrl}/api/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: DEFAULT_MODEL,
+        model: settings.ollamaModel,
         messages,
-        think: false,
+        think: settings.thinkMode,
         stream: false,
         ...(format ? { format } : {})
       }),

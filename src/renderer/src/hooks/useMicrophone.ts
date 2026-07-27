@@ -81,6 +81,7 @@ export function useMicrophone(): MicrophoneController {
         if (event.data.size > 0) chunksRef.current.push(event.data)
       }
       recorder.start(250)
+      void window.titan.recordingStarted().catch(() => undefined)
       return { ok: true, message: 'Recording started.' }
     } catch (error) {
       releaseStream()

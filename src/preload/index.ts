@@ -1,6 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipcChannels'
-import type { ActionResult, AssistantResponse, OllamaHealth, Transcription } from '../shared/types'
+import type {
+  ActionResult,
+  AssistantResponse,
+  OllamaHealth,
+  TitanSettings,
+  Transcription
+} from '../shared/types'
 
 const titan = Object.freeze({
   checkOllama: (): Promise<ActionResult<OllamaHealth>> =>
@@ -12,6 +18,12 @@ const titan = Object.freeze({
   cancelAssistant: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.assistantCancel),
 
   clearConversation: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.assistantClear),
+  getSettings: (): Promise<ActionResult<TitanSettings>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
+  updateSettings: (patch: Partial<TitanSettings>): Promise<ActionResult<TitanSettings>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, patch),
+  recordingStarted: (): Promise<ActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.speechRecordingStarted),
   transcribeAudio: (audio: Uint8Array): Promise<ActionResult<Transcription>> =>
     ipcRenderer.invoke(IPC_CHANNELS.speechTranscribe, { audio }),
 

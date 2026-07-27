@@ -9,8 +9,9 @@ import {
   createCapabilityRuntime
 } from '../capabilities/capabilityRuntime'
 import { checkConnection } from '../services/ollamaService'
+import { logOperationalEvent } from '../services/loggerService'
+import { getSettings } from '../services/settingsService'
 
-const DEFAULT_MODEL = 'qwen3:8b'
 const MAX_RETAINED_MESSAGES = 20
 const MAX_MESSAGE_LENGTH = 4_000
 
@@ -43,6 +44,7 @@ function parseAssistantRequest(value: unknown): string | null {
 }
 
 function healthResult(health: OllamaHealth): ActionResult<OllamaHealth> {
+  const model = getSettings().ollamaModel
   if (!health.connected) {
     return {
       ok: false,
@@ -52,18 +54,20 @@ function healthResult(health: OllamaHealth): ActionResult<OllamaHealth> {
     }
   }
 
+  logOperationalEvent({ event: 'ollama.connected' })
+
   if (!health.modelInstalled) {
     return {
       ok: false,
       code: 'OLLAMA_MODEL_MISSING',
-      message: `The ${DEFAULT_MODEL} model is not installed. Run: ollama pull ${DEFAULT_MODEL}`,
+      message: `The ${model} model is not installed. Run: ollama pull ${model}`,
       recoverable: true
     }
   }
 
   return {
     ok: true,
-    message: `Ollama is running and ${DEFAULT_MODEL} is installed.`,
+    message: `Ollama is running and ${model} is installed.`,
     data: health
   }
 }

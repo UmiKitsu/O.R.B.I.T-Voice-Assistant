@@ -4,9 +4,13 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerAssistantHandlers } from './ipc/assistantHandlers'
 import { registerAudioHandlers } from './ipc/audioHandlers'
+import { registerSettingsHandlers } from './ipc/settingsHandlers'
+import { flushLogs, initializeLogger, logOperationalEvent } from './services/loggerService'
+import { initializeSettingsService } from './services/settingsService'
 
 registerAssistantHandlers()
 registerAudioHandlers()
+registerSettingsHandlers()
 
 function createWindow(): void {
   // Create the browser window.
@@ -48,7 +52,10 @@ function createWindow(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  initializeLogger(app.getPath('userData'))
+  await initializeSettingsService()
+  logOperationalEvent({ event: 'app.started' })
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
 
@@ -71,6 +78,17 @@ app.whenReady().then(() => {
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
+let logsFlushedForQuit = false
+app.on('before-quit', (event) => {
+  if (logsFlushedForQuit) return
+  event.preventDefault()
+  logOperationalEvent({ event: 'app.closed' })
+  void flushLogs().finally(() => {
+    logsFlushedForQuit = true
+    app.quit()
+  })
+})
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()

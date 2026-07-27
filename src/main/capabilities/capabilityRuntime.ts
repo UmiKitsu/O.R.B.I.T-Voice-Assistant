@@ -11,6 +11,7 @@ import { CapabilityRegistry } from './capabilityRegistry'
 import { registerMediaCapabilities } from './mediaCapabilities'
 import { registerSystemCapabilities } from './systemCapabilities'
 import { registerWindowInputCapabilities } from './windowInputCapabilityDefinitions'
+import { getSettings } from '../services/settingsService'
 
 export type CapabilityRuntimeDependencies = {
   now?: () => Date
@@ -39,5 +40,9 @@ export function createCapabilityRuntime(
   dependencies: CapabilityRuntimeDependencies = {},
   registry: CapabilityRegistry = createCapabilityRegistry(dependencies)
 ): PolicyEngine {
-  return new PolicyEngine(registry, new ConfirmationManager())
+  return new PolicyEngine(
+    registry,
+    new ConfirmationManager(),
+    () => getSettings().confirmationTimeoutSeconds * 1_000
+  )
 }

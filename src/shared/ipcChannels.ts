@@ -3,6 +3,7 @@ export const IPC_CHANNELS = {
   assistantCancel: 'titan:assistant:cancel',
   assistantClear: 'titan:assistant:clear',
   speechTranscribe: 'titan:speech:transcribe',
+  speechRecordingStarted: 'titan:speech:recording-started',
   speechCancelTranscription: 'titan:speech:cancel-transcription',
   ollamaHealth: 'titan:ollama:health',
   settingsGet: 'titan:settings:get',

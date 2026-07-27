@@ -1,4 +1,4 @@
-import { FormEvent, useRef, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
 import type {
   ActionResult,
   ChatMessage,
@@ -37,6 +37,27 @@ function App(): React.JSX.Element {
     volume,
     setVolume
   } = useSpeech(speechEnabled)
+
+  useEffect(() => {
+    let active = true
+    void window.titan
+      .getSettings()
+      .then((result) => {
+        if (!active || !result.ok || !result.data) return
+        setSpeechEnabled(result.data.speechEnabled)
+        setRate(result.data.speechRate)
+        setVolume(result.data.speechVolume)
+      })
+      .catch(() => undefined)
+
+    return () => {
+      active = false
+    }
+  }, [setRate, setVolume])
+
+  const saveSettings = (patch: Parameters<typeof window.titan.updateSettings>[0]): void => {
+    void window.titan.updateSettings(patch).catch(() => undefined)
+  }
 
   const enableTitan = (): void => {
     isEnabled.current = true
@@ -373,6 +394,7 @@ function App(): React.JSX.Element {
                 const nextEnabled = event.target.checked
                 if (!nextEnabled) stopSpeaking()
                 setSpeechEnabled(nextEnabled)
+                saveSettings({ speechEnabled: nextEnabled })
               }}
             />
             Speak responses
@@ -406,7 +428,10 @@ function App(): React.JSX.Element {
               max="2"
               step="0.1"
               value={rate}
-              onChange={(event) => setRate(event.target.valueAsNumber)}
+              onChange={(event) => {
+                setRate(event.target.valueAsNumber)
+                saveSettings({ speechRate: event.target.valueAsNumber })
+              }}
             />
           </label>
           <label>
@@ -417,7 +442,10 @@ function App(): React.JSX.Element {
               max="1"
               step="0.05"
               value={volume}
-              onChange={(event) => setVolume(event.target.valueAsNumber)}
+              onChange={(event) => {
+                setVolume(event.target.valueAsNumber)
+                saveSettings({ speechVolume: event.target.valueAsNumber })
+              }}
             />
           </label>
         </fieldset>
