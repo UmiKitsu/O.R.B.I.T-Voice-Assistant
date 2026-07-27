@@ -24,6 +24,26 @@ export type Transcription = {
   text: string
 }
 
+export type WakeWordState =
+  'off' | 'starting' | 'armed' | 'detected' | 'capturing' | 'transcribing' | 'paused' | 'error'
+
+export type WakeWordEvent =
+  | {
+      type: 'state'
+      state: WakeWordState
+      message: string
+    }
+  | {
+      type: 'transcription'
+      text: string
+    }
+  | {
+      type: 'error'
+      code: string
+      message: string
+      fatal: boolean
+    }
+
 export type TitanSettings = {
   ollamaBaseUrl: string
   ollamaModel: string

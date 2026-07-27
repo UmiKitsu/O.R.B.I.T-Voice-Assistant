@@ -4,6 +4,14 @@ import type { ActionResult, Transcription } from '../../shared/types'
 import { transcribeRecording } from '../services/speechToTextService'
 import { isPcmWav } from '../services/speechToTextValidation'
 import { logOperationalEvent } from '../services/loggerService'
+import { parseWakeWordAudioChunk } from '../services/wakeWordValidation'
+import {
+  pauseWakeWord,
+  resumeWakeWord,
+  sendWakeWordAudio,
+  startWakeWord,
+  stopWakeWord
+} from '../services/wakeWordService'
 
 const activeTranscriptions = new Map<number, AbortController>()
 
@@ -84,4 +92,20 @@ export function registerAudioHandlers(): void {
       }
     }
   )
+  ipcMain.handle(IPC_CHANNELS.wakeWordStart, (event: IpcMainInvokeEvent) =>
+    startWakeWord(event.sender)
+  )
+  ipcMain.handle(IPC_CHANNELS.wakeWordStop, (event: IpcMainInvokeEvent): ActionResult =>
+    stopWakeWord(event.sender.id)
+  )
+  ipcMain.handle(IPC_CHANNELS.wakeWordPause, (event: IpcMainInvokeEvent): ActionResult =>
+    pauseWakeWord(event.sender.id)
+  )
+  ipcMain.handle(IPC_CHANNELS.wakeWordResume, (event: IpcMainInvokeEvent): ActionResult =>
+    resumeWakeWord(event.sender.id)
+  )
+  ipcMain.on(IPC_CHANNELS.wakeWordAudioChunk, (event: IpcMainInvokeEvent, request: unknown) => {
+    const samples = parseWakeWordAudioChunk(request)
+    if (samples) sendWakeWordAudio(event.sender.id, samples)
+  })
 }

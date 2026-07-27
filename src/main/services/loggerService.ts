@@ -2,7 +2,16 @@ import { appendFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 export type OperationalLogEvent =
-  | { event: 'app.started' | 'app.closed' | 'ollama.connected' | 'recording.started' }
+  | {
+      event:
+        | 'app.started'
+        | 'app.closed'
+        | 'ollama.connected'
+        | 'recording.started'
+        | 'wake-word.started'
+        | 'wake-word.stopped'
+    }
+  | { event: 'wake-word.command-transcribed'; outcome: 'succeeded' | 'failed' }
   | { event: 'transcription.completed'; outcome: 'succeeded' | 'failed' }
   | { event: 'capability.requested'; capability: string }
   | { event: 'policy.decided'; capability: string; decision: 'allowed' | 'blocked' }

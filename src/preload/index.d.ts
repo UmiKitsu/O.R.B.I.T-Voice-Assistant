@@ -3,7 +3,8 @@ import type {
   AssistantResponse,
   OllamaHealth,
   TitanSettings,
-  Transcription
+  Transcription,
+  WakeWordEvent
 } from '../shared/types'
 
 type TitanApi = {
@@ -16,6 +17,12 @@ type TitanApi = {
   recordingStarted: () => Promise<ActionResult>
   transcribeAudio: (audio: Uint8Array) => Promise<ActionResult<Transcription>>
   cancelTranscription: () => Promise<ActionResult>
+  startWakeWord: () => Promise<ActionResult>
+  stopWakeWord: () => Promise<ActionResult>
+  pauseWakeWord: () => Promise<ActionResult>
+  resumeWakeWord: () => Promise<ActionResult>
+  sendWakeWordAudio: (samples: Float32Array) => void
+  onWakeWordEvent: (listener: (event: WakeWordEvent) => void) => () => void
   confirmAction: (requestId: string, approved: boolean) => Promise<ActionResult<AssistantResponse>>
 }
 

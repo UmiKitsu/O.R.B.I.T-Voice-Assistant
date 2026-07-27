@@ -27,6 +27,7 @@
     "electron-store": "^11.0.2",
     "koffi": "^2.14.1",
     "loudness": "^0.4.2",
+    "sherpa-onnx-node": "^1.13.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {

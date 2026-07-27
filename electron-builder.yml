@@ -12,15 +12,26 @@ files:
 asarUnpack:
   - resources/**
   - node_modules/loudness/impl/windows/*.exe
+  - node_modules/sherpa-onnx-node/**
+  - node_modules/sherpa-onnx-win-x64/**
 win:
   executableName: titan-voice-assistant
+  target:
+    - nsis
+    - portable
 extraResources:
   - from: resources/whisper
     to: whisper
     filter:
       - '**/*'
+  - from: resources/wake-word
+    to: wake-word
+    filter:
+      - '**/*'
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always

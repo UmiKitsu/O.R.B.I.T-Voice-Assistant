@@ -7,6 +7,7 @@ import { registerAudioHandlers } from './ipc/audioHandlers'
 import { registerSettingsHandlers } from './ipc/settingsHandlers'
 import { flushLogs, initializeLogger, logOperationalEvent } from './services/loggerService'
 import { initializeSettingsService } from './services/settingsService'
+import { stopAllWakeWordSessions } from './services/wakeWordService'
 
 registerAssistantHandlers()
 registerAudioHandlers()
@@ -83,6 +84,7 @@ app.on('before-quit', (event) => {
   if (logsFlushedForQuit) return
   event.preventDefault()
   logOperationalEvent({ event: 'app.closed' })
+  stopAllWakeWordSessions()
   void flushLogs().finally(() => {
     logsFlushedForQuit = true
     app.quit()
