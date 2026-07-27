@@ -14,6 +14,12 @@ export type ChatMessage = {
   content: string
 }
 
+export type OllamaHealth = {
+  connected: boolean
+  modelInstalled: boolean
+  models: string[]
+}
+
 export type ActionResult<T = undefined> =
   | {
       ok: true

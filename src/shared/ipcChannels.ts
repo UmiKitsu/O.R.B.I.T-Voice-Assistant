@@ -1,6 +1,7 @@
 export const IPC_CHANNELS = {
   assistantAsk: 'titan:assistant:ask',
   assistantCancel: 'titan:assistant:cancel',
+  assistantClear: 'titan:assistant:clear',
   ollamaHealth: 'titan:ollama:health',
   settingsGet: 'titan:settings:get',
   settingsUpdate: 'titan:settings:update',
