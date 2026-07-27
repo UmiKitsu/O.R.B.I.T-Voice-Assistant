@@ -33,7 +33,7 @@ export const orbitSettingsSchema = z
     }, 'The Ollama URL must be an HTTP or HTTPS base URL without credentials.'),
     ollamaModel: z.string().trim().min(1).max(200),
     thinkMode: z.boolean(),
-    speechEngine: z.enum(['kokoro', 'windows']),
+    speechEngine: z.literal('kokoro'),
     kokoroVoice: z.enum(KOKORO_VOICES),
     speechRate: z.number().min(0.5).max(2),
     speechVolume: z.number().min(0).max(1),
@@ -91,7 +91,7 @@ export function migrateLegacySettings(value: unknown): { value: unknown; changed
   let changed = 'speechEnabled' in migrated || 'wakeWordEnabled' in migrated
   delete migrated.speechEnabled
   delete migrated.wakeWordEnabled
-  if (!('speechEngine' in migrated)) {
+  if (migrated.speechEngine !== 'kokoro') {
     migrated.speechEngine = 'kokoro'
     changed = true
   }

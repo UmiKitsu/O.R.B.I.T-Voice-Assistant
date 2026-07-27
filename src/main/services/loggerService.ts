@@ -12,6 +12,10 @@ export type OperationalLogEvent =
         | 'wake-word.stopped'
     }
   | { event: 'wake-word.command-transcribed'; outcome: 'succeeded' | 'failed' }
+  | {
+      event: 'speech.worker-failed'
+      reason: 'initialization' | 'runtime-error' | 'message-error' | 'unexpected-exit'
+    }
   | { event: 'transcription.completed'; outcome: 'succeeded' | 'failed' }
   | { event: 'capability.requested'; capability: string }
   | { event: 'policy.decided'; capability: string; decision: 'allowed' | 'blocked' }

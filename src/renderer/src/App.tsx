@@ -71,12 +71,7 @@ function App(): React.JSX.Element {
     stop: stopSpeaking,
     speaking,
     synthesizing,
-    fallbackNotice,
-    voices,
-    selectedVoice,
-    setSelectedVoice,
-    engine: speechEngine,
-    setEngine: setSpeechEngine,
+    speechNotice,
     kokoroVoice,
     setKokoroVoice,
     rate,
@@ -123,7 +118,6 @@ function App(): React.JSX.Element {
         if (!active || !result.ok || !result.data) return
         setRate(result.data.speechRate)
         setVolume(result.data.speechVolume)
-        setSpeechEngine(result.data.speechEngine)
         setKokoroVoice(result.data.kokoroVoice)
         setRecognitionLanguage(result.data.recognitionLanguage)
         setWakeRecognitionMode(result.data.wakeRecognitionMode)
@@ -133,7 +127,7 @@ function App(): React.JSX.Element {
     return () => {
       active = false
     }
-  }, [setKokoroVoice, setRate, setSpeechEngine, setVolume])
+  }, [setKokoroVoice, setRate, setVolume])
 
   useEffect(() => {
     return window.orbit.onAssistantProgress((progress) => {
@@ -752,9 +746,9 @@ function App(): React.JSX.Element {
             </div>
           ) : null}
 
-          {fallbackNotice ? (
+          {speechNotice ? (
             <p className="connection-result" role="status">
-              {fallbackNotice}
+              {speechNotice}
             </p>
           ) : null}
 
@@ -828,61 +822,26 @@ function App(): React.JSX.Element {
         </footer>
 
         <fieldset className="speech-settings">
-          <legend>Speech output</legend>
+          <legend>Kokoro speech output</legend>
           <label>
-            Engine
+            Voice
             <select
-              value={speechEngine}
+              value={kokoroVoice}
               onChange={(event) => {
-                const nextEngine = event.target.value === 'windows' ? 'windows' : 'kokoro'
-                setSpeechEngine(nextEngine)
-                saveSettings({ speechEngine: nextEngine })
+                const voice = event.target.value as typeof kokoroVoice
+                setKokoroVoice(voice)
+                saveSettings({ kokoroVoice: voice, speechEngine: 'kokoro' })
               }}
             >
-              <option value="kokoro">Kokoro neural voice (recommended)</option>
-              <option value="windows">Windows speech fallback</option>
+              <option value="bm_george">George (British male)</option>
+              <option value="bm_lewis">Lewis (British male)</option>
+              <option value="bm_daniel">Daniel (British male)</option>
+              <option value="am_adam">Adam (American male)</option>
+              <option value="am_michael">Michael (American male)</option>
+              <option value="bf_emma">Emma (British female)</option>
+              <option value="af_heart">Heart (American female)</option>
             </select>
           </label>
-          {speechEngine === 'kokoro' ? (
-            <label>
-              Voice
-              <select
-                value={kokoroVoice}
-                onChange={(event) => {
-                  const voice = event.target.value as typeof kokoroVoice
-                  setKokoroVoice(voice)
-                  saveSettings({ kokoroVoice: voice })
-                }}
-              >
-                <option value="bm_george">George (British male)</option>
-                <option value="bm_lewis">Lewis (British male)</option>
-                <option value="bm_daniel">Daniel (British male)</option>
-                <option value="am_adam">Adam (American male)</option>
-                <option value="am_michael">Michael (American male)</option>
-                <option value="bf_emma">Emma (British female)</option>
-                <option value="af_heart">Heart (American female)</option>
-              </select>
-            </label>
-          ) : (
-            <label>
-              Windows voice
-              <select
-                value={selectedVoice?.voiceURI ?? ''}
-                onChange={(event) =>
-                  setSelectedVoice(
-                    voices.find((voice) => voice.voiceURI === event.target.value) ?? null
-                  )
-                }
-              >
-                {voices.length === 0 ? <option value="">No installed voices found</option> : null}
-                {voices.map((voice) => (
-                  <option value={voice.voiceURI} key={voice.voiceURI}>
-                    {voice.name} ({voice.lang})
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
           <label>
             Rate: {rate.toFixed(1)}
             <input

@@ -11,6 +11,7 @@ export type SpeechSynthesisWorkerResources = {
 export type SpeechSynthesisWorkerInput =
   | {
       type: 'initialize'
+      modulePath: string
       resources: SpeechSynthesisWorkerResources
       numThreads: number
     }

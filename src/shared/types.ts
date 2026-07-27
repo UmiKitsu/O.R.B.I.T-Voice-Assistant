@@ -145,7 +145,7 @@ export type WakeWordEvent =
       result: WakeWordTestResult
     }
 
-export type SpeechEngine = 'kokoro' | 'windows'
+export type SpeechEngine = 'kokoro'
 export type KokoroVoice =
   'bm_george' | 'bm_lewis' | 'bm_daniel' | 'am_adam' | 'am_michael' | 'bf_emma' | 'af_heart'
 

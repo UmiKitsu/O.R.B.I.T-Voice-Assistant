@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { KokoroVoice, SpeechEngine, SpeechSynthesisEvent } from '../../../shared/types'
+import type { KokoroVoice, SpeechSynthesisEvent } from '../../../shared/types'
 
 const LARGE_CODE_BLOCK_LENGTH = 240
+const RETRYABLE_KOKORO_ERRORS = new Set([
+  'KOKORO_RUNTIME_FAILED',
+  'KOKORO_PROCESS_MESSAGE_FAILED',
+  'KOKORO_PROCESS_EXITED',
+  'KOKORO_NOT_READY'
+])
 
 export type UseSpeechResult = {
   speak: (text: string) => boolean
   stop: () => void
   speaking: boolean
   synthesizing: boolean
-  fallbackNotice: string | null
-  voices: SpeechSynthesisVoice[]
-  selectedVoice: SpeechSynthesisVoice | null
-  setSelectedVoice: (voice: SpeechSynthesisVoice | null) => void
-  engine: SpeechEngine
-  setEngine: (engine: SpeechEngine) => void
+  speechNotice: string | null
   kokoroVoice: KokoroVoice
   setKokoroVoice: (voice: KokoroVoice) => void
   rate: number
@@ -64,18 +65,15 @@ export function isSafeToSpeak(text: string): boolean {
 }
 
 export function useSpeech(): UseSpeechResult {
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
-  const [selectedVoice, setSelectedVoiceState] = useState<SpeechSynthesisVoice | null>(null)
-  const [engine, setEngineState] = useState<SpeechEngine>('kokoro')
   const [kokoroVoice, setKokoroVoiceState] = useState<KokoroVoice>('bm_george')
   const [speaking, setSpeaking] = useState(false)
   const [synthesizing, setSynthesizing] = useState(false)
-  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null)
+  const [speechNotice, setSpeechNotice] = useState<string | null>(null)
   const [rate, setRateState] = useState(1)
   const [volume, setVolumeState] = useState(1)
-  const activeUtterance = useRef<SpeechSynthesisUtterance | null>(null)
   const activeKokoroRequest = useRef<string | null>(null)
   const pendingKokoroText = useRef<string | null>(null)
+  const kokoroRetryAttempt = useRef(0)
   const audioContext = useRef<AudioContext | null>(null)
   const scheduledSources = useRef(new Set<AudioBufferSourceNode>())
   const nextPlaybackTime = useRef(0)
@@ -97,78 +95,37 @@ export function useSpeech(): UseSpeechResult {
   const stop = useCallback((): void => {
     generation.current += 1
     currentGeneration.current = generation.current
-    activeUtterance.current = null
     activeKokoroRequest.current = null
     pendingKokoroText.current = null
+    kokoroRetryAttempt.current = 0
     stopAudioNodes()
-    window.speechSynthesis.cancel()
     void window.orbit.cancelSpeech().catch(() => undefined)
     setSpeaking(false)
     setSynthesizing(false)
   }, [stopAudioNodes])
 
-  useEffect(() => {
-    const speechSynthesis = window.speechSynthesis
-
-    const refreshVoices = (): void => {
-      const installedVoices = speechSynthesis.getVoices()
-      setVoices(installedVoices)
-      setSelectedVoiceState((current) => {
-        if (current) {
-          const retainedVoice = installedVoices.find((voice) => voice.voiceURI === current.voiceURI)
-          if (retainedVoice) return retainedVoice
-        }
-        return installedVoices.find((voice) => voice.default) ?? installedVoices[0] ?? null
-      })
-    }
-
-    refreshVoices()
-    speechSynthesis.addEventListener('voiceschanged', refreshVoices)
-    return () => {
-      speechSynthesis.removeEventListener('voiceschanged', refreshVoices)
-      speechSynthesis.cancel()
-    }
-  }, [])
-
-  const speakWithWindows = useCallback(
-    (text: string, expectedGeneration: number): void => {
-      if (generation.current !== expectedGeneration) return
-      window.speechSynthesis.cancel()
-      const utterance = new SpeechSynthesisUtterance(text)
-      utterance.voice = selectedVoice
-      utterance.rate = rate
-      utterance.volume = volume
-      activeUtterance.current = utterance
-      setSynthesizing(false)
-      setSpeaking(true)
-      const finish = (): void => {
-        if (generation.current !== expectedGeneration || activeUtterance.current !== utterance)
-          return
-        activeUtterance.current = null
-        setSpeaking(false)
-      }
-      utterance.onend = finish
-      utterance.onerror = finish
-      window.speechSynthesis.speak(utterance)
-    },
-    [rate, selectedVoice, volume]
-  )
-
   const scheduleKokoroAudio = useCallback(
     (event: Extract<SpeechSynthesisEvent, { type: 'audio' }>): void => {
       const context = audioContext.current ?? new AudioContext()
       audioContext.current = context
-      if (context.state === 'suspended') void context.resume()
+      if (context.state === 'suspended') {
+        void context.resume().catch(() => {
+          setSpeechNotice('Kokoro generated speech, but audio playback could not start.')
+        })
+      }
+
       const buffer = context.createBuffer(1, event.samples.length, event.sampleRate)
       const channelSamples = new Float32Array(event.samples.length)
       channelSamples.set(event.samples)
       buffer.copyToChannel(channelSamples, 0)
+
       const source = context.createBufferSource()
       const gain = context.createGain()
       gain.gain.value = volume
       source.buffer = buffer
       source.connect(gain)
       gain.connect(context.destination)
+
       const startAt = Math.max(context.currentTime + 0.01, nextPlaybackTime.current)
       nextPlaybackTime.current = startAt + buffer.duration
       scheduledSources.current.add(source)
@@ -177,6 +134,7 @@ export function useSpeech(): UseSpeechResult {
         if (event.final && activeKokoroRequest.current === event.requestId) {
           activeKokoroRequest.current = null
           pendingKokoroText.current = null
+          kokoroRetryAttempt.current = 0
           nextPlaybackTime.current = 0
           setSpeaking(false)
         }
@@ -186,6 +144,42 @@ export function useSpeech(): UseSpeechResult {
       setSpeaking(true)
     },
     [volume]
+  )
+
+  const beginKokoroSynthesis = useCallback(
+    (text: string, expectedGeneration: number, retryAttempt: number): void => {
+      if (generation.current !== expectedGeneration) return
+
+      pendingKokoroText.current = text
+      kokoroRetryAttempt.current = retryAttempt
+      setSynthesizing(true)
+      setSpeaking(false)
+
+      void window.orbit
+        .synthesizeSpeech(text)
+        .then((result) => {
+          if (generation.current !== expectedGeneration) return
+          if (result.ok && result.data) {
+            activeKokoroRequest.current = result.data.requestId
+            return
+          }
+
+          activeKokoroRequest.current = null
+          pendingKokoroText.current = null
+          setSynthesizing(false)
+          setSpeaking(false)
+          setSpeechNotice(result.message)
+        })
+        .catch(() => {
+          if (generation.current !== expectedGeneration) return
+          activeKokoroRequest.current = null
+          pendingKokoroText.current = null
+          setSynthesizing(false)
+          setSpeaking(false)
+          setSpeechNotice('Kokoro could not start. Please try speaking again.')
+        })
+    },
+    []
   )
 
   useEffect(() => {
@@ -198,6 +192,7 @@ export function useSpeech(): UseSpeechResult {
         activeKokoroRequest.current = event.requestId
       }
       if (event.requestId !== activeKokoroRequest.current) return
+
       if (event.type === 'started') {
         setSynthesizing(true)
         return
@@ -207,6 +202,9 @@ export function useSpeech(): UseSpeechResult {
         return
       }
       if (event.type === 'cancelled') {
+        activeKokoroRequest.current = null
+        pendingKokoroText.current = null
+        kokoroRetryAttempt.current = 0
         setSpeaking(false)
         setSynthesizing(false)
         return
@@ -214,12 +212,27 @@ export function useSpeech(): UseSpeechResult {
 
       const text = pendingKokoroText.current
       const expectedGeneration = currentGeneration.current
+      const canRetry =
+        text !== null &&
+        kokoroRetryAttempt.current < 1 &&
+        RETRYABLE_KOKORO_ERRORS.has(event.code)
+
       activeKokoroRequest.current = null
+      stopAudioNodes()
+      setSpeaking(false)
+      setSynthesizing(false)
+
+      if (canRetry && text) {
+        setSpeechNotice('Kokoro restarted after a local voice interruption.')
+        beginKokoroSynthesis(text, expectedGeneration, kokoroRetryAttempt.current + 1)
+        return
+      }
+
       pendingKokoroText.current = null
-      setFallbackNotice(`${event.message} Using Windows speech instead.`)
-      if (text) speakWithWindows(text, expectedGeneration)
+      kokoroRetryAttempt.current = 0
+      setSpeechNotice(event.message)
     })
-  }, [scheduleKokoroAudio, speakWithWindows])
+  }, [beginKokoroSynthesis, scheduleKokoroAudio, stopAudioNodes])
 
   useEffect(
     () => () => {
@@ -231,10 +244,6 @@ export function useSpeech(): UseSpeechResult {
     [stopAudioNodes]
   )
 
-  const setSelectedVoice = useCallback((voice: SpeechSynthesisVoice | null): void => {
-    setSelectedVoiceState(voice)
-  }, [])
-  const setEngine = useCallback((nextEngine: SpeechEngine): void => setEngineState(nextEngine), [])
   const setKokoroVoice = useCallback((voice: KokoroVoice): void => setKokoroVoiceState(voice), [])
   const setRate = useCallback((nextRate: number): void => {
     setRateState(Math.min(2, Math.max(0.5, nextRate)))
@@ -246,44 +255,22 @@ export function useSpeech(): UseSpeechResult {
   const speak = useCallback(
     (text: string): boolean => {
       if (!isSafeToSpeak(text)) return false
+
       stopAudioNodes()
-      window.speechSynthesis.cancel()
       void window.orbit.cancelSpeech().catch(() => undefined)
       generation.current += 1
       currentGeneration.current = generation.current
       const expectedGeneration = generation.current
       const normalized = text.trim()
-      setFallbackNotice(null)
-      setSpeaking(false)
 
-      if (engine === 'windows') {
-        speakWithWindows(normalized, expectedGeneration)
-        return true
-      }
-
-      setSynthesizing(true)
+      activeKokoroRequest.current = null
       pendingKokoroText.current = normalized
-      void window.orbit
-        .synthesizeSpeech(normalized)
-        .then((result) => {
-          if (generation.current !== expectedGeneration) return
-          if (result.ok && result.data) {
-            activeKokoroRequest.current = result.data.requestId
-            return
-          }
-          pendingKokoroText.current = null
-          setFallbackNotice(`${result.message} Using Windows speech instead.`)
-          speakWithWindows(normalized, expectedGeneration)
-        })
-        .catch(() => {
-          if (generation.current !== expectedGeneration) return
-          pendingKokoroText.current = null
-          setFallbackNotice('Kokoro could not start. Using Windows speech instead.')
-          speakWithWindows(normalized, expectedGeneration)
-        })
+      kokoroRetryAttempt.current = 0
+      setSpeechNotice(null)
+      beginKokoroSynthesis(normalized, expectedGeneration, 0)
       return true
     },
-    [engine, speakWithWindows, stopAudioNodes]
+    [beginKokoroSynthesis, stopAudioNodes]
   )
 
   return {
@@ -291,12 +278,7 @@ export function useSpeech(): UseSpeechResult {
     stop,
     speaking,
     synthesizing,
-    fallbackNotice,
-    voices,
-    selectedVoice,
-    setSelectedVoice,
-    engine,
-    setEngine,
+    speechNotice,
     kokoroVoice,
     setKokoroVoice,
     rate,

@@ -40,6 +40,7 @@ describe('settings validation', () => {
     expect(orbitSettingsSchema.safeParse(DEFAULT_ORBIT_SETTINGS).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ speechVolume: 0.4 }).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ speechEngine: 'kokoro' }).success).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ speechEngine: 'windows' }).success).toBe(false)
     expect(orbitSettingsPatchSchema.safeParse({ kokoroVoice: 'bm_george' }).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ kokoroVoice: 'unknown' }).success).toBe(false)
     expect(orbitSettingsPatchSchema.safeParse({ recognitionLanguage: 'en' }).success).toBe(true)
@@ -121,6 +122,23 @@ describe('settings validation', () => {
       kokoroVoice: 'bm_george'
     })
     expect(storage.store).toEqual({ ...DEFAULT_ORBIT_SETTINGS, speechVolume: 0.6 })
+  })
+
+  it('migrates the removed Windows speech option to Kokoro without resetting other settings', () => {
+    const storage = memoryStorage({
+      ...DEFAULT_ORBIT_SETTINGS,
+      speechEngine: 'windows',
+      speechVolume: 0.45,
+      ollamaModel: 'qwen3:8b'
+    })
+    setSettingsStorageForTests(storage)
+
+    expect(getSettings()).toMatchObject({
+      speechEngine: 'kokoro',
+      speechVolume: 0.45,
+      ollamaModel: 'qwen3:8b'
+    })
+    expect(storage.store).toMatchObject({ speechEngine: 'kokoro', speechVolume: 0.45 })
   })
 
   it('preserves an existing Ollama model choice while adding speech defaults', () => {

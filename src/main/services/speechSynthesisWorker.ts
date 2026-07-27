@@ -64,11 +64,13 @@ async function synthesize(
       if (activeRequestId !== input.requestId) return
       const text = input.sentences[index]
       if (!text) continue
-      const audio = await tts.generateAsync({
+      // The sherpa async generator returns a native external buffer that Electron workers reject
+      // with "External buffers are not allowed". Synchronous generation is safe here because this
+      // code already runs in a dedicated worker and therefore never blocks the Electron UI.
+      const audio = tts.generate({
         text,
         sid: input.speakerId,
-        speed: input.speed,
-        onProgress: () => activeRequestId === input.requestId
+        speed: input.speed
       })
       if (activeRequestId !== input.requestId) return
       if (

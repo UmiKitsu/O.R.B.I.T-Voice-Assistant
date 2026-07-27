@@ -10,6 +10,7 @@ files:
   - '!resources/whisper/**'
   - '!resources/wake-word/**'
   - '!resources/kokoro/**'
+  - '!resources/node-runtime/**'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
@@ -33,6 +34,10 @@ extraResources:
     to: kokoro
     filter:
       - '**/*'
+  - from: resources/node-runtime
+    to: node-runtime
+    filter:
+      - 'node.exe'
   - from: resources/wake-word
     to: wake-word
     filter:

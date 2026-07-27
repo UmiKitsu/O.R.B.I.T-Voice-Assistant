@@ -20,6 +20,7 @@ declare module 'sherpa-onnx-node' {
     static createAsync(config: unknown): Promise<OfflineTts>
     readonly numSpeakers: number
     readonly sampleRate: number
+    generate(request: Omit<OfflineTtsRequest, 'onProgress'>): GeneratedAudio
     generateAsync(request: OfflineTtsRequest): Promise<GeneratedAudio>
   }
 }

@@ -1,23 +1,35 @@
 import { app, type WebContents } from 'electron'
+import { fork, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { access, realpath, symlink, unlink } from 'node:fs/promises'
+import { access, cp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { availableParallelism } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/ipcChannels'
 import type { ActionResult, KokoroVoice, SpeechSynthesisEvent } from '../../shared/types'
-import CreateSpeechSynthesisWorker from './speechSynthesisWorker?nodeWorker'
 import type {
   SpeechSynthesisWorkerInput,
   SpeechSynthesisWorkerOutput,
   SpeechSynthesisWorkerResources
 } from './speechSynthesisProtocol'
+import { logOperationalEvent } from './loggerService'
 import { getSettings } from './settingsService'
 
 const MAX_SPEECH_TEXT_LENGTH = 4_000
 const MAX_SENTENCE_LENGTH = 240
 const MAX_SENTENCE_COUNT = 50
-const WORKER_START_TIMEOUT_MS = 20_000
+const MAX_AUDIO_SAMPLES = 720_000
+const PROCESS_START_TIMEOUT_MS = 20_000
 const KOKORO_THREADS = Math.max(1, Math.min(4, availableParallelism()))
+const KOKORO_RUNTIME_CACHE_VERSION = 'kokoro-multi-lang-v1_0-c436dc6a'
+const KOKORO_RUNTIME_CACHE_MARKER = '.orbit-kokoro-cache-version'
+const KOKORO_CRITICAL_FILE_SIZES: Readonly<Record<string, number>> = Object.freeze({
+  'model.onnx': 325_630_829,
+  'voices.bin': 27_678_720,
+  'tokens.txt': 687,
+  'lexicon-us-en.txt': 5_956_885,
+  'lexicon-zh.txt': 2_364_621,
+  'espeak-ng-data/en_dict': 166_944
+})
 
 export const KOKORO_SPEAKER_IDS: Readonly<Record<KokoroVoice, number>> = Object.freeze({
   bm_george: 26,
@@ -34,40 +46,115 @@ type SpeechSession = {
   sender: WebContents
 }
 
-type SpeechWorker = ReturnType<typeof CreateSpeechSynthesisWorker>
+type SpeechProcess = ChildProcess
 
-let worker: SpeechWorker | undefined
-let workerReady = false
-let workerStartup: Promise<boolean> | undefined
-let resourceAlias: string | undefined
+let speechProcess: SpeechProcess | undefined
+let processReady = false
+let processStartup: Promise<boolean> | undefined
+let runtimeRootPromise: Promise<string> | undefined
+let lastProcessFailure:
+  | {
+      code: string
+      message: string
+    }
+  | undefined
 const sessions = new Map<number, SpeechSession>()
 const cleanupSenders = new Set<number>()
+const expectedProcessExits = new WeakSet<SpeechProcess>()
+
+function resourceRoot(): string {
+  return app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
+}
 
 function kokoroRoot(): string {
-  const resourceRoot = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
-  return join(resourceRoot, 'kokoro', 'kokoro-multi-lang-v1_0')
+  return join(resourceRoot(), 'kokoro', 'kokoro-multi-lang-v1_0')
+}
+
+function nodeRuntimePath(): string {
+  return join(resourceRoot(), 'node-runtime', 'node.exe')
+}
+
+function childScriptPath(): string {
+  return join(resourceRoot(), 'kokoro', 'kokoro-child.cjs')
+}
+
+function sherpaModulePath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'sherpa-onnx-node')
+    : join(app.getAppPath(), 'node_modules', 'sherpa-onnx-node')
+}
+
+function isAsciiPath(path: string): boolean {
+  return !/[^\x20-\x7e]/.test(path)
+}
+
+async function criticalFilesAreValid(root: string): Promise<boolean> {
+  try {
+    for (const [relativePath, expectedSize] of Object.entries(KOKORO_CRITICAL_FILE_SIZES)) {
+      if ((await stat(join(root, relativePath))).size !== expectedSize) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function runtimeCacheIsReady(root: string): Promise<boolean> {
+  try {
+    const marker = (await readFile(join(root, KOKORO_RUNTIME_CACHE_MARKER), 'utf8')).trim()
+    return marker === KOKORO_RUNTIME_CACHE_VERSION && (await criticalFilesAreValid(root))
+  } catch {
+    return false
+  }
+}
+
+async function prepareAsciiRuntimeCache(sourceRoot: string): Promise<string> {
+  const cacheBase = [app.getPath('userData'), app.getPath('temp')].find(isAsciiPath)
+  if (!cacheBase) {
+    throw new Error('Kokoro requires an ASCII-only application cache path on Windows.')
+  }
+  if (!(await criticalFilesAreValid(sourceRoot))) {
+    throw new Error('The bundled Kokoro resources failed runtime validation.')
+  }
+
+  const cacheRoot = join(cacheBase, 'kokoro-runtime', KOKORO_RUNTIME_CACHE_VERSION)
+  if (await runtimeCacheIsReady(cacheRoot)) return cacheRoot
+
+  const stagingRoot = `${cacheRoot}.staging-${process.pid}-${randomUUID()}`
+  await mkdir(dirname(cacheRoot), { recursive: true })
+  await rm(stagingRoot, { recursive: true, force: true })
+  try {
+    await cp(sourceRoot, stagingRoot, { recursive: true, force: true })
+    if (!(await criticalFilesAreValid(stagingRoot))) {
+      throw new Error('The Kokoro runtime cache failed validation after copying.')
+    }
+    await writeFile(
+      join(stagingRoot, KOKORO_RUNTIME_CACHE_MARKER),
+      KOKORO_RUNTIME_CACHE_VERSION,
+      'utf8'
+    )
+    await rm(cacheRoot, { recursive: true, force: true })
+    await rename(stagingRoot, cacheRoot)
+    return cacheRoot
+  } finally {
+    await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined)
+  }
 }
 
 async function kokoroNativeRoot(): Promise<string> {
-  const root = kokoroRoot()
-  if (!/[^\x20-\x7e]/.test(root)) return root
+  if (runtimeRootPromise) return runtimeRootPromise
 
-  const temporaryRoot = app.getPath('temp')
-  if (/[^\x20-\x7e]/.test(temporaryRoot)) return root
-  const alias = join(temporaryRoot, `orbit-kokoro-resources-${process.pid}`)
+  runtimeRootPromise = (async () => {
+    const root = kokoroRoot()
+    return isAsciiPath(root) ? root : prepareAsciiRuntimeCache(root)
+  })()
+
   try {
-    await symlink(root, alias, 'junction')
+    return await runtimeRootPromise
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return root
-    try {
-      const [existingTarget, intendedTarget] = await Promise.all([realpath(alias), realpath(root)])
-      if (existingTarget.toLowerCase() !== intendedTarget.toLowerCase()) return root
-    } catch {
-      return root
-    }
+    runtimeRootPromise = undefined
+    throw error
   }
-  resourceAlias = alias
-  return alias
 }
 
 async function resources(): Promise<SpeechSynthesisWorkerResources> {
@@ -97,6 +184,19 @@ async function resourcesExist(value: SpeechSynthesisWorkerResources): Promise<bo
   }
 }
 
+async function childRuntimeExists(): Promise<boolean> {
+  try {
+    await Promise.all([
+      access(nodeRuntimePath()),
+      access(childScriptPath()),
+      access(join(sherpaModulePath(), 'package.json'))
+    ])
+    return true
+  } catch {
+    return false
+  }
+}
+
 function emit(session: SpeechSession, event: SpeechSynthesisEvent): void {
   if (!session.sender.isDestroyed()) session.sender.send(IPC_CHANNELS.speechEvent, event)
 }
@@ -106,7 +206,51 @@ function sessionForRequest(requestId: string): [number, SpeechSession] | undefin
   return undefined
 }
 
-function handleWorkerOutput(message: SpeechSynthesisWorkerOutput): void {
+function parseProcessOutput(value: unknown): SpeechSynthesisWorkerOutput | null {
+  if (typeof value !== 'object' || value === null || !('type' in value)) return null
+  const message = value as Record<string, unknown>
+  if (message.type === 'ready') {
+    return Number.isInteger(message.sampleRate) &&
+      Number.isInteger(message.numSpeakers) &&
+      (message.sampleRate as number) >= 8_000 &&
+      (message.sampleRate as number) <= 48_000 &&
+      (message.numSpeakers as number) > 0 &&
+      (message.numSpeakers as number) <= 1_000
+      ? (value as SpeechSynthesisWorkerOutput)
+      : null
+  }
+
+  if (typeof message.requestId !== 'string' || message.requestId.length > 100) return null
+  if (message.type === 'started') {
+    return message.engine === 'kokoro' ? (value as SpeechSynthesisWorkerOutput) : null
+  }
+  if (message.type === 'cancelled') return value as SpeechSynthesisWorkerOutput
+  if (message.type === 'error') {
+    return typeof message.code === 'string' &&
+      message.code.length <= 100 &&
+      typeof message.message === 'string' &&
+      message.message.length <= 500
+      ? (value as SpeechSynthesisWorkerOutput)
+      : null
+  }
+  if (message.type === 'audio') {
+    return Number.isInteger(message.chunkIndex) &&
+      (message.chunkIndex as number) >= 0 &&
+      (message.chunkIndex as number) < MAX_SENTENCE_COUNT &&
+      Number.isInteger(message.sampleRate) &&
+      (message.sampleRate as number) >= 8_000 &&
+      (message.sampleRate as number) <= 48_000 &&
+      message.samples instanceof Float32Array &&
+      message.samples.length > 0 &&
+      message.samples.length <= MAX_AUDIO_SAMPLES &&
+      typeof message.final === 'boolean'
+      ? (value as SpeechSynthesisWorkerOutput)
+      : null
+  }
+  return null
+}
+
+function handleProcessOutput(message: SpeechSynthesisWorkerOutput): void {
   if (message.type === 'ready') return
   if (message.requestId === 'initialization') return
   const entry = sessionForRequest(message.requestId)
@@ -129,73 +273,188 @@ function failAllSessions(code: string, message: string): void {
   sessions.clear()
 }
 
-function resetWorker(): void {
-  const activeWorker = worker
-  worker = undefined
-  workerReady = false
-  workerStartup = undefined
-  if (activeWorker) void activeWorker.terminate()
+function sendToProcess(input: SpeechSynthesisWorkerInput): boolean {
+  const activeProcess = speechProcess
+  if (!activeProcess?.connected || typeof activeProcess.send !== 'function') return false
+  try {
+    activeProcess.send(input)
+    return true
+  } catch {
+    return false
+  }
 }
 
-async function ensureWorker(): Promise<boolean> {
-  if (worker?.threadId && workerReady) return true
-  if (workerStartup) return workerStartup
+function resetProcess(): void {
+  const activeProcess = speechProcess
+  speechProcess = undefined
+  processReady = false
+  processStartup = undefined
+  if (activeProcess) {
+    expectedProcessExits.add(activeProcess)
+    try {
+      if (activeProcess.connected) activeProcess.disconnect()
+    } catch {
+      // The child may already be disconnected.
+    }
+    try {
+      activeProcess.kill()
+    } catch {
+      // The child may already have exited.
+    }
+  }
+}
 
-  workerStartup = (async () => {
-    const modelResources = await resources()
-    if (!(await resourcesExist(modelResources))) return false
+function recordProcessFailure(
+  reason: 'initialization' | 'runtime-error' | 'message-error' | 'unexpected-exit',
+  code: string,
+  message: string
+): void {
+  lastProcessFailure = { code, message }
+  logOperationalEvent({ event: 'speech.worker-failed', reason })
+}
 
-    const nextWorker = CreateSpeechSynthesisWorker({})
-    worker = nextWorker
+async function ensureProcess(): Promise<boolean> {
+  if (speechProcess?.connected && processReady) return true
+  if (processStartup) return processStartup
+
+  processStartup = (async () => {
+    let modelResources: SpeechSynthesisWorkerResources
+    try {
+      modelResources = await resources()
+    } catch {
+      recordProcessFailure(
+        'initialization',
+        'KOKORO_RUNTIME_CACHE_FAILED',
+        'Kokoro could not prepare its local runtime resources.'
+      )
+      return false
+    }
+    if (!(await resourcesExist(modelResources))) {
+      recordProcessFailure(
+        'initialization',
+        'KOKORO_RESOURCES_MISSING',
+        'Kokoro resources are missing or failed verification.'
+      )
+      return false
+    }
+    if (!(await childRuntimeExists())) {
+      recordProcessFailure(
+        'initialization',
+        'KOKORO_NODE_RUNTIME_MISSING',
+        'The verified local Kokoro runtime is missing. Run npm run setup:node-runtime.'
+      )
+      return false
+    }
+
+    let nextProcess: SpeechProcess
+    try {
+      const childEnvironment = { ...process.env }
+      delete childEnvironment.ELECTRON_RUN_AS_NODE
+      nextProcess = fork(childScriptPath(), [], {
+        execPath: nodeRuntimePath(),
+        env: childEnvironment,
+        serialization: 'advanced',
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+      })
+    } catch {
+      recordProcessFailure(
+        'initialization',
+        'KOKORO_PROCESS_START_FAILED',
+        'The local Kokoro process could not start.'
+      )
+      return false
+    }
+
+    speechProcess = nextProcess
     return await new Promise<boolean>((resolve) => {
       let settled = false
       const finish = (ready: boolean): void => {
         if (settled) return
         settled = true
         clearTimeout(timeout)
-        workerReady = ready
-        if (!ready) resetWorker()
+        processReady = ready
+        if (!ready) resetProcess()
         resolve(ready)
       }
-      const timeout = setTimeout(() => finish(false), WORKER_START_TIMEOUT_MS)
+      const timeout = setTimeout(() => {
+        recordProcessFailure(
+          'initialization',
+          'KOKORO_START_TIMEOUT',
+          'Kokoro took too long to initialize. Please try again.'
+        )
+        finish(false)
+      }, PROCESS_START_TIMEOUT_MS)
 
-      nextWorker.on('message', (message: SpeechSynthesisWorkerOutput) => {
-        if (worker !== nextWorker) return
+      nextProcess.on('message', (value: unknown) => {
+        if (speechProcess !== nextProcess) return
+        const message = parseProcessOutput(value)
+        if (!message) {
+          const code = 'KOKORO_PROCESS_MESSAGE_FAILED'
+          const text = 'The local Kokoro process returned invalid audio data.'
+          recordProcessFailure('message-error', code, text)
+          failAllSessions(code, text)
+          if (settled) resetProcess()
+          else finish(false)
+          return
+        }
         if (message.type === 'ready') {
-          finish(message.sampleRate >= 8_000 && message.sampleRate <= 48_000)
+          lastProcessFailure = undefined
+          finish(true)
           return
         }
         if (message.type === 'error' && message.requestId === 'initialization') {
+          recordProcessFailure('initialization', message.code, message.message)
           finish(false)
           return
         }
-        handleWorkerOutput(message)
+        handleProcessOutput(message)
       })
-      nextWorker.once('error', () => {
-        if (worker === nextWorker) {
-          failAllSessions('KOKORO_RUNTIME_FAILED', 'The local Kokoro voice stopped unexpectedly.')
-          finish(false)
+      nextProcess.once('error', () => {
+        if (speechProcess !== nextProcess) return
+        const code = 'KOKORO_RUNTIME_FAILED'
+        const message = 'The local Kokoro voice process stopped unexpectedly.'
+        recordProcessFailure('runtime-error', code, message)
+        failAllSessions(code, message)
+        if (settled) resetProcess()
+        else finish(false)
+      })
+      nextProcess.once('exit', () => {
+        const expected = expectedProcessExits.has(nextProcess)
+        expectedProcessExits.delete(nextProcess)
+        if (speechProcess !== nextProcess) return
+
+        speechProcess = undefined
+        processReady = false
+        processStartup = undefined
+        if (!expected) {
+          const code = 'KOKORO_WORKER_EXITED'
+          const message = 'The local Kokoro voice process exited and will restart automatically.'
+          recordProcessFailure('unexpected-exit', code, message)
+          failAllSessions(code, message)
         }
       })
-      nextWorker.once('exit', () => {
-        if (worker === nextWorker) {
-          worker = undefined
-          workerReady = false
-          workerStartup = undefined
-        }
-      })
-      nextWorker.postMessage({
+
+      const initialized = sendToProcess({
         type: 'initialize',
+        modulePath: sherpaModulePath(),
         resources: modelResources,
         numThreads: KOKORO_THREADS
-      } satisfies SpeechSynthesisWorkerInput)
+      })
+      if (!initialized) {
+        recordProcessFailure(
+          'initialization',
+          'KOKORO_PROCESS_MESSAGE_FAILED',
+          'The local Kokoro process could not receive initialization data.'
+        )
+        finish(false)
+      }
     })
   })()
 
   try {
-    return await workerStartup
+    return await processStartup
   } finally {
-    workerStartup = undefined
+    processStartup = undefined
   }
 }
 
@@ -251,11 +510,11 @@ export async function startSpeechSynthesis(
       recoverable: true
     }
   }
-  if (!(await ensureWorker()) || !workerReady || !worker) {
+  if (!(await ensureProcess()) || !processReady || !speechProcess) {
     return {
       ok: false,
-      code: 'KOKORO_NOT_CONFIGURED',
-      message: 'Kokoro is unavailable. Orbit will use Windows speech instead.',
+      code: lastProcessFailure?.code ?? 'KOKORO_NOT_CONFIGURED',
+      message: lastProcessFailure?.message ?? 'Kokoro could not initialize. Please try again.',
       recoverable: true
     }
   }
@@ -272,13 +531,24 @@ export async function startSpeechSynthesis(
       cancelSpeechSynthesis(sender.id)
     })
   }
-  worker.postMessage({
+
+  const sent = sendToProcess({
     type: 'synthesize',
     requestId,
     sentences,
     speakerId: KOKORO_SPEAKER_IDS[settings.kokoroVoice],
     speed: settings.speechRate
-  } satisfies SpeechSynthesisWorkerInput)
+  })
+  if (!sent) {
+    sessions.delete(sender.id)
+    resetProcess()
+    return {
+      ok: false,
+      code: 'KOKORO_PROCESS_MESSAGE_FAILED',
+      message: 'Kokoro could not receive the speech request. Please try again.',
+      recoverable: true
+    }
+  }
   return { ok: true, message: 'Kokoro is synthesizing locally.', data: { requestId } }
 }
 
@@ -286,19 +556,15 @@ export function cancelSpeechSynthesis(senderId: number): ActionResult {
   const session = sessions.get(senderId)
   if (!session) return { ok: true, message: 'No speech is being synthesized.' }
   sessions.delete(senderId)
-  worker?.postMessage({
-    type: 'cancel',
-    requestId: session.requestId
-  } satisfies SpeechSynthesisWorkerInput)
+  sendToProcess({ type: 'cancel', requestId: session.requestId })
   emit(session, { type: 'cancelled', requestId: session.requestId })
   return { ok: true, message: 'Speech synthesis cancelled.' }
 }
 
 export function stopAllSpeechSynthesis(): void {
   for (const senderId of [...sessions.keys()]) cancelSpeechSynthesis(senderId)
-  worker?.postMessage({ type: 'shutdown' } satisfies SpeechSynthesisWorkerInput)
-  resetWorker()
-  const alias = resourceAlias
-  resourceAlias = undefined
-  if (alias) void unlink(alias).catch(() => undefined)
+  sendToProcess({ type: 'shutdown' })
+  resetProcess()
+  runtimeRootPromise = undefined
+  lastProcessFailure = undefined
 }
