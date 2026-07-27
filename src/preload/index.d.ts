@@ -7,7 +7,7 @@ type TitanApi = {
   clearConversation: () => Promise<ActionResult>
   transcribeAudio: (audio: Uint8Array) => Promise<ActionResult<Transcription>>
   cancelTranscription: () => Promise<ActionResult>
-  confirmAction: (requestId: string, approved: boolean) => Promise<ActionResult>
+  confirmAction: (requestId: string, approved: boolean) => Promise<ActionResult<AssistantResponse>>
 }
 
 declare global {

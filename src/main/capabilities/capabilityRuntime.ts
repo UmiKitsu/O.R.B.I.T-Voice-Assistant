@@ -1,6 +1,7 @@
 import type { ExternalUrlOpener } from '../services/browserService'
 import type { ApplicationLauncher } from '../services/applicationDiscoveryService'
 import type { AudioMuteController, MediaKeySender } from '../services/mediaControlService'
+import type { WindowController } from '../services/windowInputService'
 import { ConfirmationManager } from '../security/confirmationManager'
 import { PolicyEngine } from '../security/policyEngine'
 import { registerAssistantCapabilities } from './assistantCapabilities'
@@ -9,6 +10,7 @@ import { registerBrowserCapabilities } from './browserCapabilities'
 import { CapabilityRegistry } from './capabilityRegistry'
 import { registerMediaCapabilities } from './mediaCapabilities'
 import { registerSystemCapabilities } from './systemCapabilities'
+import { registerWindowInputCapabilities } from './windowInputCapabilityDefinitions'
 
 export type CapabilityRuntimeDependencies = {
   now?: () => Date
@@ -16,6 +18,7 @@ export type CapabilityRuntimeDependencies = {
   sendMediaKey?: MediaKeySender
   setAudioMuted?: AudioMuteController
   launchApplication?: ApplicationLauncher
+  windowController?: WindowController
 }
 
 export function createCapabilityRegistry(
@@ -27,6 +30,7 @@ export function createCapabilityRegistry(
   registerMediaCapabilities(registry, dependencies.sendMediaKey, dependencies.setAudioMuted)
   registerApplicationCapabilities(registry, dependencies.launchApplication)
   registerAssistantCapabilities(registry)
+  registerWindowInputCapabilities(registry, dependencies.windowController)
 
   return registry
 }

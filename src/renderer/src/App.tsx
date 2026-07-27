@@ -1,7 +1,14 @@
 import { FormEvent, useRef, useState } from 'react'
-import type { ActionResult, ChatMessage, OllamaHealth, TitanStatus } from '../../shared/types'
+import type {
+  ActionResult,
+  ChatMessage,
+  ConfirmationPrompt,
+  OllamaHealth,
+  TitanStatus
+} from '../../shared/types'
 import { useSpeech } from './hooks/useSpeech'
 import { useMicrophone } from './hooks/useMicrophone'
+import { ConfirmationDialog } from './ConfirmationDialog'
 
 function App(): React.JSX.Element {
   const [status, setStatus] = useState<TitanStatus>('disabled')
@@ -12,6 +19,7 @@ function App(): React.JSX.Element {
   const [connectionResult, setConnectionResult] = useState<ActionResult<OllamaHealth> | null>(null)
   const [isTestingConnection, setIsTestingConnection] = useState(false)
   const [speechEnabled, setSpeechEnabled] = useState(true)
+  const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationPrompt | null>(null)
   const isEnabled = useRef(false)
   const requestGeneration = useRef(0)
   const messageInputRef = useRef<HTMLInputElement>(null)
@@ -43,6 +51,7 @@ function App(): React.JSX.Element {
     if (status === 'transcribing') await cancelTranscription()
     requestGeneration.current += 1
     setConversationError(null)
+    setPendingConfirmation(null)
     setStatus('disabled')
     await window.titan.cancelAssistant()
   }
@@ -60,6 +69,7 @@ function App(): React.JSX.Element {
     setStatus('thinking')
     setIsTranscribedDraft(false)
 
+    let awaitingConfirmation = false
     try {
       const result = await window.titan.askAssistant(message)
       if (requestGeneration.current !== generation) return
@@ -67,6 +77,10 @@ function App(): React.JSX.Element {
       if (result.ok) {
         const response = result.data?.response
         const effects = result.data?.effects ?? []
+        const confirmation = result.data?.confirmation ?? null
+        awaitingConfirmation = confirmation !== null
+        setPendingConfirmation(confirmation)
+        if (confirmation) setStatus('awaiting-confirmation')
 
         if (response) {
           setMessages((current) => [...current, { role: 'assistant', content: response }])
@@ -92,10 +106,35 @@ function App(): React.JSX.Element {
         setConversationError('T.I.T.A.N. could not send the request to the main process.')
       }
     } finally {
-      if (requestGeneration.current === generation && isEnabled.current) setStatus('ready')
+      if (!awaitingConfirmation && requestGeneration.current === generation && isEnabled.current)
+        setStatus('ready')
     }
   }
 
+  const respondToConfirmation = async (approved: boolean): Promise<void> => {
+    const confirmation = pendingConfirmation
+    if (!confirmation) return
+    setStatus('executing')
+    setConversationError(null)
+    try {
+      const result = await window.titan.confirmAction(confirmation.requestId, approved)
+      setPendingConfirmation(null)
+      if (result.ok) {
+        const response = result.data?.response
+        if (response) {
+          setMessages((current) => [...current, { role: 'assistant', content: response }])
+          speak(response)
+        }
+      } else {
+        setConversationError(result.message)
+      }
+    } catch {
+      setPendingConfirmation(null)
+      setConversationError('T.I.T.A.N. could not complete the confirmation request.')
+    } finally {
+      if (isEnabled.current) setStatus('ready')
+    }
+  }
   const handleMicrophone = async (): Promise<void> => {
     setConversationError(null)
     stopSpeaking()
@@ -151,6 +190,7 @@ function App(): React.JSX.Element {
 
   const clearConversation = async (): Promise<void> => {
     requestGeneration.current += 1
+    setPendingConfirmation(null)
     if (status === 'listening') cancelRecording()
     if (status === 'transcribing') await cancelTranscription()
     const result = await window.titan.clearConversation()
@@ -188,7 +228,9 @@ function App(): React.JSX.Element {
     status === 'disabled' ||
     status === 'thinking' ||
     status === 'listening' ||
-    status === 'transcribing'
+    status === 'transcribing' ||
+    status === 'awaiting-confirmation' ||
+    status === 'executing'
   const microphoneLabel =
     status === 'listening'
       ? 'Stop and transcribe'
@@ -261,6 +303,13 @@ function App(): React.JSX.Element {
             </p>
           ) : null}
 
+          {pendingConfirmation ? (
+            <ConfirmationDialog
+              confirmation={pendingConfirmation}
+              disabled={status === 'executing'}
+              onRespond={respondToConfirmation}
+            />
+          ) : null}
           <form className="message-form" onSubmit={handleSubmit}>
             <label className="sr-only" htmlFor="message-input">
               Message T.I.T.A.N.

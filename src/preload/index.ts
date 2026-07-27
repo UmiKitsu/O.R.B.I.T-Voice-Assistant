@@ -18,7 +18,7 @@ const titan = Object.freeze({
   cancelTranscription: (): Promise<ActionResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.speechCancelTranscription),
 
-  confirmAction: (requestId: string, approved: boolean): Promise<ActionResult> =>
+  confirmAction: (requestId: string, approved: boolean): Promise<ActionResult<AssistantResponse>> =>
     ipcRenderer.invoke(IPC_CHANNELS.actionConfirm, {
       requestId,
       approved

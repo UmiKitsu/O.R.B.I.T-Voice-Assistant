@@ -72,7 +72,7 @@ export class PolicyEngine {
         confirmation: this.confirmations.create({
           capability: capability.name,
           parameters,
-          summary: request.summary,
+          summary: capability.confirmationSummary?.(parameters) ?? request.summary,
           timeoutMs: this.confirmationTimeoutMs
         })
       }
@@ -116,5 +116,13 @@ export class PolicyEngine {
     } finally {
       clearTimeout(timeout)
     }
+  }
+
+  approveConfirmation(requestId: string): boolean {
+    return this.confirmations.confirm(requestId)
+  }
+
+  cancelConfirmation(requestId: string): boolean {
+    return this.confirmations.cancel(requestId)
   }
 }

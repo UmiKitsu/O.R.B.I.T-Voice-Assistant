@@ -1,0 +1,18 @@
+.confirmation-dialog {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid rgba(245, 190, 70, 0.7);
+  border-radius: 0.75rem;
+  background: rgba(245, 190, 70, 0.1);
+}
+
+.confirmation-dialog h3,
+.confirmation-dialog p {
+  margin-top: 0;
+}
+
+.confirmation-dialog div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}

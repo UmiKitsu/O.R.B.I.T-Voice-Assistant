@@ -25,10 +25,16 @@ export type Transcription = {
 }
 
 export type AssistantEffect = 'stop-speaking' | 'disable'
+export type ConfirmationPrompt = {
+  requestId: string
+  summary: string
+  expiresAt: number
+}
 
 export type AssistantResponse = {
   response: string
   effects?: AssistantEffect[]
+  confirmation?: ConfirmationPrompt
 }
 
 export type ActionResult<T = undefined> =

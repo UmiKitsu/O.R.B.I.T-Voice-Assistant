@@ -1,7 +1,7 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipcChannels'
 import type { ActionResult, AssistantResponse, ChatMessage, OllamaHealth } from '../../shared/types'
-import { executeActionPlan } from '../assistant/actionPlanExecutor'
+import { ConfirmationFlow, parseConfirmationResponse } from '../assistant/confirmationFlow'
 import { planAssistantRequest } from '../assistant/actionPlanner'
 import { executeDeterministicAction } from '../assistant/deterministicActionExecutor'
 import {
@@ -18,6 +18,7 @@ const conversations = new Map<number, ChatMessage[]>()
 const activeRequests = new Map<number, AbortController>()
 const capabilityRegistry = createCapabilityRegistry()
 const capabilityRuntime = createCapabilityRuntime({}, capabilityRegistry)
+const confirmationFlow = new ConfirmationFlow(capabilityRuntime)
 
 function parseAssistantRequest(value: unknown): string | null {
   if (
@@ -140,7 +141,7 @@ export function registerAssistantHandlers(): void {
                 message: 'T.I.T.A.N. responded.',
                 data: { response: output.response }
               }
-            : await executeActionPlan(output, capabilityRuntime)
+            : await confirmationFlow.execute(output, senderId)
 
         if (result.ok && result.data?.response) {
           conversations.set(
@@ -162,7 +163,28 @@ export function registerAssistantHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.actionConfirm,
+    async (
+      event: IpcMainInvokeEvent,
+      request: unknown
+    ): Promise<ActionResult<AssistantResponse>> => {
+      const response = parseConfirmationResponse(request)
+      if (!response) {
+        return {
+          ok: false,
+          code: 'INVALID_CONFIRMATION',
+          message: 'The confirmation response is invalid.',
+          recoverable: true
+        }
+      }
+
+      return confirmationFlow.respond(event.sender.id, response.requestId, response.approved)
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.assistantCancel, (event: IpcMainInvokeEvent): ActionResult => {
+    confirmationFlow.cancelSender(event.sender.id)
     const controller = activeRequests.get(event.sender.id)
 
     if (!controller) {
@@ -181,6 +203,7 @@ export function registerAssistantHandlers(): void {
   })
 
   ipcMain.handle(IPC_CHANNELS.assistantClear, (event: IpcMainInvokeEvent): ActionResult => {
+    confirmationFlow.cancelSender(event.sender.id)
     activeRequests.get(event.sender.id)?.abort()
     activeRequests.delete(event.sender.id)
     conversations.delete(event.sender.id)

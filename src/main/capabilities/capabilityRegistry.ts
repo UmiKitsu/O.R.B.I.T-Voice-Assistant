@@ -7,6 +7,7 @@ export type RegisteredCapability = {
   timeoutMs: number
   parameterSchema: ZodType
   resultSchema: ZodType
+  confirmationSummary?: (parameters: unknown) => string
   execute: (parameters: unknown, signal: AbortSignal) => Promise<unknown>
 }
 
@@ -32,6 +33,9 @@ export class CapabilityRegistry {
       timeoutMs: definition.timeoutMs,
       parameterSchema,
       resultSchema,
+      confirmationSummary: definition.confirmationSummary
+        ? (parameters): string => definition.confirmationSummary?.(parameters as TParameters) ?? ''
+        : undefined,
       execute: async (parameters, signal): Promise<unknown> =>
         resultSchema.parse(await definition.execute(parameters as TParameters, signal))
     })
