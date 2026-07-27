@@ -22,7 +22,9 @@ const controller: WindowController = {
   move: vi.fn(() => true),
   requestClose: vi.fn(() => true),
   typeUnicodeText: vi.fn(() => true),
-  pressEnter: vi.fn(() => true)
+  pressEnter: vi.fn(() => true),
+  focusSpotifySearch: vi.fn(() => true),
+  chooseSpotifyTopResult: vi.fn(() => true)
 }
 
 function runtime(): PolicyEngine {

@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { access, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
 import type { ActionResult, Transcription } from '../../shared/types'
 import { hasAudiblePcm16Samples, isPcmWav, normalizeWhisperOutput } from './speechToTextValidation'
@@ -54,8 +54,20 @@ function runWhisper(
     try {
       child = spawn(
         executablePath,
-        ['-m', modelPath, '-f', audioPath, '-l', 'auto', '--no-timestamps', '--no-prints'],
+        [
+          '-m',
+          basename(modelPath),
+          '-f',
+          audioPath,
+          '-l',
+          'auto',
+          '--no-timestamps',
+          '--no-prints'
+        ],
         {
+          // whisper.cpp's Windows CLI does not reliably parse non-ASCII model paths.
+          // Run beside the fixed bundled model and pass only its trusted filename.
+          cwd: dirname(executablePath),
           shell: false,
           windowsHide: true,
           stdio: ['ignore', 'pipe', 'pipe']

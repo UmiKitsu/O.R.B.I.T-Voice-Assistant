@@ -124,3 +124,93 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
 
   return null
 }
+
+function normalizeMediaQuery(value: string): string | null {
+  const query = value
+    .trim()
+    .replace(/^a\s+/i, '')
+    .replace(/\s+song$/i, '')
+    .trim()
+  if (!query || query.length > 200 || /^(?:it|that|this|music|something)$/i.test(query)) return null
+  return query
+}
+
+export function routeContextualCommand(
+  message: string,
+  context: import('../../shared/types').AssistantSessionContext
+): ActionPlan | null {
+  const normalized = message
+    .trim()
+    .replace(/[.!?]+$/, '')
+    .trim()
+  const directSpotify = normalized.match(/^play\s+(.+?)\s+(?:on|in)\s+spotify$/i)
+  const contextualSpotify =
+    context.lastMediaApplication === 'spotify' || context.lastApplication === 'spotify'
+      ? normalized.match(/^play\s+(.+)$/i)
+      : null
+  const spotifyQuery = normalizeMediaQuery(directSpotify?.[1] ?? contextualSpotify?.[1] ?? '')
+
+  if (spotifyQuery) {
+    return actionPlan('Play the top matching Spotify track', 'spotify.playSearch', {
+      query: spotifyQuery
+    })
+  }
+
+  const applicationAction = normalized.match(/^(focus|maximize|minimize|restore|close)\s+it$/i)
+  if (applicationAction && context.lastApplication) {
+    const requestedAction = applicationAction[1].toLocaleLowerCase()
+    const capabilityAction = requestedAction === 'close' ? 'closeSafe' : requestedAction
+    return actionPlan(
+      `${requestedAction[0].toLocaleUpperCase()}${requestedAction.slice(1)} the current application`,
+      `application.${capabilityAction}`,
+      { application: context.lastApplication }
+    )
+  }
+
+  return null
+}
+
+export function extractAmbiguousMediaQuery(
+  message: string,
+  context: import('../../shared/types').AssistantSessionContext = {}
+): string | null {
+  if (context.lastMediaApplication || context.lastApplication === 'spotify') return null
+
+  const normalized = message
+    .trim()
+    .replace(/[.!?]+$/, '')
+    .trim()
+  const playbackRequest = normalized.match(/^play\s+(.+)$/i)
+  return normalizeMediaQuery(playbackRequest?.[1] ?? '')
+}
+
+export function routeMediaDestinationResponse(message: string, query: string): ActionPlan | null {
+  const destination = message
+    .trim()
+    .replace(/[.!?]+$/, '')
+    .trim()
+    .toLocaleLowerCase()
+
+  if (/^(?:on |in )?spotify(?: desktop| app)?$/.test(destination)) {
+    return actionPlan('Play the top matching Spotify track', 'spotify.playSearch', { query })
+  }
+
+  if (/^(?:(?:on|in) )?(?:the )?(?:browser|web|chrome|default browser)$/.test(destination)) {
+    return actionPlan('Open Spotify search results in the browser', 'browser.openUrl', {
+      url: `https://open.spotify.com/search/${encodeURIComponent(query)}`
+    })
+  }
+
+  return null
+}
+
+export function isClarificationCancellation(message: string): boolean {
+  return /^(?:cancel|never ?mind|stop|no)(?:[.!?]+)?$/i.test(message.trim())
+}
+
+export function routeCommand(
+  message: string,
+  context: import('../../shared/types').AssistantSessionContext = {}
+): ActionPlan | null {
+  return routeContextualCommand(message, context) ?? routeDeterministicCommand(message)
+}

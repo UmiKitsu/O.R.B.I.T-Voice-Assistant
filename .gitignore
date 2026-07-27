@@ -134,3 +134,7 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Downloaded local speech model (GitHub rejects files larger than 100 MB)
+resources/whisper/ggml-base.bin
+resources/whisper/ggml-base.bin.download

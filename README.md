@@ -14,6 +14,16 @@ An Electron application with React and TypeScript
 $ npm install
 ```
 
+### Local Whisper model
+
+The 148 MB Whisper model is intentionally excluded from Git. Download and verify it before development:
+
+```bash
+$ npm run setup:whisper
+```
+
+Production builds run this check automatically and download the model only when it is missing or invalid.
+
 ### Development
 
 ```bash

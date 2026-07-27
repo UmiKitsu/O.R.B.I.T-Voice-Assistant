@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { routeDeterministicCommand } from './commandRouter'
+import {
+  extractAmbiguousMediaQuery,
+  isClarificationCancellation,
+  routeCommand,
+  routeDeterministicCommand,
+  routeMediaDestinationResponse
+} from './commandRouter'
 import { executeDeterministicAction } from './deterministicActionExecutor'
 
 describe('routeDeterministicCommand', () => {
@@ -63,5 +69,71 @@ describe('routeDeterministicCommand', () => {
         effects: [effect]
       }
     })
+  })
+})
+
+describe('context-aware routing', () => {
+  it('routes a Spotify follow-up from the last successful application', () => {
+    expect(routeCommand('play a Bruno Mars song', { lastApplication: 'spotify' })).toEqual({
+      kind: 'action_plan',
+      summary: 'Play the top matching Spotify track',
+      actions: [{ capability: 'spotify.playSearch', parameters: { query: 'Bruno Mars' } }]
+    })
+  })
+
+  it('routes an explicit Spotify playback request without prior context', () => {
+    expect(routeCommand('play Locked Out of Heaven on Spotify')).toMatchObject({
+      actions: [{ capability: 'spotify.playSearch', parameters: { query: 'Locked Out of Heaven' } }]
+    })
+  })
+
+  it('resolves safe application pronouns from canonical context', () => {
+    expect(routeCommand('maximize it', { lastApplication: 'spotify' })).toMatchObject({
+      actions: [{ capability: 'application.maximize', parameters: { application: 'spotify' } }]
+    })
+    expect(routeCommand('close it', { lastApplication: 'chrome' })).toMatchObject({
+      actions: [{ capability: 'application.closeSafe', parameters: { application: 'chrome' } }]
+    })
+  })
+
+  it('does not invent context for an unqualified playback request', () => {
+    expect(routeCommand('play a Bruno Mars song')).toBeNull()
+  })
+
+  it('extracts an ambiguous playback query only when no media destination is known', () => {
+    expect(extractAmbiguousMediaQuery('play a Bruno Mars song')).toBe('Bruno Mars')
+    expect(
+      extractAmbiguousMediaQuery('play a Bruno Mars song', { lastMediaApplication: 'spotify' })
+    ).toBeNull()
+    expect(extractAmbiguousMediaQuery('play it')).toBeNull()
+  })
+
+  it('routes a clarified Spotify destination', () => {
+    expect(routeMediaDestinationResponse('Spotify', 'Bruno Mars')).toEqual({
+      kind: 'action_plan',
+      summary: 'Play the top matching Spotify track',
+      actions: [{ capability: 'spotify.playSearch', parameters: { query: 'Bruno Mars' } }]
+    })
+  })
+
+  it('routes a clarified browser destination to Spotify web search', () => {
+    expect(routeMediaDestinationResponse('in the browser', 'Locked Out of Heaven')).toEqual({
+      kind: 'action_plan',
+      summary: 'Open Spotify search results in the browser',
+      actions: [
+        {
+          capability: 'browser.openUrl',
+          parameters: {
+            url: 'https://open.spotify.com/search/Locked%20Out%20of%20Heaven'
+          }
+        }
+      ]
+    })
+  })
+
+  it('recognizes cancellation while waiting for a destination', () => {
+    expect(isClarificationCancellation('never mind')).toBe(true)
+    expect(isClarificationCancellation('No.')).toBe(true)
+    expect(isClarificationCancellation('Spotify')).toBe(false)
   })
 })

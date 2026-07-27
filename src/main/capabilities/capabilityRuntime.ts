@@ -1,21 +1,23 @@
-import type { ExternalUrlOpener } from '../services/browserService'
 import type { ApplicationLauncher } from '../services/applicationDiscoveryService'
+import type { ExternalUrlOpener } from '../services/browserService'
 import type {
   AudioMuteController,
   AudioVolumeController,
   MediaKeySender
 } from '../services/mediaControlService'
+import type { SpotifyPlaybackController } from '../services/spotifyService'
 import type { WindowController } from '../services/windowInputService'
 import { ConfirmationManager } from '../security/confirmationManager'
 import { PolicyEngine } from '../security/policyEngine'
-import { registerAssistantCapabilities } from './assistantCapabilities'
+import { getSettings } from '../services/settingsService'
 import { registerApplicationCapabilities } from './applicationCapabilities'
+import { registerAssistantCapabilities } from './assistantCapabilities'
 import { registerBrowserCapabilities } from './browserCapabilities'
 import { CapabilityRegistry } from './capabilityRegistry'
 import { registerMediaCapabilities } from './mediaCapabilities'
+import { registerSpotifyCapabilities } from './spotifyCapabilities'
 import { registerSystemCapabilities } from './systemCapabilities'
 import { registerWindowInputCapabilities } from './windowInputCapabilityDefinitions'
-import { getSettings } from '../services/settingsService'
 
 export type CapabilityRuntimeDependencies = {
   now?: () => Date
@@ -25,6 +27,9 @@ export type CapabilityRuntimeDependencies = {
   setAudioVolume?: AudioVolumeController
   launchApplication?: ApplicationLauncher
   windowController?: WindowController
+  spotifyController?: SpotifyPlaybackController
+  spotifyDelay?: (milliseconds: number) => Promise<void>
+  spotifyNow?: () => number
 }
 
 export function createCapabilityRegistry(
@@ -40,6 +45,12 @@ export function createCapabilityRegistry(
     dependencies.setAudioVolume
   )
   registerApplicationCapabilities(registry, dependencies.launchApplication)
+  registerSpotifyCapabilities(registry, {
+    controller: dependencies.spotifyController,
+    launcher: dependencies.launchApplication,
+    delay: dependencies.spotifyDelay,
+    now: dependencies.spotifyNow
+  })
   registerAssistantCapabilities(registry)
   registerWindowInputCapabilities(registry, dependencies.windowController)
 

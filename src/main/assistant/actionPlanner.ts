@@ -27,7 +27,12 @@ export function createPlanningSystemMessage(registry: CapabilityRegistry): ChatM
     role: 'system',
     content: `You are T.I.T.A.N., a local Windows voice assistant.
 
-Return exactly one JSON object matching the supplied response schema.
+Use exactly one of these two output shapes and do not add other top-level keys:
+{"kind":"conversation","response":"A clear, brief response"}
+{"kind":"action_plan","summary":"What will be attempted","actions":[{"capability":"registered.name","parameters":{}}]}
+An action plan must contain between 1 and 5 actions.
+
+Return exactly one JSON object matching one of the shapes above.
 Use kind "conversation" when no computer action is needed.
 Use kind "action_plan" only when every requested action can be represented by the registered capabilities below.
 Use only the listed capability names and match their parameter schemas exactly.

@@ -136,15 +136,17 @@ export async function chat(
 
 export async function structuredChat(
   messages: ChatMessage[],
-  format: Record<string, unknown>,
+  _format: Record<string, unknown>,
   signal?: AbortSignal
 ): Promise<ActionResult<{ response: string }>> {
-  return sendChatRequest(messages, format, signal)
+  // Ollama 0.32 cannot compile the full Zod-generated schema into a grammar.
+  // JSON mode still constrains output syntax; the application validates it strictly before use.
+  return sendChatRequest(messages, 'json', signal)
 }
 
 async function sendChatRequest(
   messages: ChatMessage[],
-  format: Record<string, unknown> | undefined,
+  format: Record<string, unknown> | 'json' | undefined,
   signal?: AbortSignal
 ): Promise<ActionResult<{ response: string }>> {
   const timedSignal = createTimedSignal(signal, REQUEST_TIMEOUT_MS)

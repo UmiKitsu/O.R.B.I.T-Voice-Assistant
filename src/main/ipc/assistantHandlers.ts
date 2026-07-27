@@ -1,9 +1,21 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipcChannels'
-import type { ActionResult, AssistantResponse, ChatMessage, OllamaHealth } from '../../shared/types'
+import type { ActionResult, AssistantResponse, OllamaHealth } from '../../shared/types'
 import { ConfirmationFlow, parseConfirmationResponse } from '../assistant/confirmationFlow'
 import { planAssistantRequest } from '../assistant/actionPlanner'
-import { executeDeterministicAction } from '../assistant/deterministicActionExecutor'
+import { executeActionPlan } from '../assistant/actionPlanExecutor'
+import {
+  createAssistantSession,
+  createSessionContextMessage,
+  recordSuccessfulExchange,
+  type AssistantSession
+} from '../assistant/assistantSession'
+import {
+  extractAmbiguousMediaQuery,
+  isClarificationCancellation,
+  routeCommand,
+  routeMediaDestinationResponse
+} from '../assistant/commandRouter'
 import {
   createCapabilityRegistry,
   createCapabilityRuntime
@@ -12,10 +24,9 @@ import { checkConnection } from '../services/ollamaService'
 import { logOperationalEvent } from '../services/loggerService'
 import { getSettings } from '../services/settingsService'
 
-const MAX_RETAINED_MESSAGES = 20
 const MAX_MESSAGE_LENGTH = 4_000
 
-const conversations = new Map<number, ChatMessage[]>()
+const sessions = new Map<number, AssistantSession>()
 const activeRequests = new Map<number, AbortController>()
 const capabilityRegistry = createCapabilityRegistry()
 const capabilityRuntime = createCapabilityRuntime({}, capabilityRegistry)
@@ -41,6 +52,21 @@ function parseAssistantRequest(value: unknown): string | null {
   return trimmedMessage.length > 0 && trimmedMessage.length <= MAX_MESSAGE_LENGTH
     ? trimmedMessage
     : null
+}
+
+function getOrCreateSession(event: IpcMainInvokeEvent): AssistantSession {
+  const senderId = event.sender.id
+  const existing = sessions.get(senderId)
+  if (existing) return existing
+
+  const session = createAssistantSession()
+  sessions.set(senderId, session)
+  event.sender.once('destroyed', () => {
+    activeRequests.get(senderId)?.abort()
+    activeRequests.delete(senderId)
+    sessions.delete(senderId)
+  })
+  return session
 }
 
 function healthResult(health: OllamaHealth): ActionResult<OllamaHealth> {
@@ -105,8 +131,61 @@ export function registerAssistantHandlers(): void {
         }
       }
 
-      const actionResult = await executeDeterministicAction(message)
-      if (actionResult) return actionResult
+      const session = getOrCreateSession(event)
+
+      if (session.pendingMediaDestination) {
+        const { query } = session.pendingMediaDestination
+
+        if (isClarificationCancellation(message)) {
+          session.pendingMediaDestination = undefined
+          const response = 'The playback request was cancelled.'
+          recordSuccessfulExchange(session, message, response)
+          return {
+            ok: true,
+            message: 'Playback request cancelled.',
+            data: { response }
+          }
+        }
+
+        const destinationPlan = routeMediaDestinationResponse(message, query)
+        if (destinationPlan) {
+          const actionResult = await executeActionPlan(destinationPlan, capabilityRuntime)
+          if (actionResult.ok && actionResult.data?.response) {
+            session.pendingMediaDestination = undefined
+            recordSuccessfulExchange(session, message, actionResult.data.response, destinationPlan)
+          }
+          return actionResult
+        }
+
+        const response = `Would you like me to open ${query} in Spotify or your browser?`
+        recordSuccessfulExchange(session, message, response)
+        return {
+          ok: true,
+          message: 'T.I.T.A.N. needs a playback destination.',
+          data: { response }
+        }
+      }
+
+      const deterministicPlan = routeCommand(message, session.context)
+      if (deterministicPlan) {
+        const actionResult = await executeActionPlan(deterministicPlan, capabilityRuntime)
+        if (actionResult.ok && actionResult.data?.response) {
+          recordSuccessfulExchange(session, message, actionResult.data.response, deterministicPlan)
+        }
+        return actionResult
+      }
+
+      const ambiguousMediaQuery = extractAmbiguousMediaQuery(message, session.context)
+      if (ambiguousMediaQuery) {
+        session.pendingMediaDestination = { query: ambiguousMediaQuery }
+        const response = `Would you like me to open ${ambiguousMediaQuery} in Spotify or your browser?`
+        recordSuccessfulExchange(session, message, response)
+        return {
+          ok: true,
+          message: 'T.I.T.A.N. needs a playback destination.',
+          data: { response }
+        }
+      }
 
       const controller = new AbortController()
       activeRequests.set(senderId, controller)
@@ -118,10 +197,14 @@ export function registerAssistantHandlers(): void {
           return health
         }
 
-        const recentMessages = conversations.get(senderId) ?? []
-        const userMessage: ChatMessage = { role: 'user', content: message }
+        const contextMessage = createSessionContextMessage(session.context)
+        const planningMessages = [
+          ...(contextMessage ? [contextMessage] : []),
+          ...session.messages,
+          { role: 'user' as const, content: message }
+        ]
         const planned = await planAssistantRequest(
-          [...recentMessages, userMessage],
+          planningMessages,
           capabilityRegistry,
           controller.signal
         )
@@ -148,13 +231,11 @@ export function registerAssistantHandlers(): void {
             : await confirmationFlow.execute(output, senderId)
 
         if (result.ok && result.data?.response) {
-          conversations.set(
-            senderId,
-            [
-              ...recentMessages,
-              userMessage,
-              { role: 'assistant', content: result.data.response } satisfies ChatMessage
-            ].slice(-MAX_RETAINED_MESSAGES)
+          recordSuccessfulExchange(
+            session,
+            message,
+            result.data.response,
+            output.kind === 'action_plan' ? output : undefined
           )
         }
 
@@ -189,12 +270,18 @@ export function registerAssistantHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.assistantCancel, (event: IpcMainInvokeEvent): ActionResult => {
     confirmationFlow.cancelSender(event.sender.id)
+    const session = sessions.get(event.sender.id)
+    const hadPendingDestination = Boolean(session?.pendingMediaDestination)
+    if (session) session.pendingMediaDestination = undefined
+
     const controller = activeRequests.get(event.sender.id)
 
     if (!controller) {
       return {
         ok: true,
-        message: 'There is no active request to cancel.'
+        message: hadPendingDestination
+          ? 'The playback request was cancelled.'
+          : 'There is no active request to cancel.'
       }
     }
 
@@ -210,7 +297,7 @@ export function registerAssistantHandlers(): void {
     confirmationFlow.cancelSender(event.sender.id)
     activeRequests.get(event.sender.id)?.abort()
     activeRequests.delete(event.sender.id)
-    conversations.delete(event.sender.id)
+    sessions.delete(event.sender.id)
 
     return {
       ok: true,

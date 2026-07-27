@@ -14,6 +14,12 @@ export type ChatMessage = {
   content: string
 }
 
+export type AssistantSessionContext = {
+  lastApplication?: string
+  lastMediaApplication?: string
+  lastSuccessfulCapability?: string
+}
+
 export type OllamaHealth = {
   connected: boolean
   modelInstalled: boolean

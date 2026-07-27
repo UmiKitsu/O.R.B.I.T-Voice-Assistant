@@ -7,7 +7,11 @@ import { ConfirmationManager } from '../security/confirmationManager'
 import { PolicyEngine } from '../security/policyEngine'
 import { executeActionPlan } from './actionPlanExecutor'
 import type { ActionPlan } from './actionPlanSchemas'
-import { describeRegisteredCapabilities, parseAndValidateAssistantOutput } from './actionPlanner'
+import {
+  createPlanningSystemMessage,
+  describeRegisteredCapabilities,
+  parseAndValidateAssistantOutput
+} from './actionPlanner'
 
 function registerTestCapability(
   registry: CapabilityRegistry,
@@ -28,6 +32,13 @@ function registerTestCapability(
 }
 
 describe('structured action planning', () => {
+  it('includes the exact JSON output shapes in the planning prompt', () => {
+    const prompt = createPlanningSystemMessage(new CapabilityRegistry()).content
+
+    expect(prompt).toContain('{"kind":"conversation","response":')
+    expect(prompt).toContain('{"kind":"action_plan","summary":"What will be attempted","actions":')
+  })
+
   it('strictly validates the top-level output shape and action count', () => {
     const registry = new CapabilityRegistry()
 

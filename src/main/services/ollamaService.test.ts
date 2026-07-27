@@ -65,7 +65,7 @@ describe('structuredChat', () => {
       model: 'qwen3:8b',
       think: false,
       stream: false,
-      format
+      format: 'json'
     })
   })
 })

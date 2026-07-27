@@ -19,6 +19,8 @@ export type WindowController = {
   requestClose(windowHandle: number): boolean
   typeUnicodeText(text: string): boolean
   pressEnter(): boolean
+  focusSpotifySearch(): boolean
+  chooseSpotifyTopResult(): boolean
 }
 
 type NativeFunctions = {
@@ -235,7 +237,12 @@ export const windowsController: WindowController = {
         enumeratedWindows.find((windowHandle) => {
           if (!native.isWindowVisible(windowHandle)) return false
           const title = readWideString(native.getWindowText, windowHandle).toLocaleLowerCase()
-          return title.length > 0 && title.includes(requested)
+          const processId = new Uint32Array(1)
+          native.getWindowThreadProcessId(windowHandle, processId)
+          const processName = readProcessName(native, processId[0])
+            .replace(/\.exe$/i, '')
+            .toLocaleLowerCase()
+          return title.includes(requested) || processName === requested
         }) ?? null
       )
     } finally {
@@ -336,6 +343,23 @@ export const windowsController: WindowController = {
   pressEnter() {
     const native = loadNativeFunctions()
     const inputs = [inputEvent(0x0d, false, false), inputEvent(0x0d, true, false)]
+    return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length
+  },
+
+  focusSpotifySearch() {
+    const native = loadNativeFunctions()
+    const inputs = [
+      inputEvent(0x11, false, false),
+      inputEvent(0x4c, false, false),
+      inputEvent(0x4c, true, false),
+      inputEvent(0x11, true, false)
+    ]
+    return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length
+  },
+
+  chooseSpotifyTopResult() {
+    const native = loadNativeFunctions()
+    const inputs = [inputEvent(0x09, false, false), inputEvent(0x09, true, false)]
     return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length
   }
 }
