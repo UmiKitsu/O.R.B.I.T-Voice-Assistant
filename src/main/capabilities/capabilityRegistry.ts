@@ -6,6 +6,7 @@ export type RegisteredCapability = {
   risk: CapabilityRisk
   timeoutMs: number
   parameterSchema: ZodType
+  resultSchema: ZodType
   execute: (parameters: unknown, signal: AbortSignal) => Promise<unknown>
 }
 
@@ -14,7 +15,8 @@ export class CapabilityRegistry {
 
   register<TParameters, TResult>(
     definition: CapabilityDefinition<TParameters, TResult>,
-    parameterSchema: ZodType<TParameters>
+    parameterSchema: ZodType<TParameters>,
+    resultSchema: ZodType<TResult>
   ): void {
     if (this.capabilities.has(definition.name)) {
       throw new Error(`Capability "${definition.name}" is already registered.`)
@@ -29,8 +31,9 @@ export class CapabilityRegistry {
       risk: definition.risk,
       timeoutMs: definition.timeoutMs,
       parameterSchema,
+      resultSchema,
       execute: async (parameters, signal): Promise<unknown> =>
-        definition.execute(parameters as TParameters, signal)
+        resultSchema.parse(await definition.execute(parameters as TParameters, signal))
     })
   }
 

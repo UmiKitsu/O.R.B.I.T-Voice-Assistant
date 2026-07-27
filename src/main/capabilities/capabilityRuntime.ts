@@ -1,0 +1,30 @@
+import type { ExternalUrlOpener } from '../services/browserService'
+import type { ApplicationLauncher } from '../services/applicationDiscoveryService'
+import type { AudioMuteController, MediaKeySender } from '../services/mediaControlService'
+import { ConfirmationManager } from '../security/confirmationManager'
+import { PolicyEngine } from '../security/policyEngine'
+import { registerApplicationCapabilities } from './applicationCapabilities'
+import { registerBrowserCapabilities } from './browserCapabilities'
+import { CapabilityRegistry } from './capabilityRegistry'
+import { registerMediaCapabilities } from './mediaCapabilities'
+import { registerSystemCapabilities } from './systemCapabilities'
+
+export type CapabilityRuntimeDependencies = {
+  now?: () => Date
+  openExternalUrl?: ExternalUrlOpener
+  sendMediaKey?: MediaKeySender
+  setAudioMuted?: AudioMuteController
+  launchApplication?: ApplicationLauncher
+}
+
+export function createCapabilityRuntime(
+  dependencies: CapabilityRuntimeDependencies = {}
+): PolicyEngine {
+  const registry = new CapabilityRegistry()
+  registerSystemCapabilities(registry, dependencies.now)
+  registerBrowserCapabilities(registry, dependencies.openExternalUrl)
+  registerMediaCapabilities(registry, dependencies.sendMediaKey, dependencies.setAudioMuted)
+  registerApplicationCapabilities(registry, dependencies.launchApplication)
+
+  return new PolicyEngine(registry, new ConfirmationManager())
+}

@@ -1,6 +1,7 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipcChannels'
 import type { ActionResult, ChatMessage, OllamaHealth } from '../../shared/types'
+import { executeDeterministicAction } from '../assistant/deterministicActionExecutor'
 import { chat, checkConnection } from '../services/ollamaService'
 
 const DEFAULT_MODEL = 'qwen3:8b'
@@ -100,6 +101,9 @@ export function registerAssistantHandlers(): void {
           recoverable: true
         }
       }
+
+      const actionResult = await executeDeterministicAction(message)
+      if (actionResult) return actionResult
 
       const controller = new AbortController()
       activeRequests.set(senderId, controller)

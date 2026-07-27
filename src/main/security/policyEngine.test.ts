@@ -34,7 +34,11 @@ function registerCapability(
     execute
   }
 
-  registry.register(definition, z.object({ target: z.string() }).strict())
+  registry.register(
+    definition,
+    z.object({ target: z.string() }).strict(),
+    z.object({ completed: z.boolean() }).strict()
+  )
 }
 
 describe('PolicyEngine', () => {

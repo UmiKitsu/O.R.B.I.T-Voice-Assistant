@@ -24,6 +24,8 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "koffi": "^2.14.1",
+    "loudness": "^0.4.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
