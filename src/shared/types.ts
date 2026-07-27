@@ -20,6 +20,13 @@ export type OllamaHealth = {
   models: string[]
 }
 
+export type AssistantEffect = 'stop-speaking' | 'disable'
+
+export type AssistantResponse = {
+  response: string
+  effects?: AssistantEffect[]
+}
+
 export type ActionResult<T = undefined> =
   | {
       ok: true

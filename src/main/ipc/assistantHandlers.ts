@@ -1,6 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { IPC_CHANNELS } from '../../shared/ipcChannels'
-import type { ActionResult, ChatMessage, OllamaHealth } from '../../shared/types'
+import type { ActionResult, AssistantResponse, ChatMessage, OllamaHealth } from '../../shared/types'
 import { executeDeterministicAction } from '../assistant/deterministicActionExecutor'
 import { chat, checkConnection } from '../services/ollamaService'
 
@@ -79,7 +79,7 @@ export function registerAssistantHandlers(): void {
     async (
       event: IpcMainInvokeEvent,
       request: unknown
-    ): Promise<ActionResult<{ response: string }>> => {
+    ): Promise<ActionResult<AssistantResponse>> => {
       const message = parseAssistantRequest(request)
 
       if (!message) {

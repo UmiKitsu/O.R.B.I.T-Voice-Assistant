@@ -1,39 +1,69 @@
-import type { PolicyRequest } from '../security/policyEngine'
-
-function action(capability: string, parameters: unknown, summary: string): PolicyRequest {
-  return { capability, parameters, summary }
+export type InternalAction = {
+  capability: string
+  parameters: unknown
 }
 
-export function routeDeterministicCommand(message: string): PolicyRequest | null {
+export type InternalActionPlan = {
+  kind: 'action_plan'
+  summary: string
+  actions: InternalAction[]
+}
+
+function actionPlan(
+  summary: string,
+  capability: string,
+  parameters: unknown = {}
+): InternalActionPlan {
+  return {
+    kind: 'action_plan',
+    summary,
+    actions: [{ capability, parameters }]
+  }
+}
+
+export function routeDeterministicCommand(message: string): InternalActionPlan | null {
   const normalized = message
     .trim()
     .replace(/[.!?]+$/, '')
     .trim()
   const lower = normalized.toLocaleLowerCase()
 
-  if (/^(tell me |what(?:'s| is) )?(the )?(current )?time$/.test(lower)) {
-    return action('system.getTime', {}, 'Read the local system time')
+  if (/^stop speaking$/.test(lower)) {
+    return actionPlan('Stop speaking', 'assistant.stopSpeaking')
+  }
+
+  if (/^disable (?:titan|t\.i\.t\.a\.n)$/.test(lower)) {
+    return actionPlan('Disable T.I.T.A.N.', 'assistant.disable')
+  }
+
+  if (
+    /^(tell me |what(?:'s| is) )?(the )?(current )?time$/.test(lower) ||
+    /^what time is it$/.test(lower)
+  ) {
+    return actionPlan('Read the local system time', 'system.getTime')
   }
 
   if (
     /^(tell me |what(?:'s| is) )?(the )?(current |today'?s )?date$/.test(lower) ||
     /^(what day is it|what is today'?s date)$/.test(lower)
   ) {
-    return action('system.getDate', {}, 'Read the local system date')
+    return actionPlan('Read the local system date', 'system.getDate')
   }
 
   const youtubeSearch = normalized.match(/^(?:search youtube for|youtube search for)\s+(.+)$/i)
   if (youtubeSearch) {
-    return action('browser.searchYouTube', { query: youtubeSearch[1].trim() }, 'Search YouTube')
+    return actionPlan('Search YouTube', 'browser.searchYouTube', {
+      query: youtubeSearch[1].trim()
+    })
   }
 
   const webSearch = normalized.match(/^(?:search (?:the web|google) for)\s+(.+)$/i)
   if (webSearch) {
-    return action('browser.searchWeb', { query: webSearch[1].trim() }, 'Search the web')
+    return actionPlan('Search the web', 'browser.searchWeb', { query: webSearch[1].trim() })
   }
 
   if (/^(?:open|go to) youtube$/.test(lower)) {
-    return action('browser.openUrl', { url: 'https://www.youtube.com/' }, 'Open YouTube')
+    return actionPlan('Open YouTube', 'browser.openUrl', { url: 'https://www.youtube.com' })
   }
 
   const fixedActions: ReadonlyArray<[RegExp, string, string]> = [
@@ -51,16 +81,14 @@ export function routeDeterministicCommand(message: string): PolicyRequest | null
   ]
 
   for (const [pattern, capability, summary] of fixedActions) {
-    if (pattern.test(lower)) return action(capability, {}, summary)
+    if (pattern.test(lower)) return actionPlan(summary, capability)
   }
 
   const applicationRequest = normalized.match(/^(?:open|launch|start)\s+(.+)$/i)
   if (applicationRequest) {
-    return action(
-      'application.launch',
-      { application: applicationRequest[1].trim() },
-      'Open a registered application'
-    )
+    return actionPlan('Open a registered application', 'application.launch', {
+      application: applicationRequest[1].trim()
+    })
   }
 
   return null

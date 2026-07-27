@@ -58,10 +58,21 @@ function App(): React.JSX.Element {
 
       if (result.ok) {
         const response = result.data?.response
+        const effects = result.data?.effects ?? []
 
         if (response) {
           setMessages((current) => [...current, { role: 'assistant', content: response }])
-          speak(response)
+          if (effects.includes('stop-speaking') || effects.includes('disable')) {
+            stopSpeaking()
+          } else {
+            speak(response)
+          }
+
+          if (effects.includes('disable')) {
+            isEnabled.current = false
+            requestGeneration.current += 1
+            setStatus('disabled')
+          }
         } else {
           setConversationError('Ollama returned an invalid response.')
         }

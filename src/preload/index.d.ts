@@ -1,8 +1,8 @@
-import type { ActionResult, OllamaHealth } from '../shared/types'
+import type { ActionResult, AssistantResponse, OllamaHealth } from '../shared/types'
 
 type TitanApi = {
   checkOllama: () => Promise<ActionResult<OllamaHealth>>
-  askAssistant: (message: string) => Promise<ActionResult<{ response: string }>>
+  askAssistant: (message: string) => Promise<ActionResult<AssistantResponse>>
   cancelAssistant: () => Promise<ActionResult>
   clearConversation: () => Promise<ActionResult>
   confirmAction: (requestId: string, approved: boolean) => Promise<ActionResult>

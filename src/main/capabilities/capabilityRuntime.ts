@@ -3,6 +3,7 @@ import type { ApplicationLauncher } from '../services/applicationDiscoveryServic
 import type { AudioMuteController, MediaKeySender } from '../services/mediaControlService'
 import { ConfirmationManager } from '../security/confirmationManager'
 import { PolicyEngine } from '../security/policyEngine'
+import { registerAssistantCapabilities } from './assistantCapabilities'
 import { registerApplicationCapabilities } from './applicationCapabilities'
 import { registerBrowserCapabilities } from './browserCapabilities'
 import { CapabilityRegistry } from './capabilityRegistry'
@@ -25,6 +26,7 @@ export function createCapabilityRuntime(
   registerBrowserCapabilities(registry, dependencies.openExternalUrl)
   registerMediaCapabilities(registry, dependencies.sendMediaKey, dependencies.setAudioMuted)
   registerApplicationCapabilities(registry, dependencies.launchApplication)
+  registerAssistantCapabilities(registry)
 
   return new PolicyEngine(registry, new ConfirmationManager())
 }

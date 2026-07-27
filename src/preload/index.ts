@@ -1,12 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipcChannels'
-import type { ActionResult, OllamaHealth } from '../shared/types'
+import type { ActionResult, AssistantResponse, OllamaHealth } from '../shared/types'
 
 const titan = Object.freeze({
   checkOllama: (): Promise<ActionResult<OllamaHealth>> =>
     ipcRenderer.invoke(IPC_CHANNELS.ollamaHealth),
 
-  askAssistant: (message: string): Promise<ActionResult<{ response: string }>> =>
+  askAssistant: (message: string): Promise<ActionResult<AssistantResponse>> =>
     ipcRenderer.invoke(IPC_CHANNELS.assistantAsk, { message }),
 
   cancelAssistant: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.assistantCancel),
