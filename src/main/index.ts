@@ -7,9 +7,11 @@ import { registerAudioHandlers } from './ipc/audioHandlers'
 import { registerSettingsHandlers } from './ipc/settingsHandlers'
 import { registerSecurityHandlers } from './ipc/securityHandlers'
 import { registerSpeechHandlers } from './ipc/speechHandlers'
+import { registerSpotifyHandlers } from './ipc/spotifyHandlers'
 import { flushLogs, initializeLogger, logOperationalEvent } from './services/loggerService'
 import { ensureOllamaRunning } from './services/ollamaStartupService'
 import { initializeSettingsService } from './services/settingsService'
+import { initializeSpotifyAuthService } from './services/spotifyAuthService'
 import { initializeSecurityPinService } from './security/securityPinService'
 import { stopAllWakeWordSessions } from './services/wakeWordService'
 import { stopAllSpeechSynthesis } from './services/speechSynthesisService'
@@ -19,6 +21,7 @@ registerAudioHandlers()
 registerSettingsHandlers()
 registerSecurityHandlers()
 registerSpeechHandlers()
+registerSpotifyHandlers()
 
 function createWindow(): void {
   // Create the browser window.
@@ -63,6 +66,7 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   initializeLogger(app.getPath('userData'))
   await initializeSettingsService()
+  initializeSpotifyAuthService(app.getPath('userData'))
   await initializeSecurityPinService()
   await ensureOllamaRunning()
   logOperationalEvent({ event: 'app.started' })

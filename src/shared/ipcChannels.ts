@@ -21,6 +21,9 @@ export const IPC_CHANNELS = {
   securityPinStatus: 'orbit:security-pin:status',
   securityPinCreate: 'orbit:security-pin:create',
   securityPinChange: 'orbit:security-pin:change',
+  spotifyStatus: 'orbit:spotify:status',
+  spotifyConnect: 'orbit:spotify:connect',
+  spotifyDisconnect: 'orbit:spotify:disconnect',
   actionExecute: 'orbit:action:execute',
   actionConfirm: 'orbit:action:confirm'
 } as const

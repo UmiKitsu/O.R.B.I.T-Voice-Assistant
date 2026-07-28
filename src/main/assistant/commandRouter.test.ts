@@ -21,6 +21,9 @@ describe('routeDeterministicCommand', () => {
     ['Unmute.', 'Send the audio mute key', 'audio.unmute', {}],
     ['Volume up.', 'Raise the volume', 'audio.volumeUp', {}],
     ['Volume down.', 'Lower the volume', 'audio.volumeDown', {}],
+    ['Skip it.', 'Play the next track', 'media.next', {}],
+    ['Skip this song on Spotify.', 'Play the next track', 'media.next', {}],
+    ['Go back on Spotify.', 'Play the previous track', 'media.previous', {}],
     ['Open YouTube.', 'Open YouTube', 'browser.openUrl', { url: 'https://www.youtube.com' }],
     [
       'Open Calculator.',
@@ -111,8 +114,22 @@ describe('context-aware routing', () => {
     })
   })
 
-  it('does not invent context for an unqualified playback request', () => {
-    expect(routeCommand('play a Bruno Mars song')).toBeNull()
+  it('routes an unqualified playback request to the preferred music provider capability', () => {
+    expect(routeCommand('play a Bruno Mars song')).toEqual({
+      kind: 'action_plan',
+      summary: 'Play music using the preferred provider',
+      actions: [{ capability: 'music.playSearch', parameters: { query: 'Bruno Mars' } }]
+    })
+  })
+
+  it('routes an explicit YouTube playback request without Spotify context', () => {
+    expect(routeCommand('play Locked Out of Heaven on YouTube')).toEqual({
+      kind: 'action_plan',
+      summary: 'Open matching music on YouTube',
+      actions: [
+        { capability: 'youtube.playSearch', parameters: { query: 'Locked Out of Heaven' } }
+      ]
+    })
   })
 
   it('extracts an ambiguous playback query only when no media destination is known', () => {
@@ -131,16 +148,14 @@ describe('context-aware routing', () => {
     })
   })
 
-  it('routes a clarified browser destination to Spotify web search', () => {
+  it('routes a clarified browser destination to YouTube music search', () => {
     expect(routeMediaDestinationResponse('in the browser', 'Locked Out of Heaven')).toEqual({
       kind: 'action_plan',
-      summary: 'Open Spotify search results in the browser',
+      summary: 'Open matching music on YouTube',
       actions: [
         {
-          capability: 'browser.openUrl',
-          parameters: {
-            url: 'https://open.spotify.com/search/Locked%20Out%20of%20Heaven'
-          }
+          capability: 'youtube.playSearch',
+          parameters: { query: 'Locked Out of Heaven' }
         }
       ]
     })

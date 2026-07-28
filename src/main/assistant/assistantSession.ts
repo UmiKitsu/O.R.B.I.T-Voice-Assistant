@@ -30,6 +30,12 @@ export function updateSessionContext(context: AssistantSessionContext, plan: Act
       continue
     }
 
+    if (action.capability === 'youtube.playSearch') {
+      context.lastApplication = 'browser'
+      context.lastMediaApplication = 'youtube'
+      continue
+    }
+
     if (action.capability.startsWith('application.')) {
       const application = canonicalApplication(action.parameters.application)
       if (application) {

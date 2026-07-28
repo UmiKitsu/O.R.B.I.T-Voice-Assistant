@@ -136,8 +136,16 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
       'media.playPause',
       'Play or pause media'
     ],
-    [/^(?:next|next track|skip)(?: song| track)?$/, 'media.next', 'Play the next track'],
-    [/^(?:previous|previous track|last track)$/, 'media.previous', 'Play the previous track'],
+    [
+      /^(?:next|next track|next song|skip|skip it|skip this|skip this song|skip this track)(?: on spotify)?$/,
+      'media.next',
+      'Play the next track'
+    ],
+    [
+      /^(?:previous|previous track|previous song|last track|go back)(?: on spotify)?$/,
+      'media.previous',
+      'Play the previous track'
+    ],
     [/^(?:volume up|turn (?:the )?volume up)$/, 'audio.volumeUp', 'Raise the volume'],
     [/^(?:volume down|turn (?:the )?volume down)$/, 'audio.volumeDown', 'Lower the volume'],
     [/^(?:mute|mute (?:the )?(?:audio|volume))$/, 'audio.mute', 'Send the audio mute key'],
@@ -177,15 +185,34 @@ export function routeContextualCommand(
     .replace(/[.!?]+$/, '')
     .trim()
   const directSpotify = normalized.match(/^play\s+(.+?)\s+(?:on|in)\s+spotify$/i)
+  const directYouTube = normalized.match(
+    /^play\s+(.+?)\s+(?:on|in)\s+(?:youtube|the browser|browser|the web|web)$/i
+  )
   const contextualSpotify =
     context.lastMediaApplication === 'spotify' || context.lastApplication === 'spotify'
       ? normalized.match(/^play\s+(.+)$/i)
       : null
+  const contextualYouTube =
+    context.lastMediaApplication === 'youtube' ? normalized.match(/^play\s+(.+)$/i) : null
   const spotifyQuery = normalizeMediaQuery(directSpotify?.[1] ?? contextualSpotify?.[1] ?? '')
+  const youtubeQuery = normalizeMediaQuery(directYouTube?.[1] ?? contextualYouTube?.[1] ?? '')
 
   if (spotifyQuery) {
     return actionPlan('Play the top matching Spotify track', 'spotify.playSearch', {
       query: spotifyQuery
+    })
+  }
+
+  if (youtubeQuery) {
+    return actionPlan('Open matching music on YouTube', 'youtube.playSearch', {
+      query: youtubeQuery
+    })
+  }
+
+  const preferredQuery = normalizeMediaQuery(normalized.match(/^play\s+(.+)$/i)?.[1] ?? '')
+  if (preferredQuery) {
+    return actionPlan('Play music using the preferred provider', 'music.playSearch', {
+      query: preferredQuery
     })
   }
 
@@ -228,10 +255,12 @@ export function routeMediaDestinationResponse(message: string, query: string): A
     return actionPlan('Play the top matching Spotify track', 'spotify.playSearch', { query })
   }
 
-  if (/^(?:(?:on|in) )?(?:the )?(?:browser|web|chrome|default browser)$/.test(destination)) {
-    return actionPlan('Open Spotify search results in the browser', 'browser.openUrl', {
-      url: `https://open.spotify.com/search/${encodeURIComponent(query)}`
-    })
+  if (
+    /^(?:(?:on|in) )?(?:the )?(?:youtube|browser|web|chrome|default browser)$/.test(
+      destination
+    )
+  ) {
+    return actionPlan('Open matching music on YouTube', 'youtube.playSearch', { query })
   }
 
   return null

@@ -5,10 +5,33 @@ import {
   resolveApplication,
   type ApplicationLauncher
 } from './applicationDiscoveryService'
+import { openExternalUrl, type ExternalUrlOpener } from './browserService'
+import { getSettings } from './settingsService'
+import type {
+  SpotifyWebApiDependencies,
+  SpotifyWebPlaybackData
+} from './spotifyWebApiService'
 import { windowsController, type WindowController } from './windowInputService'
 
 const WINDOW_TIMEOUT_MS = 10_000
 const WINDOW_POLL_MS = 250
+
+export type SpotifyDesktopPlaybackData = {
+  application: 'spotify'
+  query: string
+  method: 'desktop'
+}
+
+export type YouTubePlaybackData = {
+  application: 'youtube'
+  query: string
+  method: 'browser-search' | 'spotify-fallback'
+}
+
+export type MusicPlaybackData =
+  | SpotifyWebPlaybackData
+  | SpotifyDesktopPlaybackData
+  | YouTubePlaybackData
 
 export type SpotifyPlaybackController = Pick<
   WindowController,
@@ -27,6 +50,13 @@ export type SpotifyPlaybackDependencies = {
   launcher?: ApplicationLauncher
   delay?: (milliseconds: number) => Promise<void>
   now?: () => number
+  openExternalUrl?: ExternalUrlOpener
+  webApi?: SpotifyWebApiDependencies
+  settings?: () => {
+    spotifyClientId: string
+    spotifyPlaybackMode: 'desktop' | 'web-api'
+    musicFallbackEnabled: boolean
+  }
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -56,11 +86,32 @@ async function findSpotifyWindow(
   return null
 }
 
-export async function playSpotifyTopResult(
+export async function openYouTubeMusicSearch(
+  query: string,
+  opener?: ExternalUrlOpener,
+  method: YouTubePlaybackData['method'] = 'browser-search'
+): Promise<ActionResult<YouTubePlaybackData>> {
+  const searchQuery = `${query} official audio`
+  const result = await openExternalUrl(
+    `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`,
+    opener
+  )
+  if (!result.ok) return result
+  return {
+    ok: true,
+    message:
+      method === 'spotify-fallback'
+        ? `I could not start ${query} on Spotify, so I opened YouTube results instead.`
+        : `Opening YouTube results for ${query}.`,
+    data: { application: 'youtube', query, method }
+  }
+}
+
+export async function playSpotifyDesktopTopResult(
   query: string,
   signal: AbortSignal,
   dependencies: SpotifyPlaybackDependencies = {}
-): Promise<ActionResult<{ application: 'spotify'; query: string }>> {
+): Promise<ActionResult<SpotifyDesktopPlaybackData>> {
   const controller = dependencies.controller ?? windowsController
   const wait = dependencies.delay ?? delay
   const now = dependencies.now ?? Date.now
@@ -72,7 +123,7 @@ export async function playSpotifyTopResult(
       return {
         ok: false,
         code: 'SPOTIFY_NOT_FOUND',
-        message: 'I could not find the registered Spotify desktop application.',
+        message: 'I could not find the Spotify desktop application.',
         recoverable: true
       }
     }
@@ -115,7 +166,7 @@ export async function playSpotifyTopResult(
       recoverable: true
     }
   }
-  await wait(200)
+  await wait(350)
 
   const before = controller.getForegroundTarget()
   if (
@@ -140,7 +191,7 @@ export async function playSpotifyTopResult(
       recoverable: true
     }
   }
-  await wait(750)
+  await wait(1_100)
 
   const immediatelyBeforeSelection = controller.getForegroundTarget()
   if (
@@ -160,7 +211,7 @@ export async function playSpotifyTopResult(
     return {
       ok: false,
       code: 'SPOTIFY_RESULT_SELECTION_FAILED',
-      message: `I found ${query} on Spotify, but I could not confirm playback.`,
+      message: `I found ${query} on Spotify, but I could not start the result.`,
       recoverable: true
     }
   }
@@ -170,20 +221,43 @@ export async function playSpotifyTopResult(
   if (
     !after ||
     after.windowHandle !== windowHandle ||
-    after.processName.toLocaleLowerCase() !== 'spotify.exe' ||
-    !matchesRequestedPlayback(after.title, query)
+    after.processName.toLocaleLowerCase() !== 'spotify.exe'
   ) {
     return {
       ok: false,
-      code: 'SPOTIFY_PLAYBACK_NOT_CONFIRMED',
-      message: `I found ${query} on Spotify, but I could not confirm playback.`,
+      code: 'SPOTIFY_TARGET_CHANGED',
+      message: 'Spotify lost focus before Orbit could finish starting the selected result.',
       recoverable: true
     }
   }
 
+  const titleMatched = matchesRequestedPlayback(after.title, query)
   return {
     ok: true,
-    message: `Playing the top Spotify result for ${query}.`,
-    data: { application: 'spotify', query }
+    message: titleMatched
+      ? `Playing the top Spotify result for ${query}.`
+      : `Started the top Spotify result for ${query} in the Spotify app.`,
+    data: { application: 'spotify', query, method: 'desktop' }
   }
+}
+
+export async function playSpotifyTopResult(
+  query: string,
+  signal: AbortSignal,
+  dependencies: SpotifyPlaybackDependencies = {}
+): Promise<ActionResult<MusicPlaybackData>> {
+  const settings = dependencies.settings?.() ?? getSettings()
+  const desktopResult = await playSpotifyDesktopTopResult(query, signal, dependencies)
+  if (desktopResult.ok) return desktopResult
+
+  if (settings.musicFallbackEnabled && !signal.aborted) {
+    const fallback = await openYouTubeMusicSearch(
+      query,
+      dependencies.openExternalUrl,
+      'spotify-fallback'
+    )
+    if (fallback.ok) return fallback
+  }
+
+  return desktopResult
 }

@@ -350,8 +350,8 @@ export const windowsController: WindowController = {
     const native = loadNativeFunctions()
     const inputs = [
       inputEvent(0x11, false, false),
-      inputEvent(0x4c, false, false),
-      inputEvent(0x4c, true, false),
+      inputEvent(0x4b, false, false),
+      inputEvent(0x4b, true, false),
       inputEvent(0x11, true, false)
     ]
     return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length

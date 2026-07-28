@@ -6,6 +6,7 @@ import type {
   OllamaHealth,
   OrbitSettings,
   SecurityPinStatus,
+  SpotifyConnectionStatus,
   SpeechSynthesisEvent,
   WakeWordEvent
 } from '../shared/types'
@@ -27,6 +28,9 @@ type OrbitApi = {
     nextPin: string,
     confirmation: string
   ) => Promise<ActionResult<SecurityPinStatus>>
+  getSpotifyStatus: () => Promise<ActionResult<SpotifyConnectionStatus>>
+  connectSpotify: () => Promise<ActionResult<SpotifyConnectionStatus>>
+  disconnectSpotify: () => Promise<ActionResult<SpotifyConnectionStatus>>
   startWakeWord: () => Promise<ActionResult>
   stopWakeWord: () => Promise<ActionResult>
   pauseWakeWord: () => Promise<ActionResult>

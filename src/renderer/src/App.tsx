@@ -82,6 +82,7 @@ function App(): React.JSX.Element {
   const pendingConfirmationRef = useRef<ConfirmationPrompt | null>(null)
   const wakeAcknowledgementTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const transcriptClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastSpokenError = useRef<{ message: string; at: number } | null>(null)
   const wakeWordTestWasEnabled = useRef(false)
   const {
     microphoneName: wakeMicrophoneName,
@@ -118,6 +119,15 @@ function App(): React.JSX.Element {
     volume,
     setVolume
   } = useSpeech()
+
+  useEffect(() => {
+    if (!assistantError || !isEnabled.current) return
+    const now = Date.now()
+    const previous = lastSpokenError.current
+    if (previous && previous.message === assistantError && now - previous.at < 4_000) return
+    lastSpokenError.current = { message: assistantError, at: now }
+    speak(assistantError)
+  }, [assistantError, speak])
 
   const clearWakeAcknowledgement = useCallback((): void => {
     if (wakeAcknowledgementTimer.current) clearTimeout(wakeAcknowledgementTimer.current)

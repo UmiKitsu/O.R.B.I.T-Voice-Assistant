@@ -47,6 +47,23 @@ describe('settings validation', () => {
     expect(orbitSettingsPatchSchema.safeParse({ wakeRecognitionMode: 'hybrid' }).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ wakeRecognitionMode: 'cloud' }).success).toBe(false)
     expect(orbitSettingsPatchSchema.safeParse({ recognitionLanguage: 'tl' }).success).toBe(false)
+    expect(orbitSettingsPatchSchema.safeParse({ spotifyClientId: 'abc123' }).success).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ spotifyPlaybackMode: 'desktop' }).success).toBe(
+      true
+    )
+    expect(orbitSettingsPatchSchema.safeParse({ spotifyPlaybackMode: 'web-api' }).success).toBe(
+      true
+    )
+    expect(orbitSettingsPatchSchema.safeParse({ spotifyPlaybackMode: 'legacy' }).success).toBe(
+      false
+    )
+    expect(
+      orbitSettingsPatchSchema.safeParse({ preferredMusicProvider: 'youtube' }).success
+    ).toBe(true)
+    expect(
+      orbitSettingsPatchSchema.safeParse({ preferredMusicProvider: 'soundcloud' }).success
+    ).toBe(false)
+    expect(orbitSettingsPatchSchema.safeParse({ musicFallbackEnabled: false }).success).toBe(true)
     expect(orbitSettingsPatchSchema.safeParse({ unexpected: true }).success).toBe(false)
     expect(
       orbitSettingsPatchSchema.safeParse({ ollamaBaseUrl: 'http://token@localhost:11434' }).success
@@ -100,7 +117,7 @@ describe('settings validation', () => {
     expect((storage.store as OrbitSettings).confirmationTimeoutSeconds).toBe(20)
   })
 
-  it('adds current recognition and speech defaults to existing settings', () => {
+  it('adds current recognition, speech, and music defaults to existing settings', () => {
     const {
       recognitionLanguage: _recognitionLanguage,
       wakeRecognitionMode: _wakeRecognitionMode,
@@ -119,7 +136,11 @@ describe('settings validation', () => {
       recognitionLanguage: 'auto',
       wakeRecognitionMode: 'hybrid',
       speechEngine: 'kokoro',
-      kokoroVoice: 'bm_george'
+      kokoroVoice: 'bm_george',
+      spotifyClientId: '',
+      spotifyPlaybackMode: 'desktop',
+      preferredMusicProvider: 'spotify',
+      musicFallbackEnabled: true
     })
     expect(storage.store).toEqual({ ...DEFAULT_ORBIT_SETTINGS, speechVolume: 0.6 })
   })

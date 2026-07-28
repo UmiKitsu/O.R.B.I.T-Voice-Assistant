@@ -174,6 +174,9 @@ export type SpeechSynthesisEvent =
       message: string
     }
 
+export type MusicProvider = 'spotify' | 'youtube'
+export type SpotifyPlaybackMode = 'desktop' | 'web-api'
+
 export type OrbitSettings = {
   ollamaBaseUrl: string
   ollamaModel: string
@@ -189,6 +192,10 @@ export type OrbitSettings = {
   applicationAliases: Record<string, string[]>
   recognitionLanguage: RecognitionLanguage
   wakeRecognitionMode: WakeRecognitionMode
+  spotifyClientId: string
+  spotifyPlaybackMode: SpotifyPlaybackMode
+  preferredMusicProvider: MusicProvider
+  musicFallbackEnabled: boolean
 }
 
 export type AssistantEffect = 'stop-speaking' | 'disable'
@@ -198,6 +205,14 @@ export type SecurityPinStatus = {
   hasPin: boolean
   temporarilyLocked: boolean
   retryAt?: number
+}
+
+export type SpotifyConnectionStatus = {
+  configured: boolean
+  connected: boolean
+  redirectUri: string
+  displayName?: string
+  product?: string
 }
 
 export type ConfirmationPrompt = {

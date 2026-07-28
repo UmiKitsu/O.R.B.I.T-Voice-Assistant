@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ForegroundTarget } from '../security/protectedTargets'
-import { playSpotifyTopResult, type SpotifyPlaybackController } from './spotifyService'
+import {
+  playSpotifyDesktopTopResult,
+  playSpotifyTopResult,
+  type SpotifyPlaybackController
+} from './spotifyService'
 
 const safeSpotifyTarget: ForegroundTarget = {
   windowHandle: 42,
@@ -37,21 +41,21 @@ describe('Spotify playback service', () => {
     vi.mocked(controller.pressEnter).mockReturnValue(true)
   })
 
-  it('uses the fixed Spotify search sequence and reports only verified playback', async () => {
+  it('uses the desktop search sequence and reports only verified playback', async () => {
     vi.mocked(controller.getForegroundTarget)
       .mockReturnValueOnce(safeSpotifyTarget)
       .mockReturnValueOnce(safeSpotifyTarget)
       .mockReturnValueOnce({ ...safeSpotifyTarget, title: 'Locked Out of Heaven ? Bruno Mars' })
 
     await expect(
-      playSpotifyTopResult('Bruno Mars', new AbortController().signal, {
+      playSpotifyDesktopTopResult('Bruno Mars', new AbortController().signal, {
         controller,
         delay: immediateDelay
       })
     ).resolves.toEqual({
       ok: true,
       message: 'Playing the top Spotify result for Bruno Mars.',
-      data: { application: 'spotify', query: 'Bruno Mars' }
+      data: { application: 'spotify', query: 'Bruno Mars', method: 'desktop' }
     })
 
     expect(controller.focusSpotifySearch).toHaveBeenCalledOnce()
@@ -60,16 +64,16 @@ describe('Spotify playback service', () => {
     expect(controller.pressEnter).toHaveBeenCalledOnce()
   })
 
-  it('leaves search visible when playback cannot be confirmed', async () => {
+  it('accepts a completed Spotify selection when the window title remains generic', async () => {
     await expect(
-      playSpotifyTopResult('Bruno Mars', new AbortController().signal, {
+      playSpotifyDesktopTopResult('Bruno Mars', new AbortController().signal, {
         controller,
         delay: immediateDelay
       })
-    ).resolves.toMatchObject({
-      ok: false,
-      code: 'SPOTIFY_PLAYBACK_NOT_CONFIRMED',
-      message: 'I found Bruno Mars on Spotify, but I could not confirm playback.'
+    ).resolves.toEqual({
+      ok: true,
+      message: 'Started the top Spotify result for Bruno Mars in the Spotify app.',
+      data: { application: 'spotify', query: 'Bruno Mars', method: 'desktop' }
     })
   })
 
@@ -79,11 +83,36 @@ describe('Spotify playback service', () => {
       .mockReturnValueOnce({ ...safeSpotifyTarget, processName: 'powershell.exe' })
 
     await expect(
-      playSpotifyTopResult('Bruno Mars', new AbortController().signal, {
+      playSpotifyDesktopTopResult('Bruno Mars', new AbortController().signal, {
         controller,
         delay: immediateDelay
       })
     ).resolves.toMatchObject({ ok: false, code: 'SPOTIFY_TARGET_CHANGED' })
     expect(controller.chooseSpotifyTopResult).not.toHaveBeenCalled()
+  })
+
+  it('opens YouTube and returns a spoken success message when Spotify desktop control fails', async () => {
+    const opener = vi.fn(async () => undefined)
+    vi.mocked(controller.chooseSpotifyTopResult).mockReturnValue(false)
+
+    await expect(
+      playSpotifyTopResult('Bruno Mars', new AbortController().signal, {
+        controller,
+        delay: immediateDelay,
+        openExternalUrl: opener,
+        settings: () => ({
+          spotifyClientId: '',
+          spotifyPlaybackMode: 'desktop',
+          musicFallbackEnabled: true
+        })
+      })
+    ).resolves.toEqual({
+      ok: true,
+      message: 'I could not start Bruno Mars on Spotify, so I opened YouTube results instead.',
+      data: { application: 'youtube', query: 'Bruno Mars', method: 'spotify-fallback' }
+    })
+    expect(opener).toHaveBeenCalledWith(
+      'https://www.youtube.com/results?search_query=Bruno%20Mars%20official%20audio'
+    )
   })
 })

@@ -728,6 +728,27 @@ URL policy:
 - Do not automatically submit passwords or payment details.
 - Require confirmation before sending messages, posting content, or submitting important forms.
 
+### Music playback providers
+
+Orbit supports Spotify and YouTube through typed playback capabilities:
+
+```ts
+type MusicPlaybackCapability =
+  | 'spotify.playSearch'
+  | 'youtube.playSearch'
+  | 'music.playSearch'
+```
+
+Provider behavior:
+
+1. `spotify.playSearch` and unqualified `music.playSearch` use the downloaded Spotify desktop application and work with Spotify Free.
+2. Spotify playback must not require a Client ID, OAuth connection, Premium subscription, or a visible Music Playback settings panel.
+3. Orbit opens Spotify Quick Search with `Ctrl+K`, types the requested song, uses Spotify's keyboard result navigation, and activates the selected top result only while Spotify remains the foreground safe target.
+4. A generic Spotify window title is not proof of failure. If the complete selection sequence succeeded and Spotify remained active, report that Orbit started the top result without claiming API-level verification.
+5. Play/pause, next, previous, and skip commands use fixed Windows media keys. Commands such as “skip it,” “skip this song,” and “go back on Spotify” must route deterministically.
+6. Explicit “on YouTube” commands may open YouTube search results in the default browser.
+7. Opening YouTube results is not verified playback. Say that Orbit opened results; never claim a video is playing unless a future player integration confirms playback state.
+
 ---
 
 ## 16. Speech-to-text
@@ -849,12 +870,18 @@ type OrbitSettings = {
   applicationAliases: Record<string, string[]>
   recognitionLanguage: 'auto' | 'en'
   wakeRecognitionMode: 'hybrid' | 'keyword-only'
+  spotifyClientId: string
+  spotifyPlaybackMode: 'desktop' | 'web-api'
+  preferredMusicProvider: 'spotify' | 'youtube'
+  musicFallbackEnabled: boolean
 }
 ```
 
 Validate all loaded settings before use.
 
 The security PIN must not be stored in `OrbitSettings` or accepted by the generic settings IPC endpoint. Store only a salted `scrypt` verifier in the app user-data directory, encrypted with Electron `safeStorage` when available. Expose only `hasPin`, temporary-lock status, and an optional retry time to the renderer.
+
+The Spotify Client ID is public application configuration and may be stored in `OrbitSettings`. Spotify access tokens, refresh tokens, PKCE verifiers, authorization codes, and OAuth state values are secrets or short-lived authorization material and must never be stored in `OrbitSettings`. Keep them in the main process and encrypt persisted authorization with `safeStorage`.
 
 ---
 
@@ -908,6 +935,9 @@ Good error messages:
 
 - “Ollama is not running.”
 - “Spotify could not be found.”
+- “Connect Spotify in Orbit settings before using direct playback.”
+- “Spotify is connected, but no controllable playback device is available. Open Spotify once and try again.”
+- “I could not start that on Spotify, so I opened YouTube results instead.”
 - “No microphone was detected.”
 - “I could not understand the recording.”
 - “That action is not supported yet.”
@@ -917,6 +947,8 @@ Good error messages:
 - “The action timed out.”
 
 Never show only a stack trace to the user.
+
+When Orbit is enabled, recoverable user-facing errors should be both displayed and spoken through the local TTS system. Do not speak internal error codes, stack traces, raw JSON, secrets, or the same unchanged error repeatedly in a tight loop.
 
 ---
 
@@ -941,6 +973,7 @@ Do not log by default:
 
 - Passwords
 - Authentication tokens
+- Spotify access tokens, refresh tokens, authorization codes, PKCE verifiers, or OAuth state values
 - Clipboard contents
 - Full conversations
 - Microphone audio
@@ -966,6 +999,7 @@ src/
 │   │   ├── audioHandlers.ts
 │   │   ├── settingsHandlers.ts
 │   │   ├── securityHandlers.ts
+│   │   ├── spotifyHandlers.ts
 │   │   └── systemHandlers.ts
 │   ├── assistant/
 │   │   ├── commandRouter.ts
@@ -978,6 +1012,7 @@ src/
 │   │   ├── applicationCapabilities.ts
 │   │   ├── browserCapabilities.ts
 │   │   ├── mediaCapabilities.ts
+│   │   ├── spotifyCapabilities.ts
 │   │   ├── filesystemCapabilities.ts
 │   │   ├── softwareCapabilities.ts
 │   │   ├── systemCapabilities.ts
@@ -1000,6 +1035,9 @@ src/
 │   │   ├── windowService.ts
 │   │   ├── browserService.ts
 │   │   ├── mediaService.ts
+│   │   ├── spotifyAuthService.ts
+│   │   ├── spotifyService.ts
+│   │   ├── spotifyWebApiService.ts
 │   │   ├── systemInfoService.ts
 │   │   ├── settingsService.ts
 │   │   └── loggerService.ts
@@ -1090,6 +1128,13 @@ Prioritize tests for:
 - Protected keyboard shortcuts
 - Protected applications and dialogs
 - Request routing
+- Spotify PKCE verifier and challenge generation
+- Spotify authorization status and encrypted token handling
+- Spotify access-token refresh and reconnect behavior
+- Exact Spotify track selection, device selection, playback start, and playback-state verification
+- Spotify 401, 403, 429, no-device, cancellation, and network failures
+- YouTube browser fallback and honest opened-results messaging
+- Spoken user-facing errors without repeated loops or secret leakage
 - Ollama response parsing
 - Settings validation
 
@@ -1124,6 +1169,9 @@ These should be allowed automatically when implemented:
 ```text
 Open Spotify.
 Open YouTube.
+Play Locked Out of Heaven on Spotify.
+Play Locked Out of Heaven on YouTube.
+Play Locked Out of Heaven using the preferred music provider.
 Search Google for Electron tutorials.
 Set the volume to 30 percent.
 Pause the music.
@@ -1158,6 +1206,10 @@ Test:
 - Wrong-PIN retry and temporary lockout
 - PIN setup while an action is pending
 - Dynamic Start Menu and Desktop shortcut discovery
+- Spotify renderer-to-main connection flow
+- Spotify PKCE callback, token exchange, refresh, and disconnect flow
+- Exact Spotify URI playback and verification
+- Desktop Spotify fallback followed by optional YouTube fallback
 - Failed application launch
 - Speech cancellation
 - Microphone permission denial
@@ -1268,7 +1320,16 @@ Implement first:
 - Protected-system-path rejection
 - Exact action summaries and one-time PIN authorization
 
-### Phase 11 — Packaging
+### Phase 11 — Reliable music playback
+
+- Use the downloaded Spotify desktop application as the fixed Spotify playback path; it works with Spotify Free and needs no Client ID.
+- Use Spotify Quick Search and keyboard result navigation while continuously validating the foreground Spotify target.
+- Route play/pause, skip, next, and previous through fixed Windows media keys.
+- Do not show a Music Playback settings panel.
+- Keep explicit YouTube browser searches with honest status messaging.
+- Display and speak recoverable playback errors when Orbit is enabled.
+
+### Phase 12 — Packaging
 
 - Set product name and icon.
 - Configure Windows packaging.
@@ -1297,14 +1358,23 @@ The MVP is complete when:
 - PIN-protected actions are bound to one exact pending request and support hidden typed or non-displayed spoken PIN entry.
 - Installed applications are discovered from Windows Start Menu and Desktop shortcuts instead of relying on a tiny hardcoded list.
 - PIN-protected deletion, move, copy, rename, folder creation, text-file creation/overwrite, and local installer launch are registered and tested.
+- Spotify uses the downloaded desktop application without Premium, a Client ID, or a visible Music Playback settings panel.
+- Downloaded app control can search for a named song and can play/pause, skip, go next, and go previous through fixed Windows controls.
+- Connected Web API playback searches for an exact track, selects a device, starts the exact URI, and verifies playback before reporting verified success.
+- Recoverable assistant and playback errors are displayed and spoken when Orbit is enabled.
 - At least these commands work:
   - Open Chrome or the default browser
   - Open YouTube
   - Open Spotify
+  - Play a named song on Spotify
+  - Play a named song on YouTube
+  - Play a named song using the preferred provider
   - Open Calculator
   - Open File Explorer
   - Open Roblox or another installed application through shortcut discovery
   - Play or pause media
+  - Skip to the next Spotify song
+  - Return to the previous Spotify song
   - Volume up or down
   - Tell the time
 - Errors are understandable.
@@ -1385,6 +1455,10 @@ Do not:
 - Add destructive file, download, upload, archive, uninstall, or permission-changing behavior without a typed `pin-required` capability, exact parameter validation, protected-target checks, and tests.
 - Permanently delete files when the capability promises Recycle Bin behavior.
 - Start installers with model-generated command-line arguments or bypass UAC.
+- Add a Spotify client secret to the desktop application.
+- Expose, log, speak, send to Ollama, or place in settings any Spotify access token, refresh token, authorization code, PKCE verifier, or OAuth state value.
+- Claim Spotify playback succeeded without verifying the current track and playback state.
+- Claim YouTube playback succeeded when Orbit only opened browser search results.
 - Claim an action succeeded without checking.
 - Commit secrets or machine-specific private paths.
 - Delete `.git`.

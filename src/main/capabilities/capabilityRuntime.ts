@@ -6,6 +6,7 @@ import type {
   MediaKeySender
 } from '../services/mediaControlService'
 import type { SpotifyPlaybackController } from '../services/spotifyService'
+import type { SpotifyWebApiDependencies } from '../services/spotifyWebApiService'
 import type { WindowController } from '../services/windowInputService'
 import type { TrashController } from '../services/filesystemService'
 import type { InstallerLauncher } from '../services/softwareInstallService'
@@ -34,6 +35,7 @@ export type CapabilityRuntimeDependencies = {
   spotifyController?: SpotifyPlaybackController
   spotifyDelay?: (milliseconds: number) => Promise<void>
   spotifyNow?: () => number
+  spotifyWebApi?: SpotifyWebApiDependencies
   trashController?: TrashController
   installerLauncher?: InstallerLauncher
 }
@@ -55,7 +57,9 @@ export function createCapabilityRegistry(
     controller: dependencies.spotifyController,
     launcher: dependencies.launchApplication,
     delay: dependencies.spotifyDelay,
-    now: dependencies.spotifyNow
+    now: dependencies.spotifyNow,
+    openExternalUrl: dependencies.openExternalUrl,
+    webApi: dependencies.spotifyWebApi
   })
   registerAssistantCapabilities(registry)
   registerWindowInputCapabilities(registry, dependencies.windowController)

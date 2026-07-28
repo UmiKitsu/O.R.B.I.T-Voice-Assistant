@@ -8,6 +8,7 @@ import type {
   OllamaHealth,
   OrbitSettings,
   SecurityPinStatus,
+  SpotifyConnectionStatus,
   SpeechSynthesisEvent,
   VoiceDiagnostics,
   WakeWordEvent
@@ -263,6 +264,12 @@ const orbit = Object.freeze({
     confirmation: string
   ): Promise<ActionResult<SecurityPinStatus>> =>
     ipcRenderer.invoke(IPC_CHANNELS.securityPinChange, { currentPin, nextPin, confirmation }),
+  getSpotifyStatus: (): Promise<ActionResult<SpotifyConnectionStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.spotifyStatus),
+  connectSpotify: (): Promise<ActionResult<SpotifyConnectionStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.spotifyConnect),
+  disconnectSpotify: (): Promise<ActionResult<SpotifyConnectionStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.spotifyDisconnect),
   startWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordStart),
   stopWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordStop),
   pauseWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordPause),

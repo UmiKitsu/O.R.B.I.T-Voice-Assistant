@@ -43,7 +43,11 @@ export const orbitSettingsSchema = z
     confirmationTimeoutSeconds: z.number().int().min(5).max(300),
     applicationAliases: applicationAliasesSchema,
     recognitionLanguage: z.enum(['auto', 'en']),
-    wakeRecognitionMode: z.enum(['hybrid', 'keyword-only'])
+    wakeRecognitionMode: z.enum(['hybrid', 'keyword-only']),
+    spotifyClientId: z.string().trim().max(100),
+    spotifyPlaybackMode: z.enum(['desktop', 'web-api']),
+    preferredMusicProvider: z.enum(['spotify', 'youtube']),
+    musicFallbackEnabled: z.boolean()
   })
   .strict()
 
@@ -63,7 +67,11 @@ export const DEFAULT_ORBIT_SETTINGS: Readonly<OrbitSettings> = Object.freeze({
   confirmationTimeoutSeconds: 20,
   applicationAliases: {},
   recognitionLanguage: 'auto',
-  wakeRecognitionMode: 'hybrid'
+  wakeRecognitionMode: 'hybrid',
+  spotifyClientId: '',
+  spotifyPlaybackMode: 'desktop',
+  preferredMusicProvider: 'spotify',
+  musicFallbackEnabled: true
 })
 
 type SettingsStorage = {
@@ -105,6 +113,22 @@ export function migrateLegacySettings(value: unknown): { value: unknown; changed
   }
   if (!('wakeRecognitionMode' in migrated)) {
     migrated.wakeRecognitionMode = 'hybrid'
+    changed = true
+  }
+  if (!('spotifyClientId' in migrated)) {
+    migrated.spotifyClientId = ''
+    changed = true
+  }
+  if (!('spotifyPlaybackMode' in migrated)) {
+    migrated.spotifyPlaybackMode = 'desktop'
+    changed = true
+  }
+  if (!('preferredMusicProvider' in migrated)) {
+    migrated.preferredMusicProvider = 'spotify'
+    changed = true
+  }
+  if (!('musicFallbackEnabled' in migrated)) {
+    migrated.musicFallbackEnabled = true
     changed = true
   }
   return { value: migrated, changed }
