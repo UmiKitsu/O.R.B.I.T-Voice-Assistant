@@ -3,6 +3,7 @@ import type {
   ActionResult,
   MicrophonePipelineState
 } from '../../../shared/types'
+import { decideMicrophoneTransition } from '../microphoneTransitionDecision'
 import {
   calculateInputLevel,
   isValidAudioChunk,
@@ -555,11 +556,15 @@ export function useWakeWord(): WakeWordController {
   const pause = useCallback(async (): Promise<ActionResult> => {
     desiredListeningRef.current = false
     deliveryEnabledRef.current = false
+    const currentState = pipelineStateRef.current
+    if (decideMicrophoneTransition(false, currentState) !== 'pause') {
+      if (mountedRef.current) setInputLevel(0)
+      return success('Voice listening is already paused.')
+    }
+
     transitionGenerationRef.current += 1
     cancelChunkWaiters()
-    if (pipelineStateRef.current !== 'off' && pipelineStateRef.current !== 'error') {
-      setPipelineState('paused')
-    }
+    setPipelineState('paused')
     if (mountedRef.current) setInputLevel(0)
 
     const context = contextRef.current
@@ -582,6 +587,19 @@ export function useWakeWord(): WakeWordController {
 
   const resume = useCallback(async (): Promise<ActionResult> => {
     desiredListeningRef.current = true
+    const currentState = pipelineStateRef.current
+    if (currentState === 'error') {
+      return {
+        ok: false,
+        code: 'WAKE_WORD_MICROPHONE_FAILED',
+        message: pipelineError ?? 'Voice listening cannot resume from an error state.',
+        recoverable: true
+      }
+    }
+    if (decideMicrophoneTransition(true, currentState) !== 'resume') {
+      return success('Voice listening is already active or transitioning.')
+    }
+
     deliveryEnabledRef.current = false
     const generation = transitionGenerationRef.current + 1
     transitionGenerationRef.current = generation
@@ -613,6 +631,7 @@ export function useWakeWord(): WakeWordController {
     activateAttempt,
     ensureCurrentTransition,
     failPipeline,
+    pipelineError,
     releaseAudio,
     setPipelineState
   ])

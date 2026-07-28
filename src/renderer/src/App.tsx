@@ -18,6 +18,7 @@ import { SecurityPinSettings } from './SecurityPinSettings'
 import { useMicrophoneTest } from './hooks/useMicrophoneTest'
 import { useSpeech } from './hooks/useSpeech'
 import { useWakeWord } from './hooks/useWakeWord'
+import { decideMicrophoneTransition } from './microphoneTransitionDecision'
 import { TRANSCRIPT_READY_HOLD_MS, WAKE_ACKNOWLEDGEMENT_MS } from './voiceCueTiming'
 import {
   deriveVoiceStartupStatus,
@@ -56,6 +57,12 @@ function parseSpokenPin(value: string): string | null {
   return digits.length === 4 ? digits.join('') : null
 }
 
+type MicrophoneTransitionOwner =
+  | 'none'
+  | 'assistant-request'
+  | 'microphone-test'
+  | 'wake-word-test'
+
 function App(): React.JSX.Element {
   const [status, setStatus] = useState<OrbitStatus>('disabled')
   const [assistantError, setAssistantError] = useState<string | null>(null)
@@ -77,6 +84,8 @@ function App(): React.JSX.Element {
   const [falseTriggerCount, setFalseTriggerCount] = useState(0)
   const [wakeWordTestPhase, setWakeWordTestPhase] = useState<'idle' | 'listening'>('idle')
   const [wakeWordTestResult, setWakeWordTestResult] = useState<WakeWordTestResult | null>(null)
+  const [microphoneTransitionOwner, setMicrophoneTransitionOwner] =
+    useState<MicrophoneTransitionOwner>('none')
   const isEnabled = useRef(false)
   const requestGeneration = useRef(0)
   const requestInFlight = useRef(false)
@@ -265,6 +274,7 @@ function App(): React.JSX.Element {
     startupActive.current = true
     startupReadiness.current = { microphone: 'pending', ollama: 'pending' }
     isEnabled.current = true
+    setMicrophoneTransitionOwner('none')
     setAssistantError(null)
     setAssistantProgress(null)
     setConnectionResult(null)
@@ -310,7 +320,9 @@ function App(): React.JSX.Element {
       setWakeWordState(microphoneResult.ok ? 'paused' : 'error')
       setAssistantError(!microphoneResult.ok ? microphoneResult.message : ollamaResult.message)
       setStatus('error')
-      await pauseWakeWord()
+      if (decideMicrophoneTransition(false, microphonePipelineState) === 'pause') {
+        await pauseWakeWord()
+      }
       return
     }
 
@@ -344,6 +356,7 @@ function App(): React.JSX.Element {
     startupGeneration.current += 1
     startupReadiness.current = { microphone: 'idle', ollama: 'idle' }
     requestGeneration.current += 1
+    setMicrophoneTransitionOwner('none')
     stopSpeaking()
     setAssistantError(null)
     setAssistantProgress(null)
@@ -374,11 +387,15 @@ function App(): React.JSX.Element {
     }
 
     requestInFlight.current = true
+    setMicrophoneTransitionOwner('assistant-request')
     try {
-      const pauseResult = await pauseWakeWord()
-      if (!pauseResult.ok) {
-        setAssistantError('Orbit could not pause voice listening.')
-        return
+      if (decideMicrophoneTransition(false, microphonePipelineState) === 'pause') {
+        const pauseResult = await pauseWakeWord()
+        if (!pauseResult.ok) {
+          setAssistantError('Orbit could not pause voice listening.')
+          setMicrophoneTransitionOwner('none')
+          return
+        }
       }
       if (!isEnabled.current) return
 
@@ -387,6 +404,7 @@ function App(): React.JSX.Element {
       setAssistantError(null)
       setAssistantProgress(null)
       setStatus('thinking')
+      setMicrophoneTransitionOwner('none')
 
       let awaitingConfirmation = false
       try {
@@ -438,6 +456,7 @@ function App(): React.JSX.Element {
         }
       }
     } finally {
+      setMicrophoneTransitionOwner('none')
       requestInFlight.current = false
     }
   }
@@ -513,18 +532,34 @@ function App(): React.JSX.Element {
 
   const startMicrophoneTest = async (): Promise<void> => {
     if (startupActive.current) return
-    stopSpeaking()
-    clearVoiceTranscript()
-    microphoneTest.clearResult()
-    setAssistantError(null)
-    if (isEnabled.current) await pauseWakeWord()
-    const result = await microphoneTest.start()
-    if (!result.ok) {
-      setAssistantError(result.message)
-      if (isEnabled.current) setStatus('ready')
-      return
+    setMicrophoneTransitionOwner('microphone-test')
+    try {
+      stopSpeaking()
+      clearVoiceTranscript()
+      microphoneTest.clearResult()
+      setAssistantError(null)
+      if (
+        isEnabled.current &&
+        decideMicrophoneTransition(false, microphonePipelineState) === 'pause'
+      ) {
+        const pauseResult = await pauseWakeWord()
+        if (!pauseResult.ok) {
+          setAssistantError('Orbit could not pause voice listening for the microphone test.')
+          setStatus('ready')
+          return
+        }
+      }
+
+      const result = await microphoneTest.start()
+      if (!result.ok) {
+        setAssistantError(result.message)
+        if (isEnabled.current) setStatus('ready')
+        return
+      }
+      if (isEnabled.current) setStatus('listening')
+    } finally {
+      setMicrophoneTransitionOwner('none')
     }
-    if (isEnabled.current) setStatus('listening')
   }
 
   const stopMicrophoneTest = async (): Promise<void> => {
@@ -539,21 +574,15 @@ function App(): React.JSX.Element {
 
   const restoreAfterWakeWordTest = useCallback(async (): Promise<void> => {
     if (wakeWordTestWasEnabled.current) {
-      const result = await resumeWakeWord()
-      if (result.ok) {
-        setWakeWordState('armed')
-        setStatus('ready')
-      } else {
-        setWakeWordState('error')
-        setAssistantError(result.message)
-        setStatus('error')
-      }
-    } else {
-      await stopWakeWord()
-      setWakeWordState('off')
-      setStatus('disabled')
+      setWakeWordState('armed')
+      setStatus('ready')
+      return
     }
-  }, [resumeWakeWord, stopWakeWord])
+
+    await stopWakeWord()
+    setWakeWordState('off')
+    setStatus('disabled')
+  }, [stopWakeWord])
 
   const startWakeWordTest = async (): Promise<void> => {
     if (
@@ -563,25 +592,42 @@ function App(): React.JSX.Element {
     ) {
       return
     }
-    stopSpeaking()
-    setAssistantError(null)
-    setWakeWordTestResult(null)
-    wakeWordTestWasEnabled.current = isEnabled.current
-
-    const runtime = await resumeWakeWord()
-    if (!runtime.ok) {
-      setAssistantError(runtime.message)
-      await restoreAfterWakeWordTest()
-      return
-    }
-
+    setMicrophoneTransitionOwner('wake-word-test')
     setWakeWordTestPhase('listening')
     setStatus('listening')
-    const result = await window.orbit.startWakeWordTest()
-    if (!result.ok) {
-      setWakeWordTestPhase('idle')
-      setAssistantError(result.message)
-      await restoreAfterWakeWordTest()
+    try {
+      stopSpeaking()
+      setAssistantError(null)
+      setWakeWordTestResult(null)
+      wakeWordTestWasEnabled.current = isEnabled.current
+
+      if (microphonePipelineState === 'error') {
+        setWakeWordTestPhase('idle')
+        setAssistantError(
+          microphonePipelineError ?? 'Voice listening cannot start while the microphone is in an error state.'
+        )
+        await restoreAfterWakeWordTest()
+        return
+      }
+
+      if (decideMicrophoneTransition(true, microphonePipelineState) === 'resume') {
+        const runtime = await resumeWakeWord()
+        if (!runtime.ok) {
+          setWakeWordTestPhase('idle')
+          setAssistantError(runtime.message)
+          await restoreAfterWakeWordTest()
+          return
+        }
+      }
+
+      const result = await window.orbit.startWakeWordTest()
+      if (!result.ok) {
+        setWakeWordTestPhase('idle')
+        setAssistantError(result.message)
+        await restoreAfterWakeWordTest()
+      }
+    } finally {
+      setMicrophoneTransitionOwner('none')
     }
   }
 
@@ -691,20 +737,13 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     let active = true
-    if (!isEnabled.current || wakeWordState === 'error' || startupActive.current) {
-      return () => {
-        active = false
-      }
-    }
-
-    if (wakeWordTestPhase === 'listening') {
-      return () => {
-        active = false
-      }
-    }
-
-    if (microphoneTest.phase !== 'idle') {
-      void pauseWakeWord()
+    if (
+      !isEnabled.current ||
+      wakeWordState === 'error' ||
+      startupActive.current ||
+      microphoneTransitionOwner !== 'none' ||
+      wakeWordTestPhase === 'listening'
+    ) {
       return () => {
         active = false
       }
@@ -716,29 +755,42 @@ function App(): React.JSX.Element {
       wakeWordState === 'detected' ||
       wakeWordState === 'capturing' ||
       wakeWordState === 'transcribing'
+    if (wakeWordOwnsAudio) {
+      return () => {
+        active = false
+      }
+    }
+
     const awaitingSpokenPin =
       status === 'awaiting-confirmation' &&
       pendingConfirmation?.authorization === 'pin' &&
       pinStatus?.hasPin === true
-    if (!wakeWordOwnsAudio) {
-      if ((status === 'ready' || awaitingSpokenPin) && !speaking && !synthesizing) {
-        void resumeWakeWord().then((result) => {
-          if (active && !result.ok && isEnabled.current) {
-            setWakeWordState('error')
-            setAssistantError(result.message)
-            setStatus('error')
-          }
-        })
-      } else {
-        void pauseWakeWord()
-      }
+    const audioShouldRun =
+      microphoneTest.phase === 'idle' &&
+      (status === 'ready' || awaitingSpokenPin) &&
+      !speaking &&
+      !synthesizing
+    const transition = decideMicrophoneTransition(audioShouldRun, microphonePipelineState)
+
+    if (transition === 'resume') {
+      void resumeWakeWord().then((result) => {
+        if (active && !result.ok && isEnabled.current) {
+          setWakeWordState('error')
+          setAssistantError(result.message)
+          setStatus('error')
+        }
+      })
+    } else if (transition === 'pause') {
+      void pauseWakeWord()
     }
 
     return () => {
       active = false
     }
   }, [
+    microphonePipelineState,
     microphoneTest.phase,
+    microphoneTransitionOwner,
     pauseWakeWord,
     resumeWakeWord,
     pendingConfirmation,
