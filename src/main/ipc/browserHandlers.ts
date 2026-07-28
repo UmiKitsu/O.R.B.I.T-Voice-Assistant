@@ -3,13 +3,15 @@ import { IPC_CHANNELS } from '../../shared/ipcChannels'
 import type {
   ActionResult,
   BrowserConnectionStatus,
+  BrowserForgetPairingResult,
   BrowserPairingSession
 } from '../../shared/types'
 import {
   beginBrowserPairing,
   disconnectBrowser,
   getBrowserExtensionPath,
-  getBrowserStatus
+  getBrowserStatus,
+  retryBrowserConnection
 } from '../services/browserBridgeService'
 
 export function registerBrowserHandlers(): void {
@@ -55,11 +57,47 @@ export function registerBrowserHandlers(): void {
   )
 
   ipcMain.handle(
+    IPC_CHANNELS.browserRetry,
+    async (): Promise<ActionResult<BrowserConnectionStatus>> => {
+      try {
+        return {
+          ok: true,
+          message: 'Orbit is ready for the browser extension to reconnect.',
+          data: await retryBrowserConnection()
+        }
+      } catch (error: unknown) {
+        return {
+          ok: false,
+          code: 'BROWSER_RETRY_FAILED',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Orbit could not prepare the browser connection retry.',
+          recoverable: true
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.browserDisconnect,
-    async (): Promise<ActionResult<BrowserConnectionStatus>> => ({
-      ok: true,
-      message: 'The browser extension was disconnected.',
-      data: await disconnectBrowser()
-    })
+    async (): Promise<ActionResult<BrowserForgetPairingResult>> => {
+      try {
+        const result = await disconnectBrowser()
+        return {
+          ok: true,
+          message: result.warning ?? 'The browser pairing was forgotten.',
+          data: result
+        }
+      } catch (error: unknown) {
+        return {
+          ok: false,
+          code: 'BROWSER_FORGET_FAILED',
+          message:
+            error instanceof Error ? error.message : 'Orbit could not forget the browser pairing.',
+          recoverable: true
+        }
+      }
+    }
   )
 }

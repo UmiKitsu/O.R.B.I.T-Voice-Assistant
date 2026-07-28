@@ -15,6 +15,7 @@
       button { padding: 11px 16px; margin: 6px 8px 6px 0; border: 0; border-radius: 10px; background: #67d5ff; color: #06202b; font-weight: 800; cursor: pointer; }
       button.secondary { background: #2d4354; color: #edf6ff; }
       button:disabled { opacity: .55; cursor: default; }
+      [hidden] { display: none !important; }
       #status { padding: 12px; border-radius: 10px; background: #0d1821; min-height: 22px; }
       ul { padding-left: 22px; color: #c9d8e3; }
       code { color: #8ee8ff; }
@@ -23,10 +24,13 @@
   <body>
     <main>
       <h1>Orbit Browser Control</h1>
-      <p>Enter the localhost port and one-time six-digit code shown in Orbit. The secret created after pairing stays in Chrome extension-local storage.</p>
-      <label>Orbit port <input id="port" inputmode="numeric" maxlength="5" placeholder="43117" /></label>
-      <label>Pairing code <input id="code" inputmode="numeric" maxlength="6" placeholder="000000" /></label>
-      <button id="pair">Pair with Orbit</button>
+      <p id="paired-summary" hidden><strong>Paired—reconnects automatically after updates and restarts.</strong></p>
+      <section id="pairing-setup">
+        <p>Enter the localhost port and one-time six-digit code shown in Orbit. The secret created after pairing stays in Chrome extension-local storage.</p>
+        <label>Orbit port <input id="port" inputmode="numeric" maxlength="5" placeholder="43117" /></label>
+        <label>Pairing code <input id="code" inputmode="numeric" maxlength="6" placeholder="000000" /></label>
+        <button id="pair">Pair with Orbit</button>
+      </section>
       <button id="retry" class="secondary">Retry connection</button>
       <button id="disconnect" class="secondary">Forget pairing</button>
       <p id="status" role="status">Loading status…</p>

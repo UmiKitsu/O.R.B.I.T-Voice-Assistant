@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import type { BrowserCommandResult } from '../../shared/types'
+import { ORBIT_BROWSER_EXTENSION_ORIGIN } from './browserBridgeCompatibility'
 
 export const BROWSER_PROTOCOL_VERSION = 2 as const
 export const BROWSER_MAX_MESSAGE_BYTES = 64 * 1024
@@ -87,7 +88,7 @@ export const pairRequestSchema = z
     type: z.literal('pair'),
     version: z.literal(BROWSER_PROTOCOL_VERSION),
     code: z.string().regex(/^\d{6}$/),
-    extensionOrigin: z.string().regex(/^chrome-extension:\/\/[a-p]{32}$/),
+    extensionOrigin: z.literal(ORBIT_BROWSER_EXTENSION_ORIGIN),
     extensionVersion: z.string().trim().min(1).max(50)
   })
   .strict()
@@ -96,7 +97,7 @@ export const authHelloSchema = z
   .object({
     type: z.literal('auth_hello'),
     version: z.literal(BROWSER_PROTOCOL_VERSION),
-    extensionOrigin: z.string().regex(/^chrome-extension:\/\/[a-p]{32}$/),
+    extensionOrigin: z.literal(ORBIT_BROWSER_EXTENSION_ORIGIN),
     extensionVersion: z.string().trim().min(1).max(50),
     nonce: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
     timestamp: z.number().int().positive(),
@@ -110,6 +111,29 @@ export const authAckSchema = z
     version: z.literal(BROWSER_PROTOCOL_VERSION),
     clientNonce: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
     serverNonce: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
+    mac: z.string().regex(/^[a-f0-9]{64}$/i)
+  })
+  .strict()
+
+export const forgetPairingRequestSchema = z
+  .object({
+    type: z.literal('forget_pairing_request'),
+    version: z.literal(BROWSER_PROTOCOL_VERSION),
+    requestId: z.uuid(),
+    initiator: z.enum(['orbit', 'extension']),
+    timestamp: z.number().int().positive(),
+    mac: z.string().regex(/^[a-f0-9]{64}$/i)
+  })
+  .strict()
+
+export const forgetPairingAckSchema = z
+  .object({
+    type: z.literal('forget_pairing_ack'),
+    version: z.literal(BROWSER_PROTOCOL_VERSION),
+    requestId: z.uuid(),
+    initiator: z.enum(['orbit', 'extension']),
+    ok: z.boolean(),
+    timestamp: z.number().int().positive(),
     mac: z.string().regex(/^[a-f0-9]{64}$/i)
   })
   .strict()

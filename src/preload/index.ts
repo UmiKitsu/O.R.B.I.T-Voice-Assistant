@@ -5,6 +5,7 @@ import type {
   AssistantProgress,
   AssistantResponse,
   BrowserConnectionStatus,
+  BrowserForgetPairingResult,
   BrowserPairingSession,
   MicrophoneTestResult,
   OllamaHealth,
@@ -276,7 +277,9 @@ const orbit = Object.freeze({
     ipcRenderer.invoke(IPC_CHANNELS.browserStatus),
   beginBrowserPairing: (): Promise<ActionResult<BrowserPairingSession>> =>
     ipcRenderer.invoke(IPC_CHANNELS.browserPairingBegin),
-  disconnectBrowser: (): Promise<ActionResult<BrowserConnectionStatus>> =>
+  retryBrowserConnection: (): Promise<ActionResult<BrowserConnectionStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.browserRetry),
+  disconnectBrowser: (): Promise<ActionResult<BrowserForgetPairingResult>> =>
     ipcRenderer.invoke(IPC_CHANNELS.browserDisconnect),
   getBrowserExtensionPath: (): Promise<ActionResult<{ path: string }>> =>
     ipcRenderer.invoke(IPC_CHANNELS.browserExtensionPath),

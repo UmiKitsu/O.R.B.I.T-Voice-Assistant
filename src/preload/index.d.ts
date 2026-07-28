@@ -3,6 +3,7 @@ import type {
   AssistantProgress,
   AssistantResponse,
   BrowserConnectionStatus,
+  BrowserForgetPairingResult,
   BrowserPairingSession,
   MicrophoneTestResult,
   OllamaHealth,
@@ -35,7 +36,8 @@ type OrbitApi = {
   disconnectSpotify: () => Promise<ActionResult<SpotifyConnectionStatus>>
   getBrowserStatus: () => Promise<ActionResult<BrowserConnectionStatus>>
   beginBrowserPairing: () => Promise<ActionResult<BrowserPairingSession>>
-  disconnectBrowser: () => Promise<ActionResult<BrowserConnectionStatus>>
+  retryBrowserConnection: () => Promise<ActionResult<BrowserConnectionStatus>>
+  disconnectBrowser: () => Promise<ActionResult<BrowserForgetPairingResult>>
   getBrowserExtensionPath: () => Promise<ActionResult<{ path: string }>>
   startWakeWord: () => Promise<ActionResult>
   stopWakeWord: () => Promise<ActionResult>

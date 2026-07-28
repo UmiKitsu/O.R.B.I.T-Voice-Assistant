@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { ORBIT_BROWSER_EXTENSION_ORIGIN } from './browserBridgeCompatibility'
 import {
   BROWSER_PROTOCOL_VERSION,
   authHelloSchema,
@@ -112,20 +113,28 @@ describe('browser bridge protocol', () => {
     expect(isMonotonicSequence(0, 0)).toBe(false)
   })
 
-  it('requires a fresh nonce-auth timestamp and an extension origin', () => {
+  it('requires a fresh nonce-auth timestamp and only the permanent extension origin', () => {
     const now = 1_000_000
     expect(isFreshTimestamp(now - 29_999, now)).toBe(true)
     expect(isFreshTimestamp(now - 30_001, now)).toBe(false)
+    const hello = {
+      type: 'auth_hello',
+      version: BROWSER_PROTOCOL_VERSION,
+      extensionOrigin: ORBIT_BROWSER_EXTENSION_ORIGIN,
+      extensionVersion: '1.2.0',
+      nonce: 'n'.repeat(32),
+      timestamp: now,
+      mac: 'a'.repeat(64)
+    }
+    expect(authHelloSchema.safeParse(hello).success).toBe(true)
     expect(
       authHelloSchema.safeParse({
-        type: 'auth_hello',
-        version: BROWSER_PROTOCOL_VERSION,
-        extensionOrigin: 'https://example.com',
-        extensionVersion: '1.0.0',
-        nonce: 'n'.repeat(32),
-        timestamp: now,
-        mac: 'a'.repeat(64)
+        ...hello,
+        extensionOrigin: 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
       }).success
     ).toBe(false)
+    expect(authHelloSchema.safeParse({ ...hello, extensionOrigin: 'https://example.com' }).success).toBe(
+      false
+    )
   })
 })

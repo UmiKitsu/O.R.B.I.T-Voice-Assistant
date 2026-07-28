@@ -1,6 +1,8 @@
 /* global chrome */
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
+const pairingSetup = document.querySelector('#pairing-setup')
+const pairedSummary = document.querySelector('#paired-summary')
 const portInput = document.querySelector('#port')
 const codeInput = document.querySelector('#code')
 const pairButton = document.querySelector('#pair')
@@ -59,13 +61,18 @@ async function renderStatus() {
     diagnosticsElement.replaceChildren()
     return
   }
+  const paired = Boolean(response.paired)
+  pairingSetup.hidden = paired
+  pairedSummary.hidden = !paired
   portInput.value = response.activePort ? String(response.activePort) : portInput.value
   if (response.connected) {
-    setStatus(`Connected to Orbit on 127.0.0.1:${response.activePort}.`)
+    setStatus(
+      `Connected to Orbit on 127.0.0.1:${response.activePort}. Paired—reconnects automatically after updates and restarts.`
+    )
   } else if (response.lastError?.message) {
     setStatus(response.lastError.message)
   } else if (response.paired) {
-    setStatus('Paired with Orbit and reconnecting automatically.')
+    setStatus('Paired—reconnects automatically after updates and restarts.')
   } else {
     setStatus('Not paired with Orbit.')
   }
@@ -141,9 +148,16 @@ retryButton.addEventListener('click', async () => {
 })
 
 disconnectButton.addEventListener('click', async () => {
-  await chrome.runtime.sendMessage({ type: 'forget-pairing' }).catch(() => undefined)
+  disconnectButton.disabled = true
+  const response = await chrome.runtime
+    .sendMessage({ type: 'forget-pairing' })
+    .catch(() => ({
+      ok: false,
+      message: 'Chrome could not remove its saved Orbit pairing.'
+    }))
+  disconnectButton.disabled = false
   codeInput.value = ''
-  setStatus('The local extension pairing was removed.')
+  setStatus(response?.message ?? 'The local extension pairing was removed.')
   await renderStatus()
 })
 

@@ -5,6 +5,13 @@ import {
   migrateExactOriginPatterns,
   normalizeExactOrigin
 } from './origin-grants.js'
+import { EXPECTED_EXTENSION_ORIGIN } from './extension-identity.js'
+import { getInstalledLifecycle } from './extension-lifecycle.js'
+import {
+  DURABLE_PAIRING_KEYS,
+  createDurablePairingRecord,
+  parseDurablePairing
+} from './pairing-storage.js'
 import { navigateYouTubePlayer, setYouTubePlayback } from './youtube-controls.js'
 import { evaluateYouTubePlaybackMeasurement } from './youtube-playback.js'
 import { selectFirstRegularYouTubeVideo } from './youtube-selection.js'
@@ -16,6 +23,7 @@ const PORT_MIN = 43117
 const PORT_MAX = 43127
 const HEARTBEAT_INTERVAL_MS = 20000
 const AUTHENTICATED_CONTACT_TIMEOUT_MS = 60000
+const FORGET_ACK_TIMEOUT_MS = 3000
 const RETRY_ALARM = 'orbit-browser-reconnect'
 const RETRY_DELAYS_MS = [30000, 60000, 120000, 300000]
 const CLIENT_CLOSE_CODE = Object.freeze({
@@ -35,6 +43,7 @@ const CLIENT_CLOSE_CODE = Object.freeze({
 })
 const EXTENSION_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '')
 const EXTENSION_VERSION = chrome.runtime.getManifest().version
+const EXTENSION_IDENTITY_VALID = EXTENSION_ORIGIN === EXPECTED_EXTENSION_ORIGIN
 const KNOWN_CAPABILITIES = new Set([
   'browser.openUrl',
   'browser.searchWeb',
@@ -82,6 +91,8 @@ let lastError = null
 let lastAuthenticatedContactAt = 0
 let connectionAttempt = null
 let connectionGeneration = 0
+let pendingForget = null
+let usedForgetRequestIds = new Map()
 
 function normalizeJson(value) {
   if (Array.isArray(value)) return value.map(normalizeJson)
@@ -222,19 +233,55 @@ async function getEffectiveGrantedOrigins() {
 }
 
 async function getPairing() {
-  const stored = await chrome.storage.local.get([
-    'orbitPort',
-    'orbitSecret',
-    'orbitExtensionOrigin',
-    'orbitPairingConfirmed'
-  ])
-  const secret = typeof stored.orbitSecret === 'string' ? stored.orbitSecret : null
-  return {
-    port: Number.isInteger(stored.orbitPort) ? stored.orbitPort : null,
-    secret,
-    extensionOrigin:
-      typeof stored.orbitExtensionOrigin === 'string' ? stored.orbitExtensionOrigin : null,
-    confirmed: Boolean(secret) && stored.orbitPairingConfirmed !== false
+  if (!EXTENSION_IDENTITY_VALID) {
+    return {
+      port: null,
+      secret: null,
+      extensionOrigin: null,
+      confirmed: false,
+      storageError: {
+        code: 'EXTENSION_IDENTITY_MISMATCH',
+        message:
+          'This Orbit Browser Control entry uses a legacy extension ID. Remove it, load the updated bundled extension, and pair once.'
+      }
+    }
+  }
+  try {
+    const parsed = parseDurablePairing(
+      await chrome.storage.local.get(DURABLE_PAIRING_KEYS),
+      EXPECTED_EXTENSION_ORIGIN
+    )
+    if (parsed.kind === 'none') {
+      return {
+        port: null,
+        secret: null,
+        extensionOrigin: null,
+        confirmed: false,
+        storageError: null
+      }
+    }
+    if (parsed.kind === 'unreadable') {
+      return {
+        port: null,
+        secret: null,
+        extensionOrigin: null,
+        confirmed: false,
+        storageError: parsed.error
+      }
+    }
+    return { ...parsed.pairing, storageError: null }
+  } catch {
+    return {
+      port: null,
+      secret: null,
+      extensionOrigin: null,
+      confirmed: false,
+      storageError: {
+        code: 'PAIRING_STORAGE_UNREADABLE',
+        message:
+          'Chrome could not read the saved Orbit pairing. Forget the local pairing and pair again.'
+      }
+    }
   }
 }
 
@@ -1203,12 +1250,13 @@ async function getSafeConnectionStatus() {
     getEffectiveGrantedOrigins()
   ])
   return {
-    paired: Boolean(pairing.confirmed && pairing.port),
+    paired: Boolean(pairing.secret && pairing.port),
     connected: socketAuthenticated,
-    phase: connectionPhase,
+    phase: pairing.storageError ? 'error' : connectionPhase,
+    pairingState: pairing.storageError ? 'unreadable' : pairing.secret ? 'paired' : 'none',
     activePort: activePort ?? pairing.port,
     retryAt,
-    lastError,
+    lastError: pairing.storageError ?? lastError,
     grantedOrigins
   }
 }
@@ -1248,6 +1296,12 @@ async function clearRetrySchedule() {
 
 async function scheduleReconnect(error) {
   const pairing = await getPairing()
+  if (pairing.storageError) {
+    retryAt = null
+    retryAttempt = 0
+    setLifecycle('error', { activePort: null, lastError: pairing.storageError, retryAt: null })
+    return
+  }
   if (!pairing.secret) {
     retryAt = null
     retryAttempt = 0
@@ -1264,6 +1318,184 @@ async function scheduleReconnect(error) {
   connectionPhase = 'reconnecting'
   await chrome.alarms.create(RETRY_ALARM, { delayInMinutes: delay / 60000 })
   notifyConnectionStatus()
+}
+
+function forgetRequestPayload(value) {
+  return {
+    version: value.version,
+    requestId: value.requestId,
+    initiator: value.initiator,
+    timestamp: value.timestamp
+  }
+}
+
+function forgetAckPayload(value) {
+  return {
+    version: value.version,
+    requestId: value.requestId,
+    initiator: value.initiator,
+    ok: value.ok,
+    timestamp: value.timestamp
+  }
+}
+
+function isFreshForgetTimestamp(timestamp) {
+  return Number.isInteger(timestamp) && timestamp > 0 && Math.abs(Date.now() - timestamp) <= 30000
+}
+
+function resolvePendingForget(acknowledged) {
+  const pending = pendingForget
+  if (!pending) return
+  pendingForget = null
+  clearTimeout(pending.timeout)
+  pending.resolve(acknowledged)
+}
+
+function pruneForgetRequestIds() {
+  const now = Date.now()
+  for (const [requestId, expiresAt] of usedForgetRequestIds) {
+    if (expiresAt <= now) usedForgetRequestIds.delete(requestId)
+  }
+}
+
+async function clearLocalPairingState() {
+  await chrome.storage.local.remove(DURABLE_PAIRING_KEYS)
+  await chrome.storage.session.remove(['controlledTabId', 'orbitConnectionLifecycle'])
+  pairingAttempt = null
+  pairResolver = null
+  pairRejecter = null
+  lastCommandSequence = 0
+  retryAttempt = 0
+  retryAt = null
+  lastAuthenticatedContactAt = 0
+  activePort = null
+  lastError = null
+  connectionPhase = 'unpaired'
+  clearSocketTimers()
+}
+
+async function handleForgetPairingRequest(message, currentSocket) {
+  if (
+    message?.type !== 'forget_pairing_request' ||
+    message.version !== PROTOCOL_VERSION ||
+    message.initiator !== 'orbit' ||
+    typeof message.requestId !== 'string' ||
+    !isFreshForgetTimestamp(message.timestamp) ||
+    typeof message.mac !== 'string'
+  ) {
+    return false
+  }
+  const pairing = await getPairing()
+  pruneForgetRequestIds()
+  const payload = forgetRequestPayload(message)
+  if (
+    pairing.storageError ||
+    !pairing.secret ||
+    usedForgetRequestIds.has(message.requestId) ||
+    !(await verifyMac(pairing.secret, 'forget-request-orbit', payload, message.mac))
+  ) {
+    return true
+  }
+
+  usedForgetRequestIds.set(message.requestId, Date.now() + 120000)
+  let cleared = false
+  try {
+    await clearLocalPairingState()
+    cleared = true
+  } catch {
+    lastError = {
+      code: 'PAIRING_FORGET_FAILED',
+      message: 'Chrome could not remove its saved Orbit pairing.'
+    }
+    setLifecycle('error', { activePort, retryAt: null, lastError })
+  }
+
+  const ack = forgetAckPayload({
+    version: PROTOCOL_VERSION,
+    requestId: message.requestId,
+    initiator: 'orbit',
+    ok: cleared,
+    timestamp: Date.now()
+  })
+  currentSocket.send(
+    JSON.stringify({
+      type: 'forget_pairing_ack',
+      ...ack,
+      mac: await createMac(pairing.secret, 'forget-ack-orbit', ack)
+    })
+  )
+  if (cleared) {
+    connectionGeneration += 1
+    socketAuthenticated = false
+    currentSocket.close(CLIENT_CLOSE_CODE.PAIRING_FORGOTTEN, 'Pairing forgotten')
+  }
+  return true
+}
+
+async function handleForgetPairingAck(message, currentSocket) {
+  if (
+    message?.type !== 'forget_pairing_ack' ||
+    message.version !== PROTOCOL_VERSION ||
+    message.initiator !== 'extension' ||
+    typeof message.requestId !== 'string' ||
+    typeof message.ok !== 'boolean' ||
+    !isFreshForgetTimestamp(message.timestamp) ||
+    typeof message.mac !== 'string'
+  ) {
+    return false
+  }
+  const pending = pendingForget
+  const pairing = await getPairing()
+  const payload = forgetAckPayload(message)
+  if (
+    !pending ||
+    pending.requestId !== message.requestId ||
+    currentSocket !== socket ||
+    pairing.storageError ||
+    !pairing.secret ||
+    !(await verifyMac(pairing.secret, 'forget-ack-extension', payload, message.mac))
+  ) {
+    return true
+  }
+  resolvePendingForget(message.ok)
+  return true
+}
+
+function requestOrbitForget(secret) {
+  if (!socketAuthenticated || !socket || socket.readyState !== WebSocket.OPEN) {
+    return Promise.resolve(false)
+  }
+  resolvePendingForget(false)
+  const requestId = crypto.randomUUID()
+  const payload = forgetRequestPayload({
+    version: PROTOCOL_VERSION,
+    requestId,
+    initiator: 'extension',
+    timestamp: Date.now()
+  })
+  const currentSocket = socket
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      if (pendingForget?.requestId === requestId) {
+        pendingForget = null
+        resolve(false)
+      }
+    }, FORGET_ACK_TIMEOUT_MS)
+    pendingForget = { requestId, resolve, timeout }
+    void createMac(secret, 'forget-request-extension', payload).then((mac) => {
+      if (currentSocket.readyState !== WebSocket.OPEN) {
+        resolvePendingForget(false)
+        return
+      }
+      currentSocket.send(
+        JSON.stringify({
+          type: 'forget_pairing_request',
+          ...payload,
+          mac
+        })
+      )
+    })
+  })
 }
 
 function connectPort(port, pairOverride, generation) {
@@ -1319,6 +1551,13 @@ function connectPort(port, pairOverride, generation) {
         return
       }
       const pairing = await getPairing()
+      if (pairing.storageError) {
+        lastError = pairing.storageError
+        setLifecycle('error', { activePort: port, retryAt: null, lastError })
+        finish('fatal')
+        currentSocket.close(CLIENT_CLOSE_CODE.PAIRING_UNAVAILABLE, 'Pairing storage is unavailable')
+        return
+      }
       if (!pairing.secret || pairing.extensionOrigin !== EXTENSION_ORIGIN) {
         finish('fatal')
         currentSocket.close(CLIENT_CLOSE_CODE.PAIRING_UNAVAILABLE, 'Pairing is unavailable')
@@ -1356,7 +1595,7 @@ function connectPort(port, pairOverride, generation) {
         if (message?.type === 'protocol_error') {
           const incompatible = message.code === 'BROWSER_PROTOCOL_INCOMPATIBLE'
           const safeMessage = incompatible
-            ? 'Reload the Orbit Browser Control extension to use the current browser protocol.'
+            ? 'Orbit and the extension use different protocol versions. Update or reload the older side; the saved pairing was kept.'
             : typeof message.message === 'string' && message.message.length <= 500
               ? message.message
               : 'Orbit rejected the browser connection.'
@@ -1365,7 +1604,7 @@ function connectPort(port, pairOverride, generation) {
             message: safeMessage
           }
           setLifecycle('error', { activePort: port, retryAt: null, lastError })
-          finish(incompatible ? 'fatal' : 'failed')
+          finish('failed')
           currentSocket.close(CLIENT_CLOSE_CODE.PROTOCOL_ERROR, 'Protocol error')
           return
         }
@@ -1390,12 +1629,14 @@ function connectPort(port, pairOverride, generation) {
             return
           }
           try {
-            await chrome.storage.local.set({
-              orbitPort: message.port,
-              orbitSecret: message.secret,
-              orbitExtensionOrigin: EXTENSION_ORIGIN,
-              orbitPairingConfirmed: false
-            })
+            await chrome.storage.local.set(
+              createDurablePairingRecord({
+                port: message.port,
+                secret: message.secret,
+                extensionOrigin: EXTENSION_ORIGIN,
+                confirmed: false
+              })
+            )
             pairingAttempt = null
             lastCommandSequence = 0
             setLifecycle('authenticating', {
@@ -1484,6 +1725,8 @@ function connectPort(port, pairOverride, generation) {
 
         if (!socketAuthenticated) return
         lastAuthenticatedContactAt = Date.now()
+        if (await handleForgetPairingRequest(message, currentSocket)) return
+        if (await handleForgetPairingAck(message, currentSocket)) return
         if (message?.type === 'command') {
           await handleCommand(message)
           return
@@ -1515,6 +1758,7 @@ function connectPort(port, pairOverride, generation) {
 
     currentSocket.addEventListener('close', () => {
       clearTimeout(timeout)
+      resolvePendingForget(false)
       if (socket === currentSocket) {
         socket = null
         socketAuthenticated = false
@@ -1557,6 +1801,10 @@ async function runConnectionAttempt(pairOverride, generation) {
   }
 
   const pairing = await getPairing()
+  if (pairing.storageError) {
+    setLifecycle('error', { activePort: null, retryAt: null, lastError: pairing.storageError })
+    return false
+  }
   if (!pairing.secret || pairing.extensionOrigin !== EXTENSION_ORIGIN) {
     setLifecycle('unpaired', { activePort: null, retryAt: null, lastError: null })
     return false
@@ -1596,6 +1844,21 @@ function requestConnection(_reason, pairOverride = null, force = false) {
 }
 
 async function pairWithOrbit(port, code) {
+  if (!EXTENSION_IDENTITY_VALID) {
+    return {
+      ok: false,
+      message:
+        'Remove this legacy Orbit Browser Control entry, load the updated bundled extension, and pair once.'
+    }
+  }
+  const existing = await getPairing()
+  if (existing.storageError) return { ok: false, message: existing.storageError.message }
+  if (existing.secret) {
+    return {
+      ok: false,
+      message: 'This extension is already paired. Forget the current pairing before creating another one.'
+    }
+  }
   if (!Number.isInteger(port) || port < PORT_MIN || port > PORT_MAX || !/^\d{6}$/.test(code)) {
     return { ok: false, message: 'Enter a valid Orbit port and six-digit pairing code.' }
   }
@@ -1630,27 +1893,28 @@ async function pairWithOrbit(port, code) {
 }
 
 async function forgetPairing() {
-  connectionGeneration += 1
+  const pairing = await getPairing()
+  const hadPairing = Boolean(pairing.secret || pairing.storageError)
+  const synchronized = pairing.secret ? await requestOrbitForget(pairing.secret) : false
+
   await clearRetrySchedule()
+  await clearLocalPairingState()
+  connectionGeneration += 1
   const previousSocket = socket
   socket = null
   socketAuthenticated = false
   previousSocket?.close(CLIENT_CLOSE_CODE.PAIRING_FORGOTTEN, 'Pairing forgotten')
-  clearSocketTimers()
-  await chrome.storage.local.remove([
-    'orbitPort',
-    'orbitSecret',
-    'orbitExtensionOrigin',
-    'orbitPairingConfirmed'
-  ])
-  await chrome.storage.session.remove(['controlledTabId', 'orbitConnectionLifecycle'])
-  pairingAttempt = null
-  pairResolver = null
-  pairRejecter = null
-  lastCommandSequence = 0
-  retryAttempt = 0
-  lastAuthenticatedContactAt = 0
+  resolvePendingForget(false)
   setLifecycle('unpaired', { activePort: null, retryAt: null, lastError: null })
+
+  return {
+    ok: true,
+    synchronized: !hadPairing || synchronized,
+    message:
+      hadPairing && !synchronized
+        ? 'Chrome forgot its local pairing, but Orbit was offline or could not acknowledge it. Use “Forget pairing” in Orbit before pairing again.'
+        : 'Chrome and Orbit forgot the pairing.'
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -1659,7 +1923,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true
   }
   if (message?.type === 'forget-pairing') {
-    void forgetPairing().then(() => sendResponse({ ok: true }))
+    void forgetPairing()
+      .then(sendResponse)
+      .catch(() =>
+        sendResponse({
+          ok: false,
+          synchronized: false,
+          message: 'Chrome could not remove its saved Orbit pairing.'
+        })
+      )
     return true
   }
   if (message?.type === 'get-status') {
@@ -1713,9 +1985,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   void requestConnection('alarm')
 })
 chrome.runtime.onStartup.addListener(() => void requestConnection('chrome-startup'))
-chrome.runtime.onInstalled.addListener(() => {
-  void chrome.runtime.openOptionsPage()
-  void requestConnection('extension-installed')
+chrome.runtime.onInstalled.addListener((details) => {
+  const lifecycle = getInstalledLifecycle(details.reason)
+  if (lifecycle.openOptions) void chrome.runtime.openOptionsPage()
+  if (lifecycle.reconnect) void requestConnection(`extension-${details.reason}`)
 })
 chrome.tabs.onRemoved.addListener((tabId) => {
   void getControlledTabId().then((controlledTabId) => {

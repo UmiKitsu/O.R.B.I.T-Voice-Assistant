@@ -26,6 +26,7 @@ export const IPC_CHANNELS = {
   spotifyDisconnect: 'orbit:spotify:disconnect',
   browserStatus: 'orbit:browser:status',
   browserPairingBegin: 'orbit:browser:pairing-begin',
+  browserRetry: 'orbit:browser:retry',
   browserDisconnect: 'orbit:browser:disconnect',
   browserExtensionPath: 'orbit:browser:extension-path',
   actionExecute: 'orbit:action:execute',

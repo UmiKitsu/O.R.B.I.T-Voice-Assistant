@@ -3,12 +3,15 @@ import type {
   BrowserConnectionStatus,
   BrowserPairingSession
 } from '../../shared/types'
+import { getBrowserConnectionView } from './browserConnectionView'
 
 const EMPTY_STATUS: BrowserConnectionStatus = {
   paired: false,
   connected: false,
   browser: 'chrome',
   phase: 'unpaired',
+  pairingState: 'none',
+  expectedExtensionId: 'unknown',
   grantedOrigins: []
 }
 
@@ -21,10 +24,18 @@ export function BrowserConnectionPanel(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [secondsRemaining, setSecondsRemaining] = useState(0)
 
+  const applyStatus = useCallback((nextStatus: BrowserConnectionStatus): void => {
+    setStatus(nextStatus)
+    if (nextStatus.paired) {
+      setPairing(null)
+      setSecondsRemaining(0)
+    }
+  }, [])
+
   const refresh = useCallback(async (): Promise<void> => {
     const result = await window.orbit.getBrowserStatus().catch(() => null)
-    if (result?.ok && result.data) setStatus(result.data)
-  }, [])
+    if (result?.ok && result.data) applyStatus(result.data)
+  }, [applyStatus])
 
   useEffect(() => {
     let active = true
@@ -38,14 +49,14 @@ export function BrowserConnectionPanel(): React.JSX.Element {
       if (settingsResult.ok && settingsResult.data) {
         setBrowserControlEnabled(settingsResult.data.browserControlEnabled)
       }
-      if (statusResult.ok && statusResult.data) setStatus(statusResult.data)
+      if (statusResult.ok && statusResult.data) applyStatus(statusResult.data)
     })
     const timer = setInterval(() => void refresh(), 2_000)
     return () => {
       active = false
       clearInterval(timer)
     }
-  }, [refresh])
+  }, [applyStatus, refresh])
 
   useEffect(() => {
     if (!pairing) return undefined
@@ -68,19 +79,33 @@ export function BrowserConnectionPanel(): React.JSX.Element {
     setSecondsRemaining(Math.max(0, Math.ceil((result.data.expiresAt - Date.now()) / 1_000)))
     setExtensionPath(result.data.extensionPath)
     setNotice('Open the extension options and enter this port and one-time code.')
+    await refresh()
   }
 
-  const disconnect = async (): Promise<void> => {
+  const retry = async (): Promise<void> => {
+    setBusy(true)
+    setNotice(null)
+    const result = await window.orbit.retryBrowserConnection().catch(() => null)
+    setBusy(false)
+    if (!result?.ok || !result.data) {
+      setNotice(result?.message ?? 'Orbit could not prepare the browser reconnection.')
+      return
+    }
+    applyStatus(result.data)
+    setNotice('Orbit is ready. Use Retry connection in the extension if Chrome has not reconnected yet.')
+  }
+
+  const forgetPairing = async (): Promise<void> => {
     setBusy(true)
     const result = await window.orbit.disconnectBrowser().catch(() => null)
     setBusy(false)
     setPairing(null)
     setSecondsRemaining(0)
     if (result?.ok && result.data) {
-      setStatus(result.data)
-      setNotice('Orbit forgot its browser pairing. Also choose “Forget pairing” in the extension.')
+      applyStatus(result.data.status)
+      setNotice(result.data.warning ?? 'Orbit and Chrome forgot the pairing.')
     } else {
-      setNotice(result?.message ?? 'Orbit could not disconnect the browser extension.')
+      setNotice(result?.message ?? 'Orbit could not forget the browser pairing.')
     }
   }
 
@@ -95,40 +120,43 @@ export function BrowserConnectionPanel(): React.JSX.Element {
     setBrowserControlEnabled(result.data.browserControlEnabled)
   }
 
+  const view = getBrowserConnectionView(status)
+
   return (
     <fieldset className="browser-connection-panel">
       <legend>Chrome browser connection</legend>
       <div className="browser-connection-heading">
         <div>
-          <strong>
-            {status.connected
-              ? 'Connected'
-              : status.phase === 'pairing' || status.phase === 'authenticating'
-                ? 'Pairing'
-                : status.paired
-                  ? 'Paired, reconnecting'
-                  : status.phase === 'error'
-                    ? 'Connection error'
-                    : 'Not paired'}
-          </strong>
-          <p>
-            {status.connected
-              ? `Chrome extension ${status.extensionVersion ?? 'version unknown'} is responding on port ${status.activePort ?? 'unknown'}.`
-              : status.lastError?.message ??
-                'Orbit uses its own trusted unpacked extension for typed browser actions.'}
-          </p>
+          <strong>{view.heading}</strong>
+          <p>{view.description}</p>
+          {view.showPairedSummary ? (
+            <p><strong>Paired—reconnects automatically after updates and restarts.</strong></p>
+          ) : null}
         </div>
         <span className={`browser-health ${status.connected ? 'online' : ''}`} aria-hidden="true" />
       </div>
 
-      <ol className="browser-setup-steps">
-        <li>Open <code>chrome://extensions</code> in Chrome.</li>
-        <li>Enable Developer mode, then choose Load unpacked.</li>
-        <li>Select <code>{extensionPath || 'Loading extension path…'}</code>.</li>
-        <li>Open Orbit Browser Control and enter the pairing details below.</li>
-      </ol>
+      {view.showMigration ? (
+        <ol className="browser-setup-steps">
+          <li>
+            Open <code>chrome://extensions</code> and remove the legacy Orbit Browser Control
+            {status.legacyExtensionId ? <code> ({status.legacyExtensionId})</code> : null}.
+          </li>
+          <li>Choose Load unpacked and select <code>{extensionPath || 'Loading extension path…'}</code>.</li>
+          <li>Click Begin one-time pairing below, then enter the new code in the updated extension.</li>
+        </ol>
+      ) : null}
 
-      {pairing ? (
+      {view.showSetup ? (
+        <ol className="browser-setup-steps">
+          <li>Open <code>chrome://extensions</code> in Chrome.</li>
+          <li>Enable Developer mode, then choose Load unpacked.</li>
+          <li>Select <code>{extensionPath || 'Loading extension path…'}</code>.</li>
+          <li>Open Orbit Browser Control and enter the pairing details below.</li>
+        </ol>
+      ) : null}
+
+      {pairing && !status.paired ? (
         <div className="browser-pairing-code" role="status">
           <span>Port <strong>{pairing.port}</strong></span>
           <span>One-time code <strong>{pairing.code}</strong></span>
@@ -137,16 +165,21 @@ export function BrowserConnectionPanel(): React.JSX.Element {
       ) : null}
 
       <div className="browser-panel-actions">
-        <button type="button" disabled={busy} onClick={() => void beginPairing()}>
-          {busy ? 'Working…' : 'Begin pairing'}
-        </button>
-        <button
-          type="button"
-          disabled={busy || (status.phase === 'unpaired' && !status.connected)}
-          onClick={() => void disconnect()}
-        >
-          Disconnect
-        </button>
+        {view.canBeginPairing ? (
+          <button type="button" disabled={busy} onClick={() => void beginPairing()}>
+            {busy ? 'Working…' : view.showMigration ? 'Begin one-time pairing' : 'Begin pairing'}
+          </button>
+        ) : null}
+        {view.canRetry ? (
+          <button type="button" disabled={busy} onClick={() => void retry()}>
+            Retry connection
+          </button>
+        ) : null}
+        {view.canForget ? (
+          <button type="button" disabled={busy} onClick={() => void forgetPairing()}>
+            Forget pairing
+          </button>
+        ) : null}
       </div>
 
       <label className="browser-setting-toggle">

@@ -10,6 +10,7 @@ import {
 } from 'node:net'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ORBIT_BROWSER_EXTENSION_ORIGIN } from './browserBridgeCompatibility'
 import {
   createLocalWebSocketServer,
   type LocalWebSocketServer
@@ -61,7 +62,10 @@ function sendHttpRequest(port: number, path: string, method = 'GET'): Promise<Ht
   })
 }
 
-async function openWebSocketUpgrade(port: number): Promise<{ socket: Socket; response: string }> {
+async function openWebSocketUpgrade(
+  port: number,
+  origin: string = ORBIT_BROWSER_EXTENSION_ORIGIN
+): Promise<{ socket: Socket; response: string }> {
   const socket = createConnection({ host: '127.0.0.1', port })
   await once(socket, 'connect')
   const key = randomBytes(16).toString('base64')
@@ -73,13 +77,16 @@ async function openWebSocketUpgrade(port: number): Promise<{ socket: Socket; res
       'Connection: Upgrade',
       'Sec-WebSocket-Version: 13',
       `Sec-WebSocket-Key: ${key}`,
-      'Origin: chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      `Origin: ${origin}`,
       '',
       ''
     ].join('\r\n')
   )
-  const [chunk] = (await once(socket, 'data')) as [Buffer]
-  return { socket, response: chunk.toString('utf8') }
+  const response = await Promise.race([
+    once(socket, 'data').then(([chunk]) => (chunk as Buffer).toString('utf8')),
+    once(socket, 'close').then(() => '')
+  ])
+  return { socket, response }
 }
 
 describe('local browser WebSocket server', () => {
@@ -95,7 +102,11 @@ describe('local browser WebSocket server', () => {
 
   it('serves only the no-cache Local Network Access probe over HTTP', async () => {
     const port = await getUnusedLoopbackPort()
-    server = createLocalWebSocketServer('/orbit-browser-v1', vi.fn())
+    server = createLocalWebSocketServer(
+      '/orbit-browser-v1',
+      ORBIT_BROWSER_EXTENSION_ORIGIN,
+      vi.fn()
+    )
     await server.listen(port)
 
     const probe = await sendHttpRequest(port, '/orbit-browser-v1/access')
@@ -116,7 +127,11 @@ describe('local browser WebSocket server', () => {
   it('continues accepting the authenticated extension WebSocket upgrade path', async () => {
     const port = await getUnusedLoopbackPort()
     const onConnection = vi.fn()
-    server = createLocalWebSocketServer('/orbit-browser-v1', onConnection)
+    server = createLocalWebSocketServer(
+      '/orbit-browser-v1',
+      ORBIT_BROWSER_EXTENSION_ORIGIN,
+      onConnection
+    )
     await server.listen(port)
 
     const upgraded = await openWebSocketUpgrade(port)
@@ -124,6 +139,25 @@ describe('local browser WebSocket server', () => {
     expect(upgraded.response).toContain('HTTP/1.1 101 Switching Protocols')
     expect(upgraded.response).toContain('Upgrade: websocket')
     expect(onConnection).toHaveBeenCalledOnce()
+  })
+
+  it('rejects every extension origin except the permanent Orbit extension ID', async () => {
+    const port = await getUnusedLoopbackPort()
+    const onConnection = vi.fn()
+    server = createLocalWebSocketServer(
+      '/orbit-browser-v1',
+      ORBIT_BROWSER_EXTENSION_ORIGIN,
+      onConnection
+    )
+    await server.listen(port)
+
+    const rejected = await openWebSocketUpgrade(
+      port,
+      'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    )
+    clientSocket = rejected.socket
+    expect(rejected.response).not.toContain('101 Switching Protocols')
+    expect(onConnection).not.toHaveBeenCalled()
   })
 
   it('binds the browser bridge server only to IPv4 loopback', async () => {

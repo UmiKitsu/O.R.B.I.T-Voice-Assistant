@@ -180,6 +180,7 @@ class Connection implements LocalWebSocketConnection {
 
 export function createLocalWebSocketServer(
   path: string,
+  allowedOrigin: string,
   onConnection: (connection: LocalWebSocketConnection, request: IncomingMessage) => void
 ): LocalWebSocketServer {
   let server: Server | undefined
@@ -220,7 +221,7 @@ export function createLocalWebSocketServer(
             request.headers.upgrade?.toLocaleLowerCase() !== 'websocket' ||
             request.headers['sec-websocket-version'] !== '13' ||
             typeof key !== 'string' ||
-            !/^chrome-extension:\/\/[a-p]{32}$/.test(origin) ||
+            origin !== allowedOrigin ||
             (remoteAddress !== '127.0.0.1' && remoteAddress !== '::1' && remoteAddress !== '::ffff:127.0.0.1')
           ) {
             socket.destroy()

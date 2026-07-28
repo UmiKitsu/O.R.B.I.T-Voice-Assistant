@@ -232,6 +232,7 @@ export type SpotifyConnectionStatus = {
 
 export type BrowserConnectionPhase =
   | 'unpaired'
+  | 'migration-required'
   | 'pairing'
   | 'connecting'
   | 'authenticating'
@@ -244,11 +245,16 @@ export type BrowserConnectionError = {
   message: string
 }
 
+export type BrowserPairingPersistenceState = 'none' | 'paired' | 'legacy' | 'unreadable'
+
 export type BrowserConnectionStatus = {
   paired: boolean
   connected: boolean
   browser: 'chrome'
   phase: BrowserConnectionPhase
+  pairingState: BrowserPairingPersistenceState
+  expectedExtensionId: string
+  legacyExtensionId?: string
   activePort?: number
   retryAt?: number
   lastError?: BrowserConnectionError
@@ -263,6 +269,12 @@ export type BrowserPairingSession = {
   code: string
   expiresAt: number
   extensionPath: string
+}
+
+export type BrowserForgetPairingResult = {
+  status: BrowserConnectionStatus
+  synchronized: boolean
+  warning?: string
 }
 
 export type BrowserCommandResult<T = undefined> =

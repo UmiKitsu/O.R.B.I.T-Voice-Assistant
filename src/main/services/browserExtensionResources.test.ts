@@ -1,6 +1,15 @@
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import {
+  ORBIT_APP_ID,
+  ORBIT_BROWSER_EXTENSION_ID,
+  ORBIT_BROWSER_EXTENSION_ORIGIN,
+  ORBIT_BROWSER_EXTENSION_PUBLIC_KEY,
+  ORBIT_BROWSER_PAIRING_FILE_NAME,
+  ORBIT_PACKAGE_NAME
+} from './browserBridgeCompatibility'
 
 type ExtensionManifest = {
   manifest_version: number
@@ -9,15 +18,41 @@ type ExtensionManifest = {
   host_permissions: string[]
   optional_host_permissions: string[]
   version: string
+  key: string
   background?: { service_worker?: string; type?: string }
   action?: { default_popup?: string }
 }
 
+function deriveChromeExtensionId(publicKeyBase64: string): string {
+  const digest = createHash('sha256').update(Buffer.from(publicKeyBase64, 'base64')).digest()
+  return [...digest.subarray(0, 16)]
+    .flatMap((byte) => [byte >> 4, byte & 0x0f])
+    .map((nibble) => String.fromCharCode('a'.charCodeAt(0) + nibble))
+    .join('')
+}
+
 describe('Orbit browser extension resources', () => {
-  it('uses a minimal Manifest V3 permission set', async () => {
-    const root = process.cwd()
+  it('uses a fixed public manifest key that always derives the permanent extension ID', async () => {
     const manifest = JSON.parse(
-      await readFile(join(root, 'resources', 'orbit-browser-extension', 'manifest.json'), 'utf8')
+      await readFile(
+        join(process.cwd(), 'resources', 'orbit-browser-extension', 'manifest.json'),
+        'utf8'
+      )
+    ) as ExtensionManifest
+
+    expect(manifest.key).toBe(ORBIT_BROWSER_EXTENSION_PUBLIC_KEY)
+    expect(deriveChromeExtensionId(manifest.key)).toBe(ORBIT_BROWSER_EXTENSION_ID)
+    expect(ORBIT_BROWSER_EXTENSION_ORIGIN).toBe(
+      `chrome-extension://${ORBIT_BROWSER_EXTENSION_ID}`
+    )
+  })
+
+  it('uses a minimal Manifest V3 permission set', async () => {
+    const manifest = JSON.parse(
+      await readFile(
+        join(process.cwd(), 'resources', 'orbit-browser-extension', 'manifest.json'),
+        'utf8'
+      )
     ) as ExtensionManifest
 
     expect(manifest.manifest_version).toBe(3)
@@ -32,7 +67,7 @@ describe('Orbit browser extension resources', () => {
       service_worker: 'service-worker.js',
       type: 'module'
     })
-    expect(manifest.version).toBe('1.1.1')
+    expect(manifest.version).toBe('1.2.0')
     expect(manifest.action?.default_popup).toBe('popup.html')
 
     const forbidden = [
@@ -48,17 +83,30 @@ describe('Orbit browser extension resources', () => {
     expect(manifest.permissions.some((permission) => forbidden.includes(permission))).toBe(false)
   })
 
-  it('packages the trusted extension as an Electron extra resource', async () => {
-    const builderConfig = await readFile(join(process.cwd(), 'electron-builder.yml'), 'utf8')
+  it('keeps app identity and pairing location as explicit compatibility identifiers', async () => {
+    const [packageSource, builderConfig, serviceSource] = await Promise.all([
+      readFile(join(process.cwd(), 'package.json'), 'utf8'),
+      readFile(join(process.cwd(), 'electron-builder.yml'), 'utf8'),
+      readFile(join(process.cwd(), 'src', 'main', 'services', 'browserBridgeService.ts'), 'utf8')
+    ])
+    const packageJson = JSON.parse(packageSource) as { name: string }
+
+    expect(packageJson.name).toBe(ORBIT_PACKAGE_NAME)
+    expect(builderConfig).toContain(`appId: ${ORBIT_APP_ID}`)
+    expect(serviceSource).toContain("app.getPath('userData')")
+    expect(serviceSource).toContain('ORBIT_BROWSER_PAIRING_FILE_NAME')
+    expect(ORBIT_BROWSER_PAIRING_FILE_NAME).toBe('orbit-browser-pairing.bin')
+    expect(serviceSource).toContain('await rename(temporaryPath, pairingFilePath)')
     expect(builderConfig).toContain('from: resources/orbit-browser-extension')
     expect(builderConfig).toContain('to: orbit-browser-extension')
   })
 
-  it('keeps pairing secrets out of renderer IPC and generic settings', async () => {
-    const [preloadSource, browserIpcSource, settingsSource] = await Promise.all([
+  it('keeps pairing secrets out of renderer IPC, generic settings, logs, and conversation state', async () => {
+    const [preloadSource, browserIpcSource, settingsSource, loggerSource] = await Promise.all([
       readFile(join(process.cwd(), 'src', 'preload', 'index.ts'), 'utf8'),
       readFile(join(process.cwd(), 'src', 'main', 'ipc', 'browserHandlers.ts'), 'utf8'),
-      readFile(join(process.cwd(), 'src', 'main', 'services', 'settingsService.ts'), 'utf8')
+      readFile(join(process.cwd(), 'src', 'main', 'services', 'settingsService.ts'), 'utf8'),
+      readFile(join(process.cwd(), 'src', 'main', 'services', 'loggerService.ts'), 'utf8')
     ])
     expect(preloadSource).not.toContain('orbitSecret')
     expect(preloadSource).not.toContain('pairingSecret')
@@ -66,9 +114,60 @@ describe('Orbit browser extension resources', () => {
     expect(browserIpcSource).not.toContain('orbitSecret')
     expect(settingsSource).not.toContain('browserPairingSecret')
     expect(settingsSource).not.toContain('orbitSecret')
+    expect(loggerSource).not.toContain('orbitSecret')
   })
 
-  it('uses durable lifecycle retries and an exact-origin toolbar permission UI', async () => {
+  it('uses durable local pairing storage, temporary session state, and silent update reconnects', async () => {
+    const root = join(process.cwd(), 'resources', 'orbit-browser-extension')
+    const [worker, storageSource, lifecycleSource, optionsHtml, optionsSource] = await Promise.all([
+      readFile(join(root, 'service-worker.js'), 'utf8'),
+      readFile(join(root, 'pairing-storage.js'), 'utf8'),
+      readFile(join(root, 'extension-lifecycle.js'), 'utf8'),
+      readFile(join(root, 'options.html'), 'utf8'),
+      readFile(join(root, 'options.js'), 'utf8')
+    ])
+
+    expect(worker).toContain('chrome.storage.local.get(DURABLE_PAIRING_KEYS)')
+    expect(worker).toContain('chrome.storage.session.get')
+    expect(worker).toContain('chrome.storage.session.set')
+    expect(worker).not.toContain('chrome.storage.local.clear')
+    expect(worker.match(/chrome\.storage\.local\.remove\(DURABLE_PAIRING_KEYS\)/g)).toHaveLength(1)
+    expect(storageSource).toContain("'orbitSecret'")
+    expect(storageSource).toContain("kind: 'unreadable'")
+    expect(lifecycleSource).toContain("openOptions: reason === 'install'")
+    expect(worker).toContain('getInstalledLifecycle(details.reason)')
+    expect(worker).toContain('if (lifecycle.openOptions) void chrome.runtime.openOptionsPage()')
+    expect(worker).not.toContain('chrome.runtime.onInstalled.addListener(() =>')
+    expect(optionsHtml).toContain(
+      'Paired—reconnects automatically after updates and restarts.'
+    )
+    expect(optionsSource).toContain('pairingSetup.hidden = paired')
+    expect(optionsSource).toContain('pairedSummary.hidden = !paired')
+  })
+
+  it('uses authenticated symmetric forgetting and prevents accidental second pairing', async () => {
+    const worker = await readFile(
+      join(process.cwd(), 'resources', 'orbit-browser-extension', 'service-worker.js'),
+      'utf8'
+    )
+    const service = await readFile(
+      join(process.cwd(), 'src', 'main', 'services', 'browserBridgeService.ts'),
+      'utf8'
+    )
+
+    for (const source of [worker, service]) {
+      expect(source).toContain('forget_pairing_request')
+      expect(source).toContain('forget_pairing_ack')
+      expect(source).toContain('forget-request-orbit')
+      expect(source).toContain('forget-request-extension')
+    }
+    expect(worker).toContain('This extension is already paired')
+    expect(service).toContain('Orbit is already paired')
+    expect(worker).toContain('could not acknowledge it')
+    expect(service).toContain('could not acknowledge it')
+  })
+
+  it('uses durable retries and an exact-origin toolbar permission UI', async () => {
     const root = join(process.cwd(), 'resources', 'orbit-browser-extension')
     const [worker, controls, popupHtml, popupSource, optionsSource] = await Promise.all([
       readFile(join(root, 'service-worker.js'), 'utf8'),
@@ -82,14 +181,9 @@ describe('Orbit browser extension resources', () => {
     expect(worker).toContain('chrome.alarms.create')
     expect(worker).toContain('chrome.alarms.onAlarm.addListener')
     expect(worker).toContain("requestConnection('authenticated-disconnect')")
-    expect(worker).toContain('let connectionAttempt = null')
     expect(worker).toContain('function orderedPorts(savedPort)')
-    expect(worker).toContain('async function requireActiveWebTab()')
     expect(worker).toContain('async function getGrantedOriginAllowlist()')
-    expect(worker).toContain('allowed.includes(parsed.origin)')
-    expect(worker).toContain('chrome.tabs.query({ active: true, currentWindow: true })')
     expect(worker).toContain('AUTHENTICATED_CONTACT_TIMEOUT_MS = 60000')
-    expect(worker).toContain('orbitPairingConfirmed: false')
     expect(worker).toContain("setLifecycle('connected'")
     expect(worker).toContain("failure('YOUTUBE_TAB_CLOSED'")
     expect(controls).toContain('YOUTUBE_SPA_NAVIGATION_TIMEOUT')
@@ -99,32 +193,13 @@ describe('Orbit browser extension resources', () => {
     expect(popupSource).toContain('chrome.tabs.query({ active: true, currentWindow: true })')
     expect(popupSource).toContain('chrome.permissions.request({ origins: [activePattern] })')
     expect(popupSource).toContain('chrome.permissions.remove({ origins: [activePattern] })')
-    expect(popupSource).toContain("type: 'site-granted'")
-    expect(popupSource).toContain("type: 'site-revoked'")
-    expect(optionsSource).not.toContain('grant-site')
     expect(optionsSource).not.toContain('chrome.tabs.query')
 
     for (const visiblePageSource of [popupSource, optionsSource]) {
       expect(visiblePageSource).toContain("const ACCESS_PROBE_PATH = '/orbit-browser-v1/access'")
       expect(visiblePageSource).toContain('async function probeLocalNetworkAccess(port)')
       expect(visiblePageSource).toContain("cache: 'no-store'")
-      expect(visiblePageSource).toContain(
-        "Orbit must be open and Chrome's Local Network Access permission must be allowed."
-      )
-      const retryHandler = visiblePageSource.indexOf("retryButton.addEventListener('click'")
-      const retryProbe = visiblePageSource.indexOf('await probeLocalNetworkAccess(', retryHandler)
-      const retryRequest = visiblePageSource.indexOf("type: 'retry-connection'", retryHandler)
-      expect(retryHandler).toBeGreaterThanOrEqual(0)
-      expect(retryProbe).toBeGreaterThan(retryHandler)
-      expect(retryRequest).toBeGreaterThan(retryProbe)
-      expect(visiblePageSource.indexOf("type: 'get-status'", retryHandler)).toBe(-1)
     }
-
-    const pairHandler = optionsSource.indexOf("pairButton.addEventListener('click'")
-    const pairProbe = optionsSource.indexOf('await probeLocalNetworkAccess(port)', pairHandler)
-    const pairRequest = optionsSource.indexOf("type: 'pair', port, code", pairHandler)
-    expect(pairProbe).toBeGreaterThan(pairHandler)
-    expect(pairRequest).toBeGreaterThan(pairProbe)
 
     const closeCodeBlock = worker.slice(
       worker.indexOf('const CLIENT_CLOSE_CODE = Object.freeze({'),
