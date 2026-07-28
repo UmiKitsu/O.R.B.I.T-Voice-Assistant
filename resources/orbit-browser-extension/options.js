@@ -11,8 +11,39 @@ const statusElement = document.querySelector('#status')
 const diagnosticsElement = document.querySelector('#diagnostics')
 const sitesElement = document.querySelector('#sites')
 
+const ACCESS_PROBE_PATH = '/orbit-browser-v1/access'
+const ACCESS_PROBE_TIMEOUT_MS = 5000
+const ACCESS_FAILURE_MESSAGE =
+  "Orbit must be open and Chrome's Local Network Access permission must be allowed."
+
 function setStatus(message) {
   statusElement.textContent = message
+}
+
+function isOrbitPort(port) {
+  return Number.isInteger(port) && port >= 43117 && port <= 43127
+}
+
+async function probeLocalNetworkAccess(port) {
+  if (!isOrbitPort(port)) return { ok: false, message: ACCESS_FAILURE_MESSAGE }
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), ACCESS_PROBE_TIMEOUT_MS)
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}${ACCESS_PROBE_PATH}`, {
+      method: 'GET',
+      cache: 'no-store',
+      credentials: 'omit',
+      redirect: 'error',
+      signal: controller.signal
+    })
+    return response.status === 204
+      ? { ok: true }
+      : { ok: false, message: ACCESS_FAILURE_MESSAGE }
+  } catch {
+    return { ok: false, message: ACCESS_FAILURE_MESSAGE }
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 function diagnosticItem(label, value) {
@@ -69,11 +100,18 @@ async function renderSites() {
 pairButton.addEventListener('click', async () => {
   const port = Number(portInput.value)
   const code = codeInput.value.trim()
-  if (!Number.isInteger(port) || port < 43117 || port > 43127 || !/^\d{6}$/.test(code)) {
+  if (!isOrbitPort(port) || !/^\d{6}$/.test(code)) {
     setStatus('Enter the Orbit port from 43117 to 43127 and exactly six digits.')
     return
   }
   pairButton.disabled = true
+  setStatus('Requesting Chrome Local Network Access…')
+  const access = await probeLocalNetworkAccess(port)
+  if (!access.ok) {
+    pairButton.disabled = false
+    setStatus(access.message)
+    return
+  }
   setStatus('Pairing and waiting for authenticated reconnection…')
   const response = await chrome.runtime
     .sendMessage({ type: 'pair', port, code })
@@ -86,6 +124,14 @@ pairButton.addEventListener('click', async () => {
 
 retryButton.addEventListener('click', async () => {
   retryButton.disabled = true
+  const port = Number(portInput.value)
+  setStatus('Requesting Chrome Local Network Access…')
+  const access = await probeLocalNetworkAccess(port)
+  if (!access.ok) {
+    retryButton.disabled = false
+    setStatus(access.message)
+    return
+  }
   const response = await chrome.runtime
     .sendMessage({ type: 'retry-connection' })
     .catch(() => ({ ok: false, message: 'The retry request failed.' }))

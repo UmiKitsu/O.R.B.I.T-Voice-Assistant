@@ -18,6 +18,21 @@ const HEARTBEAT_INTERVAL_MS = 20000
 const AUTHENTICATED_CONTACT_TIMEOUT_MS = 60000
 const RETRY_ALARM = 'orbit-browser-reconnect'
 const RETRY_DELAYS_MS = [30000, 60000, 120000, 300000]
+const CLIENT_CLOSE_CODE = Object.freeze({
+  RECONNECT_WITH_AUTHENTICATION: 4000,
+  CONNECTION_REPLACED: 4001,
+  PAIRING_FORGOTTEN: 4003,
+  HEARTBEAT_TIMEOUT: 4004,
+  CONNECTION_ATTEMPT_TIMEOUT: 4005,
+  COMMAND_AUTHENTICATION_FAILED: 4100,
+  PAIRING_UNAVAILABLE: 4101,
+  INVALID_ORBIT_MESSAGE: 4102,
+  PROTOCOL_ERROR: 4103,
+  INVALID_PAIRING_RESPONSE: 4104,
+  PAIRING_STORAGE_FAILED: 4105,
+  SERVER_AUTHENTICATION_FAILED: 4106,
+  CONNECTION_HANDLING_FAILED: 4107
+})
 const EXTENSION_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '')
 const EXTENSION_VERSION = chrome.runtime.getManifest().version
 const KNOWN_CAPABILITIES = new Set([
@@ -1112,7 +1127,7 @@ async function handleCommand(message) {
     message.sequence <= lastCommandSequence ||
     !(await verifyMac(pairing.secret, 'command', payload, mac))
   ) {
-    socket.close(1008, 'Replay or command authentication failed')
+    socket.close(CLIENT_CLOSE_CODE.COMMAND_AUTHENTICATION_FAILED, 'Replay or command authentication failed')
     return
   }
   lastCommandSequence = message.sequence
@@ -1211,7 +1226,7 @@ function startHeartbeat() {
         code: 'BROWSER_HEARTBEAT_TIMEOUT',
         message: 'Orbit stopped responding. The extension will reconnect automatically.'
       }
-      socket.close(4004, 'Authenticated heartbeat timeout')
+      socket.close(CLIENT_CLOSE_CODE.HEARTBEAT_TIMEOUT, 'Authenticated heartbeat timeout')
       return
     }
     socket.send(JSON.stringify({ type: 'heartbeat', version: PROTOCOL_VERSION, timestamp: now }))
@@ -1264,7 +1279,9 @@ function connectPort(port, pairOverride, generation) {
       resolve(nextOutcome)
     }
     const timeout = setTimeout(() => {
-      if (socket === currentSocket) currentSocket.close(4005, 'Connection attempt timed out')
+      if (socket === currentSocket) {
+        currentSocket.close(CLIENT_CLOSE_CODE.CONNECTION_ATTEMPT_TIMEOUT, 'Connection attempt timed out')
+      }
       finish('failed')
     }, pairOverride ? 8000 : 1500)
 
@@ -1283,7 +1300,10 @@ function connectPort(port, pairOverride, generation) {
 
     currentSocket.addEventListener('open', async () => {
       if (generation !== connectionGeneration || socket !== currentSocket) {
-        currentSocket.close(4001, 'A newer connection attempt replaced this connection')
+        currentSocket.close(
+          CLIENT_CLOSE_CODE.CONNECTION_REPLACED,
+          'A newer connection attempt replaced this connection'
+        )
         return
       }
       if (pairOverride) {
@@ -1301,7 +1321,7 @@ function connectPort(port, pairOverride, generation) {
       const pairing = await getPairing()
       if (!pairing.secret || pairing.extensionOrigin !== EXTENSION_ORIGIN) {
         finish('fatal')
-        currentSocket.close(1008, 'Pairing is unavailable')
+        currentSocket.close(CLIENT_CLOSE_CODE.PAIRING_UNAVAILABLE, 'Pairing is unavailable')
         return
       }
       authClientNonce = randomNonce()
@@ -1328,7 +1348,7 @@ function connectPort(port, pairOverride, generation) {
         try {
           message = JSON.parse(event.data)
         } catch {
-          currentSocket.close(1003, 'Invalid Orbit message')
+          currentSocket.close(CLIENT_CLOSE_CODE.INVALID_ORBIT_MESSAGE, 'Invalid Orbit message')
           return
         }
         if (generation !== connectionGeneration || socket !== currentSocket) return
@@ -1346,7 +1366,7 @@ function connectPort(port, pairOverride, generation) {
           }
           setLifecycle('error', { activePort: port, retryAt: null, lastError })
           finish(incompatible ? 'fatal' : 'failed')
-          currentSocket.close(1002, 'Protocol error')
+          currentSocket.close(CLIENT_CLOSE_CODE.PROTOCOL_ERROR, 'Protocol error')
           return
         }
 
@@ -1366,7 +1386,7 @@ function connectPort(port, pairOverride, generation) {
             }
             setLifecycle('error', { activePort: port, retryAt: null, lastError })
             finish('fatal')
-            currentSocket.close(1008, 'Invalid pairing response')
+            currentSocket.close(CLIENT_CLOSE_CODE.INVALID_PAIRING_RESPONSE, 'Invalid pairing response')
             return
           }
           try {
@@ -1384,7 +1404,10 @@ function connectPort(port, pairOverride, generation) {
               lastError: null
             })
             finish('paired')
-            currentSocket.close(4000, 'Reconnect with authentication')
+            currentSocket.close(
+              CLIENT_CLOSE_CODE.RECONNECT_WITH_AUTHENTICATION,
+              'Reconnect with authentication'
+            )
           } catch {
             lastError = {
               code: 'PAIRING_STORAGE_FAILED',
@@ -1392,7 +1415,7 @@ function connectPort(port, pairOverride, generation) {
             }
             setLifecycle('error', { activePort: port, retryAt: null, lastError })
             finish('fatal')
-            currentSocket.close(1011, 'Pairing storage failed')
+            currentSocket.close(CLIENT_CLOSE_CODE.PAIRING_STORAGE_FAILED, 'Pairing storage failed')
           }
           return
         }
@@ -1418,7 +1441,10 @@ function connectPort(port, pairOverride, generation) {
             }
             setLifecycle('error', { activePort: port, retryAt: null, lastError })
             finish('fatal')
-            currentSocket.close(1008, 'Server authentication failed')
+            currentSocket.close(
+              CLIENT_CLOSE_CODE.SERVER_AUTHENTICATION_FAILED,
+              'Server authentication failed'
+            )
             return
           }
           lastAuthenticatedContactAt = Date.now()
@@ -1478,7 +1504,12 @@ function connectPort(port, pairOverride, generation) {
           }
         }
       })().catch(() => {
-        if (currentSocket.readyState === WebSocket.OPEN) currentSocket.close(1011, 'Connection handling failed')
+        if (currentSocket.readyState === WebSocket.OPEN) {
+          currentSocket.close(
+            CLIENT_CLOSE_CODE.CONNECTION_HANDLING_FAILED,
+            'Connection handling failed'
+          )
+        }
       })
     })
 
@@ -1553,7 +1584,7 @@ function requestConnection(_reason, pairOverride = null, force = false) {
     const previousSocket = socket
     socket = null
     socketAuthenticated = false
-    previousSocket?.close(4001, 'Manual connection retry')
+    previousSocket?.close(CLIENT_CLOSE_CODE.CONNECTION_REPLACED, 'Manual connection retry')
   }
   const generation = ++connectionGeneration
   const nextAttempt = runConnectionAttempt(pairOverride, generation)
@@ -1604,7 +1635,7 @@ async function forgetPairing() {
   const previousSocket = socket
   socket = null
   socketAuthenticated = false
-  previousSocket?.close(4003, 'Pairing forgotten')
+  previousSocket?.close(CLIENT_CLOSE_CODE.PAIRING_FORGOTTEN, 'Pairing forgotten')
   clearSocketTimers()
   await chrome.storage.local.remove([
     'orbitPort',

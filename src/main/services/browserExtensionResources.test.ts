@@ -23,13 +23,16 @@ describe('Orbit browser extension resources', () => {
     expect(manifest.manifest_version).toBe(3)
     expect(Number(manifest.minimum_chrome_version)).toBeGreaterThanOrEqual(116)
     expect(manifest.permissions.sort()).toEqual(['alarms', 'scripting', 'storage', 'tabs'])
-    expect(manifest.host_permissions).toEqual(['https://www.youtube.com/*'])
+    expect(manifest.host_permissions).toEqual([
+      'http://127.0.0.1/*',
+      'https://www.youtube.com/*'
+    ])
     expect(manifest.optional_host_permissions.sort()).toEqual(['http://*/*', 'https://*/*'])
     expect(manifest.background).toEqual({
       service_worker: 'service-worker.js',
       type: 'module'
     })
-    expect(manifest.version).toBe('1.1.0')
+    expect(manifest.version).toBe('1.1.1')
     expect(manifest.action?.default_popup).toBe('popup.html')
 
     const forbidden = [
@@ -100,6 +103,40 @@ describe('Orbit browser extension resources', () => {
     expect(popupSource).toContain("type: 'site-revoked'")
     expect(optionsSource).not.toContain('grant-site')
     expect(optionsSource).not.toContain('chrome.tabs.query')
+
+    for (const visiblePageSource of [popupSource, optionsSource]) {
+      expect(visiblePageSource).toContain("const ACCESS_PROBE_PATH = '/orbit-browser-v1/access'")
+      expect(visiblePageSource).toContain('async function probeLocalNetworkAccess(port)')
+      expect(visiblePageSource).toContain("cache: 'no-store'")
+      expect(visiblePageSource).toContain(
+        "Orbit must be open and Chrome's Local Network Access permission must be allowed."
+      )
+      const retryHandler = visiblePageSource.indexOf("retryButton.addEventListener('click'")
+      const retryProbe = visiblePageSource.indexOf('await probeLocalNetworkAccess(', retryHandler)
+      const retryRequest = visiblePageSource.indexOf("type: 'retry-connection'", retryHandler)
+      expect(retryHandler).toBeGreaterThanOrEqual(0)
+      expect(retryProbe).toBeGreaterThan(retryHandler)
+      expect(retryRequest).toBeGreaterThan(retryProbe)
+      expect(visiblePageSource.indexOf("type: 'get-status'", retryHandler)).toBe(-1)
+    }
+
+    const pairHandler = optionsSource.indexOf("pairButton.addEventListener('click'")
+    const pairProbe = optionsSource.indexOf('await probeLocalNetworkAccess(port)', pairHandler)
+    const pairRequest = optionsSource.indexOf("type: 'pair', port, code", pairHandler)
+    expect(pairProbe).toBeGreaterThan(pairHandler)
+    expect(pairRequest).toBeGreaterThan(pairProbe)
+
+    const closeCodeBlock = worker.slice(
+      worker.indexOf('const CLIENT_CLOSE_CODE = Object.freeze({'),
+      worker.indexOf('const EXTENSION_ORIGIN =')
+    )
+    const clientCloseCodes = [...closeCodeBlock.matchAll(/:\s*(\d{4})[,\n]/g)].map((match) =>
+      Number(match[1])
+    )
+    expect(clientCloseCodes.length).toBeGreaterThan(0)
+    expect(clientCloseCodes.every((code) => code >= 4000 && code <= 4999)).toBe(true)
+    expect(worker).not.toMatch(/\.close\(\s*(?:1002|1003|1008|1011)\b/)
+    expect(worker).not.toMatch(/\.close\(\s*\d{4}\b/)
   })
 
   it('contains no arbitrary JavaScript or Chrome debugger bridge', async () => {

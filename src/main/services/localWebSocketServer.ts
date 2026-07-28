@@ -193,7 +193,18 @@ export function createLocalWebSocketServer(
           return
         }
 
-        const nextServer = createServer((_request, response) => {
+        const accessProbePath = `${path}/access`
+        const nextServer = createServer((request, response) => {
+          const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1')
+          if (request.method === 'GET' && requestUrl.pathname === accessProbePath) {
+            response.writeHead(204, {
+              'Cache-Control': 'no-store, no-cache, must-revalidate',
+              Pragma: 'no-cache',
+              Expires: '0'
+            })
+            response.end()
+            return
+          }
           response.writeHead(404, { 'Content-Type': 'text/plain' })
           response.end('Not found')
         })

@@ -11,6 +11,38 @@ const optionsButton = document.querySelector('#options')
 
 let activeOrigin = null
 let activePattern = null
+let orbitPort = null
+
+const ACCESS_PROBE_PATH = '/orbit-browser-v1/access'
+const ACCESS_PROBE_TIMEOUT_MS = 5000
+const ACCESS_FAILURE_MESSAGE =
+  "Orbit must be open and Chrome's Local Network Access permission must be allowed."
+
+function isOrbitPort(port) {
+  return Number.isInteger(port) && port >= 43117 && port <= 43127
+}
+
+async function probeLocalNetworkAccess(port) {
+  if (!isOrbitPort(port)) return { ok: false, message: ACCESS_FAILURE_MESSAGE }
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), ACCESS_PROBE_TIMEOUT_MS)
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}${ACCESS_PROBE_PATH}`, {
+      method: 'GET',
+      cache: 'no-store',
+      credentials: 'omit',
+      redirect: 'error',
+      signal: controller.signal
+    })
+    return response.status === 204
+      ? { ok: true }
+      : { ok: false, message: ACCESS_FAILURE_MESSAGE }
+  } catch {
+    return { ok: false, message: ACCESS_FAILURE_MESSAGE }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
 
 function safeStatusText(status) {
   if (!status) return 'The extension service worker is unavailable.'
@@ -56,6 +88,7 @@ async function renderPermission() {
 
 async function renderStatus() {
   const status = await chrome.runtime.sendMessage({ type: 'get-status' }).catch(() => null)
+  orbitPort = isOrbitPort(status?.activePort) ? status.activePort : null
   statusElement.textContent = safeStatusText(status)
 }
 
@@ -87,6 +120,13 @@ revokeButton.addEventListener('click', async () => {
 
 retryButton.addEventListener('click', async () => {
   retryButton.disabled = true
+  statusElement.textContent = 'Requesting Chrome Local Network Access…'
+  const access = await probeLocalNetworkAccess(orbitPort)
+  if (!access.ok) {
+    statusElement.textContent = access.message
+    retryButton.disabled = false
+    return
+  }
   const response = await chrome.runtime
     .sendMessage({ type: 'retry-connection' })
     .catch(() => ({ ok: false, message: 'The retry request failed.' }))
