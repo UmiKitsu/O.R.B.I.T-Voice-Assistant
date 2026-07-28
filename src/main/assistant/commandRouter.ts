@@ -311,14 +311,44 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
   return null
 }
 
+type RoutedPlaybackIntent = 'track' | 'artist'
+
+type ParsedMediaQuery = {
+  query: string
+  intent?: RoutedPlaybackIntent
+}
+
+function validMediaQuery(query: string): string | null {
+  const normalized = query.trim()
+  if (
+    !normalized ||
+    normalized.length > 200 ||
+    /^(?:it|that|this|music|something)$/i.test(normalized)
+  ) {
+    return null
+  }
+  return normalized
+}
+
+function parseMediaQuery(value: string): ParsedMediaQuery | null {
+  const trimmed = value.trim()
+  const artistBy = trimmed.match(/^(?:music|songs?)\s+by\s+(.+)$/i)
+  const artistSong = trimmed.match(/^(?:a|some)\s+(.+?)\s+(?:song|songs|music)$/i)
+  const explicitTrack = trimmed.match(/^(?:the\s+)?(?:song|track)\s+(.+)$/i)
+
+  const query = validMediaQuery(artistBy?.[1] ?? artistSong?.[1] ?? explicitTrack?.[1] ?? trimmed)
+  if (!query) return null
+  if (artistBy || artistSong) return { query, intent: 'artist' }
+  if (explicitTrack) return { query, intent: 'track' }
+  return { query }
+}
+
 function normalizeMediaQuery(value: string): string | null {
-  const query = value
-    .trim()
-    .replace(/^a\s+/i, '')
-    .replace(/\s+song$/i, '')
-    .trim()
-  if (!query || query.length > 200 || /^(?:it|that|this|music|something)$/i.test(query)) return null
-  return query
+  return parseMediaQuery(value)?.query ?? null
+}
+
+function playbackParameters(parsed: ParsedMediaQuery): Record<string, unknown> {
+  return parsed.intent ? { query: parsed.query, intent: parsed.intent } : { query: parsed.query }
 }
 
 export function routeContextualCommand(
@@ -359,13 +389,15 @@ export function routeContextualCommand(
       : null
   const contextualYouTube =
     context.lastMediaApplication === 'youtube' ? normalized.match(/^play\s+(.+)$/i) : null
-  const spotifyQuery = normalizeMediaQuery(directSpotify?.[1] ?? contextualSpotify?.[1] ?? '')
+  const spotifyQuery = parseMediaQuery(directSpotify?.[1] ?? contextualSpotify?.[1] ?? '')
   const youtubeQuery = normalizeMediaQuery(directYouTube?.[1] ?? contextualYouTube?.[1] ?? '')
 
   if (spotifyQuery) {
-    return actionPlan('Play the top matching Spotify track', 'spotify.playSearch', {
-      query: spotifyQuery
-    })
+    return actionPlan(
+      'Play the top matching Spotify track',
+      'spotify.playSearch',
+      playbackParameters(spotifyQuery)
+    )
   }
 
   if (youtubeQuery) {
@@ -374,11 +406,13 @@ export function routeContextualCommand(
     })
   }
 
-  const preferredQuery = normalizeMediaQuery(normalized.match(/^play\s+(.+)$/i)?.[1] ?? '')
+  const preferredQuery = parseMediaQuery(normalized.match(/^play\s+(.+)$/i)?.[1] ?? '')
   if (preferredQuery) {
-    return actionPlan('Play music using the preferred provider', 'music.playSearch', {
-      query: preferredQuery
-    })
+    return actionPlan(
+      'Play music using the preferred provider',
+      'music.playSearch',
+      playbackParameters(preferredQuery)
+    )
   }
 
   const applicationAction = normalized.match(/^(focus|maximize|minimize|restore|close)\s+it$/i)
@@ -407,6 +441,37 @@ export function extractAmbiguousMediaQuery(
     .trim()
   const playbackRequest = normalized.match(/^play\s+(.+)$/i)
   return normalizeMediaQuery(playbackRequest?.[1] ?? '')
+}
+
+export function getUnclassifiedSpotifyPlaybackQuery(plan: ActionPlan): string | null {
+  if (plan.actions.length !== 1) return null
+  const [action] = plan.actions
+  if (
+    !action ||
+    !['spotify.playSearch', 'music.playSearch'].includes(action.capability) ||
+    Object.hasOwn(action.parameters, 'intent') ||
+    typeof action.parameters.query !== 'string'
+  ) {
+    return null
+  }
+  return action.parameters.query
+}
+
+export function applySpotifyPlaybackIntent(
+  plan: ActionPlan,
+  intent: RoutedPlaybackIntent
+): ActionPlan {
+  const query = getUnclassifiedSpotifyPlaybackQuery(plan)
+  if (!query) return plan
+  return {
+    ...plan,
+    actions: [
+      {
+        ...plan.actions[0],
+        parameters: { query, intent }
+      }
+    ]
+  }
 }
 
 export function routeMediaDestinationResponse(message: string, query: string): ActionPlan | null {

@@ -444,25 +444,42 @@ export async function structuredChat(
   return sendChatRequest(messages, 'json', signal, onProgress)
 }
 
+export async function structuredChatWithExactModel(
+  messages: ChatMessage[],
+  _format: Record<string, unknown>,
+  model: string,
+  signal?: AbortSignal,
+  onProgress?: OllamaProgressCallback
+): Promise<ActionResult<{ response: string }>> {
+  return sendChatRequest(messages, 'json', signal, onProgress, model)
+}
+
 async function sendChatRequest(
   messages: ChatMessage[],
   format: 'json' | undefined,
   signal?: AbortSignal,
-  onProgress?: OllamaProgressCallback
+  onProgress?: OllamaProgressCallback,
+  exactModel?: string
 ): Promise<ActionResult<{ response: string }>> {
   const startedAt = performance.now()
   const settings = getSettings()
   const timed = createTimedSignal(signal, IDLE_TIMEOUT_MS, HARD_TIMEOUT_MS)
-  let activeModel = settings.ollamaModel
+  let activeModel = exactModel ?? settings.ollamaModel
 
   try {
     const models = await fetchModels(settings.ollamaBaseUrl, timed.signal)
-    const selectedModel = chooseActiveModel(settings.ollamaModel, models)
+    const selectedModel = exactModel
+      ? models.includes(exactModel)
+        ? exactModel
+        : undefined
+      : chooseActiveModel(settings.ollamaModel, models)
     if (!selectedModel) {
       return {
         ok: false,
         code: 'OLLAMA_MODEL_MISSING',
-        message: `Neither ${settings.ollamaModel} nor ${FALLBACK_MODEL} is installed.`,
+        message: exactModel
+          ? `The ${exactModel} model is not installed.`
+          : `Neither ${settings.ollamaModel} nor ${FALLBACK_MODEL} is installed.`,
         recoverable: true
       }
     }
@@ -518,7 +535,7 @@ async function sendChatRequest(
     return {
       ok: true,
       message:
-        activeModel === settings.ollamaModel
+        exactModel || activeModel === settings.ollamaModel
           ? 'Orbit responded.'
           : `Orbit responded using the ${activeModel} fallback.`,
       data: { response: parsed.content }

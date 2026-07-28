@@ -13,6 +13,7 @@ export type WindowController = {
   findWindow(application: string): number | null
   getForegroundTarget(): ForegroundTarget | null
   getWindowBounds(windowHandle: number): WindowBounds | null
+  getProcessAgeMs(windowHandle: number): number | null
   activate(windowHandle: number): boolean
   show(windowHandle: number, command: 'minimize' | 'maximize' | 'restore'): boolean
   move(windowHandle: number, bounds: WindowBounds): boolean
@@ -20,6 +21,7 @@ export type WindowController = {
   typeUnicodeText(text: string): boolean
   pressEnter(): boolean
   focusSpotifySearch(): boolean
+  selectAllText(): boolean
   chooseSpotifyTopResult(): boolean
 }
 
@@ -53,6 +55,13 @@ type NativeFunctions = {
     size: Uint32Array
   ) => boolean
   closeHandle: (handle: number) => boolean
+  getProcessTimes: (
+    process: number,
+    creationTime: Record<string, number>,
+    exitTime: Record<string, number>,
+    kernelTime: Record<string, number>,
+    userTime: Record<string, number>
+  ) => boolean
   inputSize: number
   enumWindowsCallback: unknown
 }
@@ -109,6 +118,10 @@ function loadNativeFunctions(): NativeFunctions {
     right: 'long',
     bottom: 'long'
   })
+  koffi.struct('ORBIT_FILETIME', {
+    dwLowDateTime: 'uint32_t',
+    dwHighDateTime: 'uint32_t'
+  })
   koffi.struct('ORBIT_GUITHREADINFO', {
     cbSize: 'uint32_t',
     flags: 'uint32_t',
@@ -162,6 +175,9 @@ function loadNativeFunctions(): NativeFunctions {
     closeHandle: kernel32.func(
       'bool __stdcall CloseHandle(uintptr_t handle)'
     ) as NativeFunctions['closeHandle'],
+    getProcessTimes: kernel32.func(
+      'bool __stdcall GetProcessTimes(uintptr_t process, _Out_ ORBIT_FILETIME *creationTime, _Out_ ORBIT_FILETIME *exitTime, _Out_ ORBIT_FILETIME *kernelTime, _Out_ ORBIT_FILETIME *userTime)'
+    ) as NativeFunctions['getProcessTimes'],
     enumWindows: user32.func(
       'bool __stdcall EnumWindows(ORBIT_ENUMWINDOWSPROC *callback, intptr_t parameter)'
     ) as NativeFunctions['enumWindows'],
@@ -297,6 +313,33 @@ export const windowsController: WindowController = {
     }
   },
 
+  getProcessAgeMs(windowHandle) {
+    const native = loadNativeFunctions()
+    const processId = new Uint32Array(1)
+    native.getWindowThreadProcessId(windowHandle, processId)
+    if (!processId[0]) return null
+
+    const processHandle = native.openProcess(0x1000, false, processId[0])
+    if (!processHandle) return null
+
+    try {
+      const creationTime = { dwLowDateTime: 0, dwHighDateTime: 0 }
+      const exitTime = { dwLowDateTime: 0, dwHighDateTime: 0 }
+      const kernelTime = { dwLowDateTime: 0, dwHighDateTime: 0 }
+      const userTime = { dwLowDateTime: 0, dwHighDateTime: 0 }
+      if (!native.getProcessTimes(processHandle, creationTime, exitTime, kernelTime, userTime)) {
+        return null
+      }
+
+      const ticks =
+        (BigInt(creationTime.dwHighDateTime) << 32n) | BigInt(creationTime.dwLowDateTime)
+      const unixMilliseconds = Number(ticks / 10_000n - 11_644_473_600_000n)
+      return Math.max(0, Date.now() - unixMilliseconds)
+    } finally {
+      native.closeHandle(processHandle)
+    }
+  },
+
   activate(windowHandle) {
     return loadNativeFunctions().setForegroundWindow(windowHandle)
   },
@@ -352,6 +395,17 @@ export const windowsController: WindowController = {
       inputEvent(0x11, false, false),
       inputEvent(0x4b, false, false),
       inputEvent(0x4b, true, false),
+      inputEvent(0x11, true, false)
+    ]
+    return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length
+  },
+
+  selectAllText() {
+    const native = loadNativeFunctions()
+    const inputs = [
+      inputEvent(0x11, false, false),
+      inputEvent(0x41, false, false),
+      inputEvent(0x41, true, false),
       inputEvent(0x11, true, false)
     ]
     return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length

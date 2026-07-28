@@ -23,7 +23,12 @@ const musicQuerySchema = z
     'The music query must contain only plain text.'
   )
 
-const parametersSchema = z.object({ query: musicQuerySchema }).strict()
+const parametersSchema = z
+  .object({
+    query: musicQuerySchema,
+    intent: z.enum(['track', 'artist']).default('track')
+  })
+  .strict()
 const dataSchema = z.union([
   z
     .object({
@@ -61,7 +66,7 @@ function definition(
   return {
     name,
     risk: 'automatic',
-    timeoutMs: 30_000,
+    timeoutMs: 40_000,
     execute
   }
 }
@@ -71,16 +76,16 @@ export function registerSpotifyCapabilities(
   dependencies: SpotifyCapabilityDependencies = {}
 ): void {
   registry.register(
-    definition('spotify.playSearch', ({ query }, signal) =>
-      playSpotifyTopResult(query, signal, dependencies)
+    definition('spotify.playSearch', ({ query, intent }, signal) =>
+      playSpotifyTopResult(query, signal, dependencies, intent)
     ),
     parametersSchema,
     actionResultSchema(dataSchema)
   )
 
   registry.register(
-    definition('music.playSearch', ({ query }, signal) =>
-      playSpotifyTopResult(query, signal, dependencies)
+    definition('music.playSearch', ({ query, intent }, signal) =>
+      playSpotifyTopResult(query, signal, dependencies, intent)
     ),
     parametersSchema,
     actionResultSchema(dataSchema)

@@ -16,7 +16,8 @@ function isActionResult(value: unknown): value is ActionResult<unknown> {
 
 export async function executeActionPlan(
   plan: ActionPlan,
-  policyEngine: PolicyEngine
+  policyEngine: PolicyEngine,
+  signal?: AbortSignal
 ): Promise<ActionResult<AssistantResponse>> {
   const messages: string[] = []
   const effects: AssistantEffect[] = []
@@ -25,7 +26,8 @@ export async function executeActionPlan(
     const policyResult = await policyEngine.evaluateAndExecute({
       capability: action.capability,
       parameters: action.parameters,
-      summary: plan.summary
+      summary: plan.summary,
+      signal
     })
 
     if (policyResult.status !== 'executed') {

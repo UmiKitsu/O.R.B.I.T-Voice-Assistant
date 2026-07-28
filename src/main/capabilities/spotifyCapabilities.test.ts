@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ForegroundTarget } from '../security/protectedTargets'
 import type { SpotifyPlaybackController } from '../services/spotifyService'
 import type { PolicyResult } from '../security/policyEngine'
@@ -16,9 +16,11 @@ const target: ForegroundTarget = {
 const controller: SpotifyPlaybackController = {
   findWindow: vi.fn(() => 7),
   getForegroundTarget: vi.fn(() => target),
+  getProcessAgeMs: vi.fn(() => 20_000),
   show: vi.fn(() => true),
   activate: vi.fn(() => true),
   focusSpotifySearch: vi.fn(() => true),
+  selectAllText: vi.fn(() => true),
   typeUnicodeText: vi.fn(() => true),
   chooseSpotifyTopResult: vi.fn(() => true),
   pressEnter: vi.fn(() => true)
@@ -36,11 +38,34 @@ function execute(parameters: unknown): Promise<PolicyResult> {
 }
 
 describe('Spotify capability', () => {
-  it('executes a validated plain-text query automatically', async () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(controller.findWindow).mockReturnValue(7)
+    vi.mocked(controller.getForegroundTarget).mockReturnValue(target)
+    vi.mocked(controller.getProcessAgeMs).mockReturnValue(20_000)
+    vi.mocked(controller.show).mockReturnValue(true)
+    vi.mocked(controller.activate).mockReturnValue(true)
+    vi.mocked(controller.focusSpotifySearch).mockReturnValue(true)
+    vi.mocked(controller.selectAllText).mockReturnValue(true)
+    vi.mocked(controller.typeUnicodeText).mockReturnValue(true)
+    vi.mocked(controller.chooseSpotifyTopResult).mockReturnValue(true)
+    vi.mocked(controller.pressEnter).mockReturnValue(true)
+  })
+
+  it('executes a validated plain-text query with track intent by default', async () => {
     await expect(execute({ query: 'Bruno Mars' })).resolves.toMatchObject({
       status: 'executed',
       result: { ok: true, data: { application: 'spotify', query: 'Bruno Mars' } }
     })
+    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledOnce()
+  })
+
+  it('accepts artist intent and advances to the first track option', async () => {
+    await expect(execute({ query: 'Bruno Mars', intent: 'artist' })).resolves.toMatchObject({
+      status: 'executed',
+      result: { ok: true }
+    })
+    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledTimes(2)
   })
 
   it.each([
@@ -48,7 +73,8 @@ describe('Spotify capability', () => {
     { query: '' },
     { query: 'x'.repeat(201) },
     { query: 'Bruno\nMars' },
-    { query: 'Bruno Mars', command: 'powershell.exe' }
+    { query: 'Bruno Mars', intent: 'album' },
+    { query: 'Bruno Mars', intent: 'track', command: 'powershell.exe' }
   ])('rejects invalid or executable parameter shapes', async (parameters) => {
     await expect(execute(parameters)).resolves.toMatchObject({ status: 'invalid-parameters' })
   })

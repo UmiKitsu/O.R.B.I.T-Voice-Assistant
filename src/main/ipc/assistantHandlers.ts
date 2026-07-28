@@ -17,7 +17,9 @@ import {
   type AssistantSession
 } from '../assistant/assistantSession'
 import {
+  applySpotifyPlaybackIntent,
   extractAmbiguousMediaQuery,
+  getUnclassifiedSpotifyPlaybackQuery,
   isClarificationCancellation,
   isConversationResetCommand,
   routeCommand,
@@ -32,6 +34,7 @@ import { prepareOllama } from '../services/ollamaStartupService'
 import { logOperationalEvent } from '../services/loggerService'
 import { getLastYouTubePlaybackState } from '../services/browserBridgeService'
 import { getSettings } from '../services/settingsService'
+import { classifySpotifyPlaybackIntent } from '../services/spotifyIntentClassifier'
 
 const MAX_MESSAGE_LENGTH = 4_000
 
@@ -211,17 +214,40 @@ export function registerAssistantHandlers(): void {
 
       const deterministicPlan = routeCommand(message, session.context)
       if (deterministicPlan) {
-        const actionResult = await executeActionPlan(deterministicPlan, capabilityRuntime)
-        if (actionResult.ok && actionResult.data?.response) {
-          recordSuccessfulExchange(
-            session,
-            message,
-            actionResult.data.response,
-            deterministicPlan,
-            getLastYouTubePlaybackState()
+        const isSpotifyPlayback = deterministicPlan.actions.some((action) =>
+          ['spotify.playSearch', 'music.playSearch'].includes(action.capability)
+        )
+        const actionController = isSpotifyPlayback ? new AbortController() : undefined
+        if (actionController) activeRequests.set(senderId, actionController)
+
+        try {
+          const unclassifiedQuery = getUnclassifiedSpotifyPlaybackQuery(deterministicPlan)
+          const resolvedPlan = unclassifiedQuery
+            ? applySpotifyPlaybackIntent(
+                deterministicPlan,
+                await classifySpotifyPlaybackIntent(unclassifiedQuery, actionController?.signal)
+              )
+            : deterministicPlan
+          const actionResult = await executeActionPlan(
+            resolvedPlan,
+            capabilityRuntime,
+            actionController?.signal
           )
+          if (actionResult.ok && actionResult.data?.response) {
+            recordSuccessfulExchange(
+              session,
+              message,
+              actionResult.data.response,
+              resolvedPlan,
+              getLastYouTubePlaybackState()
+            )
+          }
+          return actionResult
+        } finally {
+          if (actionController && activeRequests.get(senderId) === actionController) {
+            activeRequests.delete(senderId)
+          }
         }
-        return actionResult
       }
 
       const ambiguousMediaQuery = extractAmbiguousMediaQuery(message, session.context)

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applySpotifyPlaybackIntent,
   extractAmbiguousMediaQuery,
+  getUnclassifiedSpotifyPlaybackQuery,
   isClarificationCancellation,
   isConversationResetCommand,
   routeCommand,
@@ -112,13 +114,57 @@ describe('context-aware routing', () => {
     expect(routeCommand('play a Bruno Mars song', { lastApplication: 'spotify' })).toEqual({
       kind: 'action_plan',
       summary: 'Play the top matching Spotify track',
-      actions: [{ capability: 'spotify.playSearch', parameters: { query: 'Bruno Mars' } }]
+      actions: [
+        {
+          capability: 'spotify.playSearch',
+          parameters: { query: 'Bruno Mars', intent: 'artist' }
+        }
+      ]
     })
   })
 
   it('routes an explicit Spotify playback request without prior context', () => {
     expect(routeCommand('play Locked Out of Heaven on Spotify')).toMatchObject({
       actions: [{ capability: 'spotify.playSearch', parameters: { query: 'Locked Out of Heaven' } }]
+    })
+  })
+
+  it('marks explicit artist phrases without calling the classifier', () => {
+    expect(routeCommand('play music by Bruno Mars')).toMatchObject({
+      actions: [
+        {
+          capability: 'music.playSearch',
+          parameters: { query: 'Bruno Mars', intent: 'artist' }
+        }
+      ]
+    })
+  })
+
+  it('keeps bare requests unclassified until local Qwen resolves artist versus track', () => {
+    const artistPlan = routeCommand('Play Bruno Mars')
+    const trackPlan = routeCommand('Play Locked Out of Heaven')
+    expect(artistPlan?.kind).toBe('action_plan')
+    expect(trackPlan?.kind).toBe('action_plan')
+    if (!artistPlan || artistPlan.kind !== 'action_plan') throw new Error('Expected artist plan.')
+    if (!trackPlan || trackPlan.kind !== 'action_plan') throw new Error('Expected track plan.')
+
+    expect(getUnclassifiedSpotifyPlaybackQuery(artistPlan)).toBe('Bruno Mars')
+    expect(getUnclassifiedSpotifyPlaybackQuery(trackPlan)).toBe('Locked Out of Heaven')
+    expect(applySpotifyPlaybackIntent(artistPlan, 'artist')).toMatchObject({
+      actions: [
+        {
+          capability: 'music.playSearch',
+          parameters: { query: 'Bruno Mars', intent: 'artist' }
+        }
+      ]
+    })
+    expect(applySpotifyPlaybackIntent(trackPlan, 'track')).toMatchObject({
+      actions: [
+        {
+          capability: 'music.playSearch',
+          parameters: { query: 'Locked Out of Heaven', intent: 'track' }
+        }
+      ]
     })
   })
 
@@ -135,7 +181,12 @@ describe('context-aware routing', () => {
     expect(routeCommand('play a Bruno Mars song')).toEqual({
       kind: 'action_plan',
       summary: 'Play music using the preferred provider',
-      actions: [{ capability: 'music.playSearch', parameters: { query: 'Bruno Mars' } }]
+      actions: [
+        {
+          capability: 'music.playSearch',
+          parameters: { query: 'Bruno Mars', intent: 'artist' }
+        }
+      ]
     })
   })
 

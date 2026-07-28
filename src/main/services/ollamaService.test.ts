@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
-import { resetOllamaServiceForTests, structuredChat } from './ollamaService'
+import {
+  resetOllamaServiceForTests,
+  structuredChat,
+  structuredChatWithExactModel
+} from './ollamaService'
 
 const PRIMARY_MODEL = 'qwen3.5:9b-q4_K_M'
 const FALLBACK_MODEL = 'qwen3:8b'
@@ -125,6 +129,33 @@ describe('structuredChat streaming', () => {
     })
     const chatCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/api/chat'))
     expect(JSON.parse(String(chatCall?.[1]?.body)).model).toBe(FALLBACK_MODEL)
+  })
+
+  it('uses an exact requested model without allowing configured-model substitution', async () => {
+    const fetchMock = installFetch(validStream(), [PRIMARY_MODEL, FALLBACK_MODEL])
+
+    await expect(
+      structuredChatWithExactModel([], {}, FALLBACK_MODEL)
+    ).resolves.toMatchObject({ ok: true })
+
+    const chatCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/api/chat'))
+    expect(JSON.parse(String(chatCall?.[1]?.body))).toMatchObject({
+      model: FALLBACK_MODEL,
+      think: false,
+      format: 'json'
+    })
+  })
+
+  it('reports an unavailable exact model instead of substituting another model', async () => {
+    const fetchMock = installFetch(validStream(), [PRIMARY_MODEL])
+
+    await expect(
+      structuredChatWithExactModel([], {}, FALLBACK_MODEL)
+    ).resolves.toMatchObject({
+      ok: false,
+      code: 'OLLAMA_MODEL_MISSING'
+    })
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/api/chat'))).toBe(false)
   })
 
   it('reports a 30-second inactivity timeout for a stalled stream', async () => {

@@ -17,6 +17,7 @@ const controller: WindowController = {
   findWindow: vi.fn(() => 42),
   getForegroundTarget: vi.fn(() => safeTarget),
   getWindowBounds: vi.fn(() => ({ x: 10, y: 20, width: 800, height: 600 })),
+  getProcessAgeMs: vi.fn(() => 20_000),
   activate: vi.fn(() => true),
   show: vi.fn(() => true),
   move: vi.fn(() => true),
@@ -24,6 +25,7 @@ const controller: WindowController = {
   typeUnicodeText: vi.fn(() => true),
   pressEnter: vi.fn(() => true),
   focusSpotifySearch: vi.fn(() => true),
+  selectAllText: vi.fn(() => true),
   chooseSpotifyTopResult: vi.fn(() => true)
 }
 

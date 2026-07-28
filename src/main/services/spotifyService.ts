@@ -1,5 +1,5 @@
 import type { ActionResult } from '../../shared/types'
-import { detectProtectedTarget } from '../security/protectedTargets'
+import { detectProtectedTarget, type ForegroundTarget } from '../security/protectedTargets'
 import {
   launchResolvedApplication,
   resolveApplication,
@@ -13,8 +13,16 @@ import type {
 } from './spotifyWebApiService'
 import { windowsController, type WindowController } from './windowInputService'
 
-const WINDOW_TIMEOUT_MS = 10_000
+const WINDOW_TIMEOUT_MS = 15_000
 const WINDOW_POLL_MS = 250
+const MIN_NEW_PROCESS_AGE_MS = 8_000
+const REQUIRED_STABLE_WINDOW_SAMPLES = 4
+const QUICK_SEARCH_OPEN_DELAY_MS = 500
+const SEARCH_RESULTS_DELAY_MS = 1_500
+const RESULT_SELECTION_DELAY_MS = 150
+const POST_SELECTION_DELAY_MS = 1_500
+
+export type SpotifyPlaybackIntent = 'track' | 'artist'
 
 export type SpotifyDesktopPlaybackData = {
   application: 'spotify'
@@ -37,9 +45,11 @@ export type SpotifyPlaybackController = Pick<
   WindowController,
   | 'findWindow'
   | 'getForegroundTarget'
+  | 'getProcessAgeMs'
   | 'show'
   | 'activate'
   | 'focusSpotifySearch'
+  | 'selectAllText'
   | 'typeUnicodeText'
   | 'chooseSpotifyTopResult'
   | 'pressEnter'
@@ -59,6 +69,11 @@ export type SpotifyPlaybackDependencies = {
   }
 }
 
+type SpotifyWindowReadiness =
+  | { status: 'ready'; windowHandle: number }
+  | { status: 'cancelled' }
+  | { status: 'timed-out' }
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
@@ -72,18 +87,76 @@ function matchesRequestedPlayback(title: string, query: string): boolean {
   return queryTokens.length > 0 && queryTokens.some((token) => normalizedTitle.includes(token))
 }
 
-async function findSpotifyWindow(
+function isSafeSpotifyTarget(
+  target: ForegroundTarget | null,
+  expectedWindowHandle: number
+): target is ForegroundTarget {
+  return Boolean(
+    target &&
+      target.windowHandle === expectedWindowHandle &&
+      target.processName.toLocaleLowerCase() === 'spotify.exe' &&
+      !detectProtectedTarget(target).protected
+  )
+}
+
+function cancelledResult(): ActionResult<SpotifyDesktopPlaybackData> {
+  return {
+    ok: false,
+    code: 'ACTION_CANCELLED',
+    message: 'The request was cancelled.',
+    recoverable: true
+  }
+}
+
+function targetChangedResult(message: string): ActionResult<SpotifyDesktopPlaybackData> {
+  return {
+    ok: false,
+    code: 'SPOTIFY_TARGET_CHANGED',
+    message,
+    recoverable: true
+  }
+}
+
+async function waitForStableSpotifyWindow(
   controller: SpotifyPlaybackController,
+  signal: AbortSignal,
   wait: (milliseconds: number) => Promise<void>,
   now: () => number
-): Promise<number | null> {
+): Promise<SpotifyWindowReadiness> {
   const deadline = now() + WINDOW_TIMEOUT_MS
-  do {
-    const windowHandle = controller.findWindow('spotify')
-    if (windowHandle) return windowHandle
+  let stableWindowHandle: number | null = null
+  let stableSamples = 0
+
+  while (now() < deadline) {
+    if (signal.aborted) return { status: 'cancelled' }
+
+    const currentWindowHandle = controller.findWindow('spotify')
+    if (!currentWindowHandle) {
+      stableWindowHandle = null
+      stableSamples = 0
+    } else {
+      const processAgeMs = controller.getProcessAgeMs(currentWindowHandle)
+      const processIsReady = processAgeMs === null || processAgeMs >= MIN_NEW_PROCESS_AGE_MS
+
+      if (!processIsReady) {
+        stableWindowHandle = null
+        stableSamples = 0
+      } else if (currentWindowHandle === stableWindowHandle) {
+        stableSamples += 1
+      } else {
+        stableWindowHandle = currentWindowHandle
+        stableSamples = 1
+      }
+
+      if (stableSamples >= REQUIRED_STABLE_WINDOW_SAMPLES && stableWindowHandle) {
+        return { status: 'ready', windowHandle: stableWindowHandle }
+      }
+    }
+
     await wait(WINDOW_POLL_MS)
-  } while (now() < deadline)
-  return null
+  }
+
+  return signal.aborted ? { status: 'cancelled' } : { status: 'timed-out' }
 }
 
 export async function openYouTubeMusicSearch(
@@ -110,14 +183,15 @@ export async function openYouTubeMusicSearch(
 export async function playSpotifyDesktopTopResult(
   query: string,
   signal: AbortSignal,
-  dependencies: SpotifyPlaybackDependencies = {}
+  dependencies: SpotifyPlaybackDependencies = {},
+  intent: SpotifyPlaybackIntent = 'track'
 ): Promise<ActionResult<SpotifyDesktopPlaybackData>> {
   const controller = dependencies.controller ?? windowsController
   const wait = dependencies.delay ?? delay
   const now = dependencies.now ?? Date.now
-  let windowHandle = controller.findWindow('spotify')
+  const existingWindow = controller.findWindow('spotify')
 
-  if (!windowHandle) {
+  if (!existingWindow) {
     const spotify = resolveApplication('spotify')
     if (!spotify) {
       return {
@@ -137,25 +211,21 @@ export async function playSpotifyDesktopTopResult(
         recoverable: true
       }
     }
-    windowHandle = await findSpotifyWindow(controller, wait, now)
   }
 
-  if (signal.aborted) {
-    return {
-      ok: false,
-      code: 'ACTION_CANCELLED',
-      message: 'The request was cancelled.',
-      recoverable: true
-    }
-  }
-  if (!windowHandle) {
+  const readiness = await waitForStableSpotifyWindow(controller, signal, wait, now)
+  if (readiness.status === 'cancelled') return cancelledResult()
+  if (readiness.status === 'timed-out') {
     return {
       ok: false,
       code: 'SPOTIFY_WINDOW_TIMEOUT',
-      message: 'Spotify opened, but its window was not ready in time.',
+      message: 'Spotify opened, but its main window was not ready in time.',
       recoverable: true
     }
   }
+
+  const { windowHandle } = readiness
+  if (signal.aborted) return cancelledResult()
 
   controller.show(windowHandle, 'restore')
   if (!controller.activate(windowHandle)) {
@@ -166,24 +236,28 @@ export async function playSpotifyDesktopTopResult(
       recoverable: true
     }
   }
-  await wait(350)
 
-  const before = controller.getForegroundTarget()
-  if (
-    !before ||
-    before.windowHandle !== windowHandle ||
-    before.processName.toLocaleLowerCase() !== 'spotify.exe' ||
-    detectProtectedTarget(before).protected
-  ) {
+  if (signal.aborted) return cancelledResult()
+  if (!isSafeSpotifyTarget(controller.getForegroundTarget(), windowHandle)) {
+    return targetChangedResult('I stopped because Spotify was no longer the active safe target.')
+  }
+
+  if (!controller.focusSpotifySearch()) {
     return {
       ok: false,
-      code: 'SPOTIFY_TARGET_CHANGED',
-      message: 'I stopped because Spotify was no longer the active safe target.',
+      code: 'SPOTIFY_SEARCH_FAILED',
+      message: 'I could not open Spotify Quick Search.',
       recoverable: true
     }
   }
 
-  if (!controller.focusSpotifySearch() || !controller.typeUnicodeText(query)) {
+  await wait(QUICK_SEARCH_OPEN_DELAY_MS)
+  if (signal.aborted) return cancelledResult()
+  if (!isSafeSpotifyTarget(controller.getForegroundTarget(), windowHandle)) {
+    return targetChangedResult('I stopped because Spotify was no longer the active safe target.')
+  }
+
+  if (!controller.selectAllText() || !controller.typeUnicodeText(query)) {
     return {
       ok: false,
       code: 'SPOTIFY_SEARCH_FAILED',
@@ -191,23 +265,38 @@ export async function playSpotifyDesktopTopResult(
       recoverable: true
     }
   }
-  await wait(1_100)
 
-  const immediatelyBeforeSelection = controller.getForegroundTarget()
-  if (
-    !immediatelyBeforeSelection ||
-    immediatelyBeforeSelection.windowHandle !== windowHandle ||
-    immediatelyBeforeSelection.processName.toLocaleLowerCase() !== 'spotify.exe'
-  ) {
+  await wait(SEARCH_RESULTS_DELAY_MS)
+  if (signal.aborted) return cancelledResult()
+  if (!isSafeSpotifyTarget(controller.getForegroundTarget(), windowHandle)) {
+    return targetChangedResult('I left the search visible because the active target changed.')
+  }
+
+  if (!controller.chooseSpotifyTopResult()) {
     return {
       ok: false,
-      code: 'SPOTIFY_TARGET_CHANGED',
-      message: 'I left the search visible because the active target changed.',
+      code: 'SPOTIFY_RESULT_SELECTION_FAILED',
+      message: `I found ${query} on Spotify, but I could not select the result.`,
       recoverable: true
     }
   }
 
-  if (!controller.chooseSpotifyTopResult() || !controller.pressEnter()) {
+  if (intent === 'artist' && !controller.chooseSpotifyTopResult()) {
+    return {
+      ok: false,
+      code: 'SPOTIFY_RESULT_SELECTION_FAILED',
+      message: `I found ${query} on Spotify, but I could not select the first track result.`,
+      recoverable: true
+    }
+  }
+
+  await wait(RESULT_SELECTION_DELAY_MS)
+  if (signal.aborted) return cancelledResult()
+  if (!isSafeSpotifyTarget(controller.getForegroundTarget(), windowHandle)) {
+    return targetChangedResult('I left the search visible because the active target changed.')
+  }
+
+  if (!controller.pressEnter()) {
     return {
       ok: false,
       code: 'SPOTIFY_RESULT_SELECTION_FAILED',
@@ -215,28 +304,23 @@ export async function playSpotifyDesktopTopResult(
       recoverable: true
     }
   }
-  await wait(1_500)
+
+  await wait(POST_SELECTION_DELAY_MS)
+  if (signal.aborted) return cancelledResult()
 
   const after = controller.getForegroundTarget()
-  if (
-    !after ||
-    after.windowHandle !== windowHandle ||
-    after.processName.toLocaleLowerCase() !== 'spotify.exe'
-  ) {
-    return {
-      ok: false,
-      code: 'SPOTIFY_TARGET_CHANGED',
-      message: 'Spotify lost focus before Orbit could finish starting the selected result.',
-      recoverable: true
-    }
+  if (!isSafeSpotifyTarget(after, windowHandle)) {
+    return targetChangedResult(
+      'Spotify lost focus before Orbit could finish starting the selected result.'
+    )
   }
 
   const titleMatched = matchesRequestedPlayback(after.title, query)
   return {
     ok: true,
     message: titleMatched
-      ? `Playing the top Spotify result for ${query}.`
-      : `Started the top Spotify result for ${query} in the Spotify app.`,
+      ? `Playing ${query} on Spotify.`
+      : `Started the first Spotify track result for ${query} in the Spotify app.`,
     data: { application: 'spotify', query, method: 'desktop' }
   }
 }
@@ -244,10 +328,11 @@ export async function playSpotifyDesktopTopResult(
 export async function playSpotifyTopResult(
   query: string,
   signal: AbortSignal,
-  dependencies: SpotifyPlaybackDependencies = {}
+  dependencies: SpotifyPlaybackDependencies = {},
+  intent: SpotifyPlaybackIntent = 'track'
 ): Promise<ActionResult<MusicPlaybackData>> {
   const settings = dependencies.settings?.() ?? getSettings()
-  const desktopResult = await playSpotifyDesktopTopResult(query, signal, dependencies)
+  const desktopResult = await playSpotifyDesktopTopResult(query, signal, dependencies, intent)
   if (desktopResult.ok) return desktopResult
 
   if (settings.musicFallbackEnabled && !signal.aborted) {
