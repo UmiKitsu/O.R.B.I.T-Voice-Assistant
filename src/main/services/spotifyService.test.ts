@@ -2,9 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ForegroundTarget } from '../security/protectedTargets'
 import {
   playSpotifyDesktopTopResult,
+  playSpotifyResolvedTrackUri,
   playSpotifyTopResult,
   type SpotifyPlaybackController
 } from './spotifyService'
+
+const resolvedTrack = {
+  uri: 'spotify:track:7a3LWj5xSFhFRYmztS8wgK',
+  title: 'Locked Out of Heaven',
+  artist: 'Bruno Mars'
+}
 
 const safeSpotifyTarget: ForegroundTarget = {
   windowHandle: 42,
@@ -358,6 +365,254 @@ describe('Spotify playback service', () => {
     ).resolves.toMatchObject({ ok: false, code: 'SPOTIFY_WINDOW_TIMEOUT' })
 
     expect(controller.focusSpotifySearch).not.toHaveBeenCalled()
+  })
+
+  it('opens and verifies an exact Spotify URI that is already playing', async () => {
+    const timing = clock()
+    const trackUriOpener = vi.fn(async () => undefined)
+    const readPlaybackState = vi.fn(async () => ({
+      ok: true as const,
+      message: 'Playback ready.',
+      data: { available: true, uri: resolvedTrack.uri, isPlaying: true }
+    }))
+    vi.mocked(controller.getForegroundTarget).mockReturnValue({
+      ...safeSpotifyTarget,
+      title: 'Locked Out of Heaven - Bruno Mars'
+    })
+
+    await expect(
+      playSpotifyResolvedTrackUri(
+        'Locked Out of Heaven',
+        resolvedTrack,
+        'client-id-1234567890',
+        new AbortController().signal,
+        {
+          controller,
+          delay: timing.delay,
+          now: timing.now,
+          trackUriOpener,
+          readPlaybackState
+        }
+      )
+    ).resolves.toEqual({
+      ok: true,
+      message: 'Playing Locked Out of Heaven by Bruno Mars on Spotify.',
+      data: {
+        application: 'spotify',
+        query: 'Locked Out of Heaven',
+        title: 'Locked Out of Heaven',
+        artist: 'Bruno Mars',
+        method: 'desktop-uri',
+        verification: 'playing'
+      }
+    })
+
+    expect(trackUriOpener).toHaveBeenCalledWith(resolvedTrack.uri)
+    expect(readPlaybackState).toHaveBeenCalledOnce()
+  })
+
+  it('sends one fixed Play key when the exact track is selected but paused', async () => {
+    const timing = clock()
+    const sendMediaKey = vi.fn(() => true)
+    const readPlaybackState = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        message: 'Paused.',
+        data: { available: true, uri: resolvedTrack.uri, isPlaying: false }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        message: 'Playing.',
+        data: { available: true, uri: resolvedTrack.uri, isPlaying: true }
+      })
+    vi.mocked(controller.getForegroundTarget).mockReturnValue({
+      ...safeSpotifyTarget,
+      title: 'Locked Out of Heaven - Bruno Mars'
+    })
+
+    await expect(
+      playSpotifyResolvedTrackUri(
+        'Locked Out of Heaven',
+        resolvedTrack,
+        'client-id-1234567890',
+        new AbortController().signal,
+        {
+          controller,
+          delay: timing.delay,
+          now: timing.now,
+          trackUriOpener: vi.fn(async () => undefined),
+          readPlaybackState,
+          sendMediaKey
+        }
+      )
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { method: 'desktop-uri', verification: 'playing' }
+    })
+
+    expect(sendMediaKey).toHaveBeenCalledOnce()
+    expect(sendMediaKey).toHaveBeenCalledWith('playPause')
+    expect(readPlaybackState).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports exact selection without claiming playback when state access is unavailable', async () => {
+    const timing = clock()
+    vi.mocked(controller.getForegroundTarget).mockReturnValue({
+      ...safeSpotifyTarget,
+      title: 'Locked Out of Heaven - Bruno Mars'
+    })
+
+    await expect(
+      playSpotifyResolvedTrackUri(
+        'Locked Out of Heaven',
+        resolvedTrack,
+        'client-id-1234567890',
+        new AbortController().signal,
+        {
+          controller,
+          delay: timing.delay,
+          now: timing.now,
+          trackUriOpener: vi.fn(async () => undefined),
+          readPlaybackState: vi.fn(async () => ({
+            ok: true as const,
+            message: 'Unavailable.',
+            data: { available: false, isPlaying: false }
+          }))
+        }
+      )
+    ).resolves.toEqual({
+      ok: true,
+      message: 'Opened Locked Out of Heaven by Bruno Mars in Spotify.',
+      data: {
+        application: 'spotify',
+        query: 'Locked Out of Heaven',
+        title: 'Locked Out of Heaven',
+        artist: 'Bruno Mars',
+        method: 'desktop-uri',
+        verification: 'selected'
+      }
+    })
+  })
+
+  it('handles a cold Spotify protocol launch without using the application launcher', async () => {
+    const timing = clock()
+    const launcher = vi.fn(async () => undefined)
+    const trackUriOpener = vi.fn(async () => undefined)
+    vi.mocked(controller.findWindow)
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(42)
+      .mockReturnValueOnce(42)
+      .mockReturnValueOnce(42)
+      .mockReturnValueOnce(42)
+    vi.mocked(controller.getForegroundTarget).mockReturnValue({
+      ...safeSpotifyTarget,
+      title: 'Locked Out of Heaven - Bruno Mars'
+    })
+
+    await expect(
+      playSpotifyResolvedTrackUri(
+        'Locked Out of Heaven',
+        resolvedTrack,
+        'client-id-1234567890',
+        new AbortController().signal,
+        {
+          controller,
+          launcher,
+          delay: timing.delay,
+          now: timing.now,
+          trackUriOpener,
+          readPlaybackState: vi.fn(async () => ({
+            ok: true as const,
+            message: 'Playing.',
+            data: { available: true, uri: resolvedTrack.uri, isPlaying: true }
+          }))
+        }
+      )
+    ).resolves.toMatchObject({ ok: true, data: { method: 'desktop-uri' } })
+
+    expect(trackUriOpener).toHaveBeenCalledBefore(vi.mocked(controller.findWindow))
+    expect(launcher).not.toHaveBeenCalled()
+  })
+
+  it('falls back to Quick Search when the Spotify protocol handler is unavailable', async () => {
+    const timing = clock()
+    const trackUriOpener = vi.fn(async () => {
+      throw new Error('No protocol handler')
+    })
+
+    await expect(
+      playSpotifyTopResult('Locked Out of Heaven', new AbortController().signal, {
+        controller,
+        delay: timing.delay,
+        now: timing.now,
+        trackUriOpener,
+        resolveTrack: vi.fn(async () => ({
+          ok: true as const,
+          message: 'Resolved.',
+          data: resolvedTrack
+        })),
+        settings: () => ({
+          spotifyClientId: '1234567890abcdef1234567890abcdef',
+          spotifyPlaybackMode: 'desktop',
+          musicFallbackEnabled: false
+        })
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { application: 'spotify', method: 'desktop' }
+    })
+
+    expect(trackUriOpener).toHaveBeenCalledWith(resolvedTrack.uri)
+    expect(controller.focusSpotifySearch).toHaveBeenCalledOnce()
+    expect(controller.typeUnicodeText).toHaveBeenCalledWith('Locked Out of Heaven')
+  })
+
+  it('falls back to Quick Search when exact title verification fails', async () => {
+    const timing = clock()
+
+    await expect(
+      playSpotifyTopResult('Locked Out of Heaven', new AbortController().signal, {
+        controller,
+        delay: timing.delay,
+        now: timing.now,
+        trackUriOpener: vi.fn(async () => undefined),
+        resolveTrack: vi.fn(async () => ({
+          ok: true as const,
+          message: 'Resolved.',
+          data: resolvedTrack
+        })),
+        readPlaybackState: vi.fn(),
+        settings: () => ({
+          spotifyClientId: '1234567890abcdef1234567890abcdef',
+          spotifyPlaybackMode: 'desktop',
+          musicFallbackEnabled: false
+        })
+      })
+    ).resolves.toMatchObject({ ok: true, data: { method: 'desktop' } })
+
+    expect(controller.focusSpotifySearch).toHaveBeenCalledOnce()
+  })
+
+  it('uses zero-setup Quick Search without invoking the resolver when OAuth is absent', async () => {
+    const timing = clock()
+    const resolveTrack = vi.fn()
+
+    await expect(
+      playSpotifyTopResult('Bruno Mars', new AbortController().signal, {
+        controller,
+        delay: timing.delay,
+        now: timing.now,
+        resolveTrack,
+        settings: () => ({
+          spotifyClientId: '',
+          spotifyPlaybackMode: 'desktop',
+          musicFallbackEnabled: false
+        })
+      })
+    ).resolves.toMatchObject({ ok: true, data: { method: 'desktop' } })
+
+    expect(resolveTrack).not.toHaveBeenCalled()
   })
 
   it('opens YouTube when Spotify desktop control fails and fallback is enabled', async () => {

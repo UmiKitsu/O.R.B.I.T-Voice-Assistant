@@ -1,6 +1,22 @@
 import type { ActionResult } from '../../shared/types'
 import { getSpotifyAccessToken, type SpotifyAuthFetch } from './spotifyAuthService'
 
+const SPOTIFY_TRACK_URI_PATTERN = /^spotify:track:[A-Za-z0-9]{22}$/u
+
+export type SpotifyTrackResolutionIntent = 'track' | 'artist'
+
+export type SpotifyResolvedTrack = {
+  uri: string
+  title: string
+  artist: string
+}
+
+export type SpotifyPlaybackStateData = {
+  available: boolean
+  uri?: string
+  isPlaying: boolean
+}
+
 export type SpotifyWebPlaybackData = {
   application: 'spotify'
   query: string
@@ -9,10 +25,8 @@ export type SpotifyWebPlaybackData = {
   method: 'web-api'
 }
 
-type SpotifyTrack = {
-  uri: string
-  name: string
-  artist: string
+type SpotifyTrack = SpotifyResolvedTrack & {
+  artists: string[]
 }
 
 type SpotifyDevice = {
@@ -48,12 +62,16 @@ function normalize(value: string): string {
     .trim()
 }
 
+export function isValidSpotifyTrackUri(value: unknown): value is string {
+  return typeof value === 'string' && SPOTIFY_TRACK_URI_PATTERN.test(value)
+}
+
 function scoreTrack(track: SpotifyTrack, query: string): number {
   const normalizedQuery = normalize(query)
-  const combined = normalize(`${track.name} ${track.artist}`)
+  const combined = normalize(`${track.title} ${track.artist}`)
   const tokens = normalizedQuery.split(/\s+/u).filter(Boolean)
   let score = combined === normalizedQuery ? 100 : 0
-  if (normalize(track.name) === normalizedQuery) score += 80
+  if (normalize(track.title) === normalizedQuery) score += 80
   if (combined.startsWith(normalizedQuery)) score += 40
   score += tokens.filter((token) => combined.includes(token)).length * 10
   return score
@@ -69,17 +87,26 @@ function parseTracks(value: unknown): SpotifyTrack[] {
   return items.flatMap((item) => {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) return []
     const track = item as Record<string, unknown>
-    if (typeof track.uri !== 'string' || typeof track.name !== 'string') return []
+    const title = typeof track.name === 'string' ? track.name.trim() : ''
     const artists = Array.isArray(track.artists) ? track.artists : []
     const artistNames = artists.flatMap((artist) => {
       if (typeof artist !== 'object' || artist === null || Array.isArray(artist)) return []
       const name = (artist as Record<string, unknown>).name
-      return typeof name === 'string' ? [name] : []
+      return typeof name === 'string' && name.trim().length > 0 ? [name.trim()] : []
     })
-    return artistNames.length > 0
-      ? [{ uri: track.uri, name: track.name, artist: artistNames.join(', ') }]
+    return isValidSpotifyTrackUri(track.uri) && title.length > 0 && artistNames.length > 0
+      ? [{ uri: track.uri, title, artist: artistNames.join(', '), artists: artistNames }]
       : []
   })
+}
+
+function hasMalformedTrackCollection(value: unknown, parsedTracks: SpotifyTrack[]): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return true
+  const tracks = (value as Record<string, unknown>).tracks
+  if (typeof tracks !== 'object' || tracks === null || Array.isArray(tracks)) return true
+  const items = (tracks as Record<string, unknown>).items
+  if (!Array.isArray(items)) return true
+  return items.length > 0 && parsedTracks.length === 0
 }
 
 function parseDevices(value: unknown): SpotifyDevice[] {
@@ -112,23 +139,36 @@ function parseDevices(value: unknown): SpotifyDevice[] {
   })
 }
 
-function parsePlayback(value: unknown): { uri?: string; isPlaying: boolean } {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return { isPlaying: false }
-  }
+function parsePlayback(value: unknown): SpotifyPlaybackStateData | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const playback = value as Record<string, unknown>
+  if (typeof playback.is_playing !== 'boolean') return null
   const item = playback.item
   const uri =
     typeof item === 'object' && item !== null && !Array.isArray(item)
       ? (item as Record<string, unknown>).uri
       : undefined
   return {
-    ...(typeof uri === 'string' ? { uri } : {}),
-    isPlaying: playback.is_playing === true
+    available: true,
+    ...(isValidSpotifyTrackUri(uri) ? { uri } : {}),
+    isPlaying: playback.is_playing
   }
 }
 
-function responseFailure(response: Response, action: string): ActionResult {
+function cancelledResult<T>(): ActionResult<T> {
+  return {
+    ok: false,
+    code: 'ACTION_CANCELLED',
+    message: 'The request was cancelled.',
+    recoverable: true
+  }
+}
+
+function responseFailure(
+  response: Response,
+  action: string,
+  kind: 'catalog' | 'playback' = 'playback'
+): ActionResult {
   if (response.status === 401) {
     return {
       ok: false,
@@ -140,8 +180,11 @@ function responseFailure(response: Response, action: string): ActionResult {
   if (response.status === 403) {
     return {
       ok: false,
-      code: 'SPOTIFY_PREMIUM_REQUIRED',
-      message: 'Spotify refused direct playback. A Premium account and playback permission are required.',
+      code: kind === 'catalog' ? 'SPOTIFY_ACCESS_FORBIDDEN' : 'SPOTIFY_PREMIUM_REQUIRED',
+      message:
+        kind === 'catalog'
+          ? 'Spotify did not allow Orbit to search the catalog with this connection.'
+          : 'Spotify refused direct playback. A Premium account and playback permission are required.',
       recoverable: true
     }
   }
@@ -169,6 +212,7 @@ async function authorizedFetch(
   dependencies: Required<Pick<SpotifyWebApiDependencies, 'fetcher' | 'getAccessToken'>>
 ): Promise<ActionResult<Response>> {
   const request = async (forceRefresh: boolean): Promise<ActionResult<Response>> => {
+    if (signal.aborted) return cancelledResult()
     const token = await dependencies.getAccessToken(clientId, forceRefresh, dependencies.fetcher)
     if (!token.ok) return token
     if (!token.data) {
@@ -190,12 +234,14 @@ async function authorizedFetch(
       })
       return { ok: true, message: 'Spotify responded.', data: response }
     } catch {
-      return {
-        ok: false,
-        code: 'SPOTIFY_NETWORK_FAILED',
-        message: 'Orbit could not reach Spotify.',
-        recoverable: true
-      }
+      return signal.aborted
+        ? cancelledResult()
+        : {
+            ok: false,
+            code: 'SPOTIFY_NETWORK_FAILED',
+            message: 'Orbit could not reach Spotify.',
+            recoverable: true
+          }
     }
   }
 
@@ -203,6 +249,144 @@ async function authorizedFetch(
   if (!first.ok) return first
   if (first.data?.status !== 401) return first
   return request(true)
+}
+
+export async function resolveSpotifyTrack(
+  query: string,
+  intent: SpotifyTrackResolutionIntent,
+  clientId: string,
+  signal: AbortSignal,
+  dependencies: SpotifyWebApiDependencies = {}
+): Promise<ActionResult<SpotifyResolvedTrack>> {
+  if (signal.aborted) return cancelledResult()
+  const fetcher = dependencies.fetcher ?? fetch
+  const getAccessToken = dependencies.getAccessToken ?? getSpotifyAccessToken
+  const searchUrl = new URL('https://api.spotify.com/v1/search')
+  searchUrl.search = new URLSearchParams({
+    q: intent === 'artist' ? `artist:${query}` : query,
+    type: 'track',
+    limit: '10'
+  }).toString()
+
+  const search = await authorizedFetch(
+    searchUrl.toString(),
+    { method: 'GET' },
+    clientId,
+    signal,
+    { fetcher, getAccessToken }
+  )
+  if (!search.ok) return search
+  if (!search.data) {
+    return {
+      ok: false,
+      code: 'SPOTIFY_EMPTY_RESPONSE',
+      message: 'Spotify returned an empty search response.',
+      recoverable: true
+    }
+  }
+  if (!search.data.ok) {
+    return responseFailure(search.data, 'search for that track', 'catalog')
+  }
+
+  let payload: unknown
+  try {
+    payload = (await search.data.json()) as unknown
+  } catch {
+    return {
+      ok: false,
+      code: 'SPOTIFY_MALFORMED_RESPONSE',
+      message: 'Spotify returned a malformed search response.',
+      recoverable: true
+    }
+  }
+
+  const tracks = parseTracks(payload)
+  if (hasMalformedTrackCollection(payload, tracks)) {
+    return {
+      ok: false,
+      code: 'SPOTIFY_MALFORMED_RESPONSE',
+      message: 'Spotify returned malformed track data.',
+      recoverable: true
+    }
+  }
+  const normalizedArtist = normalize(query)
+  const track =
+    intent === 'artist'
+      ? tracks.find((candidate) =>
+          candidate.artists.some((artist) => normalize(artist) === normalizedArtist)
+        )
+      : [...tracks].sort((left, right) => scoreTrack(right, query) - scoreTrack(left, query))[0]
+
+  if (!track) {
+    return {
+      ok: false,
+      code: 'SPOTIFY_TRACK_NOT_FOUND',
+      message: `Spotify could not find a track matching ${query}.`,
+      recoverable: true
+    }
+  }
+
+  return {
+    ok: true,
+    message: `Resolved ${track.title} by ${track.artist}.`,
+    data: { uri: track.uri, title: track.title, artist: track.artist }
+  }
+}
+
+export async function getSpotifyPlaybackState(
+  clientId: string,
+  signal: AbortSignal,
+  dependencies: SpotifyWebApiDependencies = {}
+): Promise<ActionResult<SpotifyPlaybackStateData>> {
+  if (signal.aborted) return cancelledResult()
+  const fetcher = dependencies.fetcher ?? fetch
+  const getAccessToken = dependencies.getAccessToken ?? getSpotifyAccessToken
+  const playbackResponse = await authorizedFetch(
+    'https://api.spotify.com/v1/me/player',
+    { method: 'GET' },
+    clientId,
+    signal,
+    { fetcher, getAccessToken }
+  )
+  if (!playbackResponse.ok) return playbackResponse
+  if (!playbackResponse.data) {
+    return {
+      ok: false,
+      code: 'SPOTIFY_EMPTY_RESPONSE',
+      message: 'Spotify returned an empty playback response.',
+      recoverable: true
+    }
+  }
+  if (playbackResponse.data.status === 204 || playbackResponse.data.status === 403) {
+    return {
+      ok: true,
+      message: 'Spotify playback state is unavailable.',
+      data: { available: false, isPlaying: false }
+    }
+  }
+  if (!playbackResponse.data.ok) return responseFailure(playbackResponse.data, 'verify playback')
+
+  let payload: unknown
+  try {
+    payload = (await playbackResponse.data.json()) as unknown
+  } catch {
+    return {
+      ok: false,
+      code: 'SPOTIFY_MALFORMED_RESPONSE',
+      message: 'Spotify returned malformed playback data.',
+      recoverable: true
+    }
+  }
+  const playback = parsePlayback(payload)
+  if (!playback) {
+    return {
+      ok: false,
+      code: 'SPOTIFY_MALFORMED_RESPONSE',
+      message: 'Spotify returned malformed playback data.',
+      recoverable: true
+    }
+  }
+  return { ok: true, message: 'Spotify playback state is available.', data: playback }
 }
 
 export async function playSpotifyWithWebApi(
@@ -234,7 +418,9 @@ export async function playSpotifyWithWebApi(
       recoverable: true
     }
   }
-  if (!search.data.ok) return responseFailure(search.data, 'search for that track')
+  if (!search.data.ok) {
+    return responseFailure(search.data, 'search for that track', 'catalog')
+  }
 
   const tracks = parseTracks((await search.data.json()) as unknown)
   const track = tracks.sort((left, right) => scoreTrack(right, query) - scoreTrack(left, query))[0]
@@ -359,14 +545,14 @@ export async function playSpotifyWithWebApi(
     if (playbackResponse.data.status === 204) continue
     if (!playbackResponse.data.ok) return responseFailure(playbackResponse.data, 'verify playback')
     const playback = parsePlayback((await playbackResponse.data.json()) as unknown)
-    if (playback.isPlaying && playback.uri === track.uri) {
+    if (playback?.isPlaying && playback.uri === track.uri) {
       return {
         ok: true,
-        message: `Playing ${track.name} by ${track.artist} on Spotify.`,
+        message: `Playing ${track.title} by ${track.artist} on Spotify.`,
         data: {
           application: 'spotify',
           query,
-          title: track.name,
+          title: track.title,
           artist: track.artist,
           method: 'web-api'
         }
@@ -377,7 +563,7 @@ export async function playSpotifyWithWebApi(
   return {
     ok: false,
     code: 'SPOTIFY_PLAYBACK_NOT_CONFIRMED',
-    message: `Spotify accepted ${track.name}, but Orbit could not confirm that playback started.`,
+    message: `Spotify accepted ${track.title}, but Orbit could not confirm that playback started.`,
     recoverable: true
   }
 }

@@ -36,7 +36,7 @@ describe('Spotify Web API playback', () => {
         tracks: {
           items: [
             {
-              uri: 'spotify:track:locked-out',
+              uri: 'spotify:track:7a3LWj5xSFhFRYmztS8wgK',
               name: 'Locked Out of Heaven',
               artists: [{ name: 'Bruno Mars' }]
             }
@@ -57,7 +57,7 @@ describe('Spotify Web API playback', () => {
       new Response(null, { status: 204 }),
       jsonResponse({
         is_playing: true,
-        item: { uri: 'spotify:track:locked-out' }
+        item: { uri: 'spotify:track:7a3LWj5xSFhFRYmztS8wgK' }
       })
     ]
     const fetcher = queuedFetcher(responses)
@@ -104,7 +104,7 @@ describe('Spotify Web API playback', () => {
         tracks: {
           items: [
             {
-              uri: 'spotify:track:test',
+              uri: 'spotify:track:2TpxZ7JUBn3uw46aR7qd6V',
               name: 'Test Song',
               artists: [{ name: 'Test Artist' }]
             }
@@ -133,7 +133,31 @@ describe('Spotify Web API playback', () => {
   })
 
   it('turns a forbidden playback response into a Premium-friendly error', async () => {
-    const fetcher = queuedFetcher([new Response(null, { status: 403 })])
+    const fetcher = queuedFetcher([
+      jsonResponse({
+        tracks: {
+          items: [
+            {
+              uri: 'spotify:track:2TpxZ7JUBn3uw46aR7qd6V',
+              name: 'Test Song',
+              artists: [{ name: 'Test Artist' }]
+            }
+          ]
+        }
+      }),
+      jsonResponse({
+        devices: [
+          {
+            id: 'desktop-device',
+            is_active: true,
+            is_restricted: false,
+            name: 'This Computer',
+            type: 'Computer'
+          }
+        ]
+      }),
+      new Response(null, { status: 403 })
+    ])
 
     await expect(
       playSpotifyWithWebApi(
@@ -160,7 +184,7 @@ describe('Spotify Web API playback', () => {
         tracks: {
           items: [
             {
-              uri: 'spotify:track:test',
+              uri: 'spotify:track:2TpxZ7JUBn3uw46aR7qd6V',
               name: 'Test Song',
               artists: [{ name: 'Test Artist' }]
             }
@@ -179,7 +203,10 @@ describe('Spotify Web API playback', () => {
         ]
       }),
       new Response(null, { status: 204 }),
-      jsonResponse({ is_playing: true, item: { uri: 'spotify:track:test' } })
+      jsonResponse({
+        is_playing: true,
+        item: { uri: 'spotify:track:2TpxZ7JUBn3uw46aR7qd6V' }
+      })
     ])
     const getAccessToken = tokenProvider()
 

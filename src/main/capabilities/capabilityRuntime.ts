@@ -60,6 +60,7 @@ export function createCapabilityRegistry(
     delay: dependencies.spotifyDelay,
     now: dependencies.spotifyNow,
     openExternalUrl: dependencies.openExternalUrl,
+    sendMediaKey: dependencies.sendMediaKey,
     webApi: dependencies.spotifyWebApi
   })
   registerYouTubeCapabilities(registry, dependencies.openExternalUrl)
