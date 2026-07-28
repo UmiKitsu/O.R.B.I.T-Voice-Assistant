@@ -741,6 +741,9 @@ export function useWakeWord(): WakeWordController {
   }, [])
 
   useEffect(() => {
+    mountedRef.current = true
+    setPipelineStateValue(pipelineStateRef.current)
+
     return () => {
       mountedRef.current = false
       desiredListeningRef.current = false
