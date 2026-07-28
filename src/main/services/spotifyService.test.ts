@@ -166,18 +166,70 @@ describe('Spotify playback service', () => {
     expect(controller.pressEnter).toHaveBeenCalledOnce()
   })
 
-  it('advances one additional Quick Search option for an artist request', async () => {
-    const timing = clock()
+  it('paces past the artist profile and activates the first track result', async () => {
+    let current = 0
+    const events: string[] = []
+    const pacedDelay = vi.fn(async (milliseconds: number) => {
+      events.push(`delay:${milliseconds}`)
+      current += milliseconds
+    })
+    vi.mocked(controller.chooseSpotifyTopResult).mockImplementation(() => {
+      events.push('navigate')
+      return true
+    })
+    vi.mocked(controller.pressEnter).mockImplementation(() => {
+      events.push('enter')
+      return true
+    })
 
     await playSpotifyDesktopTopResult(
       'Bruno Mars',
       new AbortController().signal,
-      { controller, delay: timing.delay, now: timing.now },
+      { controller, delay: pacedDelay, now: () => current },
       'artist'
     )
 
+    expect(events).toEqual([
+      'delay:250',
+      'delay:250',
+      'delay:250',
+      'delay:500',
+      'delay:1500',
+      'navigate',
+      'delay:150',
+      'navigate',
+      'delay:150',
+      'enter',
+      'delay:1500'
+    ])
     expect(controller.chooseSpotifyTopResult).toHaveBeenCalledTimes(2)
     expect(controller.pressEnter).toHaveBeenCalledOnce()
+  })
+
+  it('does not treat an artist page title as verified playback', async () => {
+    const timing = clock()
+    vi.mocked(controller.getForegroundTarget)
+      .mockReturnValueOnce(safeSpotifyTarget)
+      .mockReturnValueOnce(safeSpotifyTarget)
+      .mockReturnValueOnce(safeSpotifyTarget)
+      .mockReturnValueOnce(safeSpotifyTarget)
+      .mockReturnValueOnce(safeSpotifyTarget)
+      .mockReturnValueOnce({
+        ...safeSpotifyTarget,
+        title: 'Bruno Mars | Spotify'
+      })
+
+    await expect(
+      playSpotifyDesktopTopResult(
+        'Bruno Mars',
+        new AbortController().signal,
+        { controller, delay: timing.delay, now: timing.now },
+        'artist'
+      )
+    ).resolves.toMatchObject({
+      ok: true,
+      message: 'Started the first Spotify track result for Bruno Mars in the Spotify app.'
+    })
   })
 
   it('uses the first option for a track request and avoids an unverified playing claim', async () => {
@@ -242,6 +294,53 @@ describe('Spotify playback service', () => {
 
     expect(controller.selectAllText).not.toHaveBeenCalled()
     expect(controller.typeUnicodeText).not.toHaveBeenCalled()
+  })
+
+  it('stops artist navigation before the next key when Spotify loses focus', async () => {
+    const timing = clock()
+    vi.mocked(controller.getForegroundTarget)
+      .mockReturnValueOnce(safeSpotifyTarget)
+      .mockReturnValueOnce(safeSpotifyTarget)
+      .mockReturnValueOnce(safeSpotifyTarget)
+      .mockReturnValueOnce({
+        ...safeSpotifyTarget,
+        windowHandle: 99,
+        title: 'Other app',
+        processName: 'chrome.exe'
+      })
+
+    await expect(
+      playSpotifyDesktopTopResult(
+        'Bruno Mars',
+        new AbortController().signal,
+        { controller, delay: timing.delay, now: timing.now },
+        'artist'
+      )
+    ).resolves.toMatchObject({ ok: false, code: 'SPOTIFY_TARGET_CHANGED' })
+
+    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledOnce()
+    expect(controller.pressEnter).not.toHaveBeenCalled()
+  })
+
+  it('stops artist navigation before the next key when cancelled', async () => {
+    const timing = clock()
+    const abortController = new AbortController()
+    vi.mocked(timing.delay).mockImplementation(async (milliseconds: number) => {
+      timing.delays.push(milliseconds)
+      if (milliseconds === 150) abortController.abort()
+    })
+
+    await expect(
+      playSpotifyDesktopTopResult(
+        'Bruno Mars',
+        abortController.signal,
+        { controller, delay: timing.delay, now: () => 0 },
+        'artist'
+      )
+    ).resolves.toMatchObject({ ok: false, code: 'ACTION_CANCELLED' })
+
+    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledOnce()
+    expect(controller.pressEnter).not.toHaveBeenCalled()
   })
 
   it('times out when Spotify never reaches four stable window samples', async () => {

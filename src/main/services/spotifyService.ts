@@ -19,7 +19,7 @@ const MIN_NEW_PROCESS_AGE_MS = 8_000
 const REQUIRED_STABLE_WINDOW_SAMPLES = 4
 const QUICK_SEARCH_OPEN_DELAY_MS = 500
 const SEARCH_RESULTS_DELAY_MS = 1_500
-const RESULT_SELECTION_DELAY_MS = 150
+const RESULT_NAVIGATION_DELAY_MS = 150
 const POST_SELECTION_DELAY_MS = 1_500
 
 export type SpotifyPlaybackIntent = 'track' | 'artist'
@@ -272,28 +272,25 @@ export async function playSpotifyDesktopTopResult(
     return targetChangedResult('I left the search visible because the active target changed.')
   }
 
-  if (!controller.chooseSpotifyTopResult()) {
-    return {
-      ok: false,
-      code: 'SPOTIFY_RESULT_SELECTION_FAILED',
-      message: `I found ${query} on Spotify, but I could not select the result.`,
-      recoverable: true
+  const navigationSteps = intent === 'artist' ? 2 : 1
+  for (let step = 0; step < navigationSteps; step += 1) {
+    if (!controller.chooseSpotifyTopResult()) {
+      return {
+        ok: false,
+        code: 'SPOTIFY_RESULT_SELECTION_FAILED',
+        message:
+          intent === 'artist' && step > 0
+            ? `I found ${query} on Spotify, but I could not select the first track result.`
+            : `I found ${query} on Spotify, but I could not select the result.`,
+        recoverable: true
+      }
     }
-  }
 
-  if (intent === 'artist' && !controller.chooseSpotifyTopResult()) {
-    return {
-      ok: false,
-      code: 'SPOTIFY_RESULT_SELECTION_FAILED',
-      message: `I found ${query} on Spotify, but I could not select the first track result.`,
-      recoverable: true
+    await wait(RESULT_NAVIGATION_DELAY_MS)
+    if (signal.aborted) return cancelledResult()
+    if (!isSafeSpotifyTarget(controller.getForegroundTarget(), windowHandle)) {
+      return targetChangedResult('I left the search visible because the active target changed.')
     }
-  }
-
-  await wait(RESULT_SELECTION_DELAY_MS)
-  if (signal.aborted) return cancelledResult()
-  if (!isSafeSpotifyTarget(controller.getForegroundTarget(), windowHandle)) {
-    return targetChangedResult('I left the search visible because the active target changed.')
   }
 
   if (!controller.pressEnter()) {
@@ -315,7 +312,7 @@ export async function playSpotifyDesktopTopResult(
     )
   }
 
-  const titleMatched = matchesRequestedPlayback(after.title, query)
+  const titleMatched = intent === 'track' && matchesRequestedPlayback(after.title, query)
   return {
     ok: true,
     message: titleMatched
