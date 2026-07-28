@@ -17,6 +17,17 @@ export type OperationalLogEvent =
       reason: 'initialization' | 'runtime-error' | 'message-error' | 'unexpected-exit'
     }
   | { event: 'transcription.completed'; outcome: 'succeeded' | 'failed' }
+  | {
+      event:
+        | 'browser.bridge-listening'
+        | 'browser.pairing-stored'
+        | 'browser.authenticated'
+        | 'browser.disconnected'
+        | 'browser.retry-scheduled'
+        | 'browser.protocol-incompatible'
+      port?: number
+      code?: string
+    }
   | { event: 'capability.requested'; capability: string }
   | { event: 'policy.decided'; capability: string; decision: 'allowed' | 'blocked' }
   | { event: 'action.completed'; capability: string; outcome: 'succeeded' | 'failed' }

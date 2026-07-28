@@ -8,6 +8,7 @@ const EMPTY_STATUS: BrowserConnectionStatus = {
   paired: false,
   connected: false,
   browser: 'chrome',
+  phase: 'unpaired',
   grantedOrigins: []
 }
 
@@ -16,7 +17,6 @@ export function BrowserConnectionPanel(): React.JSX.Element {
   const [pairing, setPairing] = useState<BrowserPairingSession | null>(null)
   const [extensionPath, setExtensionPath] = useState('')
   const [browserControlEnabled, setBrowserControlEnabled] = useState(false)
-  const [generalAutomationEnabled, setGeneralAutomationEnabled] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [secondsRemaining, setSecondsRemaining] = useState(0)
@@ -37,7 +37,6 @@ export function BrowserConnectionPanel(): React.JSX.Element {
       if (pathResult.ok && pathResult.data) setExtensionPath(pathResult.data.path)
       if (settingsResult.ok && settingsResult.data) {
         setBrowserControlEnabled(settingsResult.data.browserControlEnabled)
-        setGeneralAutomationEnabled(settingsResult.data.generalBrowserAutomationEnabled)
       }
       if (statusResult.ok && statusResult.data) setStatus(statusResult.data)
     })
@@ -94,7 +93,6 @@ export function BrowserConnectionPanel(): React.JSX.Element {
       return
     }
     setBrowserControlEnabled(result.data.browserControlEnabled)
-    setGeneralAutomationEnabled(result.data.generalBrowserAutomationEnabled)
   }
 
   return (
@@ -102,11 +100,22 @@ export function BrowserConnectionPanel(): React.JSX.Element {
       <legend>Chrome browser connection</legend>
       <div className="browser-connection-heading">
         <div>
-          <strong>{status.connected ? 'Connected' : status.paired ? 'Paired, offline' : 'Not paired'}</strong>
+          <strong>
+            {status.connected
+              ? 'Connected'
+              : status.phase === 'pairing' || status.phase === 'authenticating'
+                ? 'Pairing'
+                : status.paired
+                  ? 'Paired, reconnecting'
+                  : status.phase === 'error'
+                    ? 'Connection error'
+                    : 'Not paired'}
+          </strong>
           <p>
             {status.connected
-              ? `Chrome extension ${status.extensionVersion ?? 'version unknown'} is responding.`
-              : 'Orbit uses its own trusted unpacked extension for typed browser actions.'}
+              ? `Chrome extension ${status.extensionVersion ?? 'version unknown'} is responding on port ${status.activePort ?? 'unknown'}.`
+              : status.lastError?.message ??
+                'Orbit uses its own trusted unpacked extension for typed browser actions.'}
           </p>
         </div>
         <span className={`browser-health ${status.connected ? 'online' : ''}`} aria-hidden="true" />
@@ -131,7 +140,11 @@ export function BrowserConnectionPanel(): React.JSX.Element {
         <button type="button" disabled={busy} onClick={() => void beginPairing()}>
           {busy ? 'Working…' : 'Begin pairing'}
         </button>
-        <button type="button" disabled={busy || (!status.paired && !status.connected)} onClick={() => void disconnect()}>
+        <button
+          type="button"
+          disabled={busy || (status.phase === 'unpaired' && !status.connected)}
+          onClick={() => void disconnect()}
+        >
           Disconnect
         </button>
       </div>
@@ -143,28 +156,11 @@ export function BrowserConnectionPanel(): React.JSX.Element {
           onChange={(event) => {
             const enabled = event.target.checked
             setBrowserControlEnabled(enabled)
-            if (!enabled) setGeneralAutomationEnabled(false)
-            void saveBrowserSetting({
-              browserControlEnabled: enabled,
-              ...(!enabled ? { generalBrowserAutomationEnabled: false } : {})
-            })
+            void saveBrowserSetting({ browserControlEnabled: enabled })
           }}
         />
         Enable typed browser control
       </label>
-      <label className="browser-setting-toggle">
-        <input
-          type="checkbox"
-          checked={generalAutomationEnabled}
-          disabled={!browserControlEnabled}
-          onChange={(event) => {
-            setGeneralAutomationEnabled(event.target.checked)
-            void saveBrowserSetting({ generalBrowserAutomationEnabled: event.target.checked })
-          }}
-        />
-        Enable guarded general page automation
-      </label>
-
       <div className="browser-granted-sites">
         <strong>Granted sites</strong>
         {status.grantedOrigins.length > 0 ? (
@@ -177,7 +173,11 @@ export function BrowserConnectionPanel(): React.JSX.Element {
       </div>
 
       {notice ? <p className="browser-panel-notice" role="status">{notice}</p> : null}
-      {status.lastSeenAt ? <small>Last extension contact: {new Date(status.lastSeenAt).toLocaleTimeString()}</small> : null}
+      {status.retryAt ? (
+        <small>Next automatic retry: {new Date(status.retryAt).toLocaleTimeString()}</small>
+      ) : status.lastSeenAt ? (
+        <small>Last extension contact: {new Date(status.lastSeenAt).toLocaleTimeString()}</small>
+      ) : null}
     </fieldset>
   )
 }

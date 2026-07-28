@@ -4,37 +4,54 @@
 const portInput = document.querySelector('#port')
 const codeInput = document.querySelector('#code')
 const pairButton = document.querySelector('#pair')
+const retryButton = document.querySelector('#retry')
 const disconnectButton = document.querySelector('#disconnect')
-const grantSiteButton = document.querySelector('#grant-site')
 const refreshSitesButton = document.querySelector('#refresh-sites')
 const statusElement = document.querySelector('#status')
+const diagnosticsElement = document.querySelector('#diagnostics')
 const sitesElement = document.querySelector('#sites')
 
 function setStatus(message) {
   statusElement.textContent = message
 }
 
+function diagnosticItem(label, value) {
+  const item = document.createElement('li')
+  item.textContent = `${label}: ${value}`
+  return item
+}
+
 async function renderStatus() {
   const response = await chrome.runtime.sendMessage({ type: 'get-status' }).catch(() => null)
   if (!response) {
     setStatus('The extension service worker is unavailable.')
+    diagnosticsElement.replaceChildren()
     return
   }
-  portInput.value = response.port ? String(response.port) : portInput.value
-  setStatus(
-    response.connected
-      ? `Connected to Orbit on 127.0.0.1:${response.port}.`
-      : response.paired
-        ? `Paired on port ${response.port}, but Orbit is not connected.`
-        : 'Not paired with Orbit.'
+  portInput.value = response.activePort ? String(response.activePort) : portInput.value
+  if (response.connected) {
+    setStatus(`Connected to Orbit on 127.0.0.1:${response.activePort}.`)
+  } else if (response.lastError?.message) {
+    setStatus(response.lastError.message)
+  } else if (response.paired) {
+    setStatus('Paired with Orbit and reconnecting automatically.')
+  } else {
+    setStatus('Not paired with Orbit.')
+  }
+  diagnosticsElement.replaceChildren(
+    diagnosticItem('Phase', response.phase ?? 'unknown'),
+    diagnosticItem('Active port', response.activePort ?? 'none'),
+    diagnosticItem(
+      'Next retry',
+      response.retryAt ? new Date(response.retryAt).toLocaleString() : 'not scheduled'
+    ),
+    diagnosticItem('Last error code', response.lastError?.code ?? 'none')
   )
 }
 
 async function renderSites() {
-  const permissions = await chrome.permissions.getAll()
-  const origins = [...new Set(permissions.origins ?? [])]
-    .filter((origin) => origin !== 'https://www.youtube.com/*')
-    .sort()
+  const status = await chrome.runtime.sendMessage({ type: 'get-status' }).catch(() => null)
+  const origins = Array.isArray(status?.grantedOrigins) ? [...status.grantedOrigins].sort() : []
   sitesElement.replaceChildren(
     ...origins.map((origin) => {
       const item = document.createElement('li')
@@ -47,7 +64,6 @@ async function renderSites() {
     item.textContent = 'No optional sites granted.'
     sitesElement.append(item)
   }
-  await chrome.runtime.sendMessage({ type: 'permissions-changed' }).catch(() => undefined)
 }
 
 pairButton.addEventListener('click', async () => {
@@ -58,13 +74,23 @@ pairButton.addEventListener('click', async () => {
     return
   }
   pairButton.disabled = true
-  setStatus('Pairing with Orbit…')
+  setStatus('Pairing and waiting for authenticated reconnection…')
   const response = await chrome.runtime
     .sendMessage({ type: 'pair', port, code })
     .catch(() => ({ ok: false, message: 'The pairing request failed.' }))
   pairButton.disabled = false
   setStatus(response?.message ?? 'The pairing request failed.')
   if (response?.ok) codeInput.value = ''
+  await renderStatus()
+})
+
+retryButton.addEventListener('click', async () => {
+  retryButton.disabled = true
+  const response = await chrome.runtime
+    .sendMessage({ type: 'retry-connection' })
+    .catch(() => ({ ok: false, message: 'The retry request failed.' }))
+  retryButton.disabled = false
+  setStatus(response?.message ?? 'Retry requested.')
   await renderStatus()
 })
 
@@ -75,29 +101,13 @@ disconnectButton.addEventListener('click', async () => {
   await renderStatus()
 })
 
-grantSiteButton.addEventListener('click', async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-  if (!tab?.url) {
-    setStatus('No active web page was found.')
-    return
-  }
-  let origin
-  try {
-    const url = new URL(tab.url)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('protected')
-    origin = `${url.origin}/*`
-  } catch {
-    setStatus('Orbit cannot receive access to this protected browser page.')
-    return
-  }
-  const granted = await chrome.permissions.request({ origins: [origin] })
-  setStatus(granted ? `Granted access to ${origin}.` : 'Chrome did not grant site access.')
-  await renderSites()
-})
-
 refreshSitesButton.addEventListener('click', () => void renderSites())
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === 'connection-status') void renderStatus()
 })
 
-void Promise.all([renderStatus(), renderSites()])
+void Promise.all([
+  chrome.runtime.sendMessage({ type: 'ui-opened' }).catch(() => undefined),
+  renderStatus(),
+  renderSites()
+])

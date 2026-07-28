@@ -7,13 +7,14 @@ import {
   extensionStatusSchema,
   isFreshTimestamp,
   isMonotonicSequence,
+  registeredBrowserCapabilities,
   stableJson,
   verifyBrowserMac
 } from './browserBridgeProtocol'
 
 const SECRET = Buffer.alloc(32, 7)
 
- describe('browser bridge protocol', () => {
+describe('browser bridge protocol', () => {
   it('canonicalizes object keys before authentication', () => {
     expect(stableJson({ z: 1, a: { y: 2, b: 3 } })).toBe('{"a":{"b":3,"y":2},"z":1}')
   })
@@ -50,7 +51,7 @@ const SECRET = Buffer.alloc(32, 7)
     expect(
       browserCommandEnvelopeSchema.safeParse({
         type: 'command',
-        version: 1,
+        version: BROWSER_PROTOCOL_VERSION,
         requestId: '38ca37a9-8d36-4e8a-a3e3-73d2676402cc',
         sequence: 1,
         capability: 'browser.reload',
@@ -66,18 +67,41 @@ const SECRET = Buffer.alloc(32, 7)
     expect(
       extensionStatusSchema.safeParse({
         type: 'extension_status',
-        version: 1,
-        grantedOrigins: ['https://www.youtube.com/*', 'http://*/*', 'https://example.com/*'],
+        version: BROWSER_PROTOCOL_VERSION,
+        grantedOrigins: [
+          'https://www.youtube.com/*',
+          'http://localhost:3000/*',
+          'https://example.com/*'
+        ],
         activeTabOrigin: 'https://example.com'
       }).success
     ).toBe(true)
-    expect(
-      extensionStatusSchema.safeParse({
-        type: 'extension_status',
-        version: 1,
-        grantedOrigins: ['chrome://extensions/*']
-      }).success
-    ).toBe(false)
+    for (const grantedOrigins of [
+      ['chrome://extensions/*'],
+      ['http://*/*'],
+      ['https://*.example.com/*'],
+      ['https://user:password@example.com/*']
+    ]) {
+      expect(
+        extensionStatusSchema.safeParse({
+          type: 'extension_status',
+          version: BROWSER_PROTOCOL_VERSION,
+          grantedOrigins
+        }).success
+      ).toBe(false)
+    }
+  })
+
+  it('registers explicit and compatible YouTube controls', () => {
+    expect(registeredBrowserCapabilities).toEqual(
+      expect.arrayContaining([
+        'youtube.play',
+        'youtube.pause',
+        'youtube.next',
+        'youtube.previous',
+        'youtube.playPause'
+      ])
+    )
   })
 
   it('rejects replayed and out-of-order sequence numbers', () => {
@@ -95,7 +119,7 @@ const SECRET = Buffer.alloc(32, 7)
     expect(
       authHelloSchema.safeParse({
         type: 'auth_hello',
-        version: 1,
+        version: BROWSER_PROTOCOL_VERSION,
         extensionOrigin: 'https://example.com',
         extensionVersion: '1.0.0',
         nonce: 'n'.repeat(32),

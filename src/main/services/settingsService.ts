@@ -48,8 +48,7 @@ export const orbitSettingsSchema = z
     spotifyPlaybackMode: z.enum(['desktop', 'web-api']),
     preferredMusicProvider: z.enum(['spotify', 'youtube']),
     musicFallbackEnabled: z.boolean(),
-    browserControlEnabled: z.boolean(),
-    generalBrowserAutomationEnabled: z.boolean()
+    browserControlEnabled: z.boolean()
   })
   .strict()
 
@@ -74,8 +73,7 @@ export const DEFAULT_ORBIT_SETTINGS: Readonly<OrbitSettings> = Object.freeze({
   spotifyPlaybackMode: 'desktop',
   preferredMusicProvider: 'spotify',
   musicFallbackEnabled: true,
-  browserControlEnabled: false,
-  generalBrowserAutomationEnabled: false
+  browserControlEnabled: false
 })
 
 type SettingsStorage = {
@@ -100,9 +98,13 @@ export function migrateLegacySettings(value: unknown): { value: unknown; changed
   }
 
   const migrated = { ...(value as Record<string, unknown>) }
-  let changed = 'speechEnabled' in migrated || 'wakeWordEnabled' in migrated
+  let changed =
+    'speechEnabled' in migrated ||
+    'wakeWordEnabled' in migrated ||
+    'generalBrowserAutomationEnabled' in migrated
   delete migrated.speechEnabled
   delete migrated.wakeWordEnabled
+  delete migrated.generalBrowserAutomationEnabled
   if (migrated.speechEngine !== 'kokoro') {
     migrated.speechEngine = 'kokoro'
     changed = true
@@ -137,10 +139,6 @@ export function migrateLegacySettings(value: unknown): { value: unknown; changed
   }
   if (!('browserControlEnabled' in migrated)) {
     migrated.browserControlEnabled = false
-    changed = true
-  }
-  if (!('generalBrowserAutomationEnabled' in migrated)) {
-    migrated.generalBrowserAutomationEnabled = false
     changed = true
   }
   return { value: migrated, changed }

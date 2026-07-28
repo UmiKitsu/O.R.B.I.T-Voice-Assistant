@@ -158,14 +158,6 @@ function guardedBrowserCapability<TParameters, TData = undefined>(
           (() => 'Submit the consequential browser action shown in the controlled tab.')
         : undefined,
     execute: async (parameters, signal) => {
-      if (!getSettings().generalBrowserAutomationEnabled) {
-        return {
-          ok: false,
-          code: 'GENERAL_BROWSER_AUTOMATION_DISABLED',
-          message: 'General browser automation is disabled in Orbit settings.',
-          recoverable: true
-        }
-      }
       const result = await executeBrowserCommand<TData>(
         name,
         parameters as Record<string, unknown>,

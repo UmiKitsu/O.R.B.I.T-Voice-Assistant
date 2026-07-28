@@ -160,8 +160,24 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
     return actionPlan('Open YouTube', 'browser.openUrl', { url: 'https://www.youtube.com' })
   }
 
-  if (/^(?:pause|resume|play|play or pause) (?:the )?youtube video$/.test(lower)) {
+  if (/^(?:pause) (?:the )?youtube video$/.test(lower)) {
+    return actionPlan('Pause the YouTube video', 'youtube.pause')
+  }
+
+  if (/^(?:resume|play) (?:the )?youtube video$/.test(lower)) {
+    return actionPlan('Resume the YouTube video', 'youtube.play')
+  }
+
+  if (/^play or pause (?:the )?youtube video$/.test(lower)) {
     return actionPlan('Play or pause the YouTube video', 'youtube.playPause')
+  }
+
+  if (/^(?:next|skip)(?: the)? youtube video$/.test(lower)) {
+    return actionPlan('Play the next YouTube video', 'youtube.next')
+  }
+
+  if (/^(?:previous|go back to the previous)(?: youtube)? video$/.test(lower)) {
+    return actionPlan('Play the previous YouTube video', 'youtube.previous')
   }
 
   const youtubeSeekRequest = normalized.match(
@@ -317,9 +333,20 @@ export function routeContextualCommand(
 
   if (
     context.lastMediaApplication === 'youtube' &&
-    /^(?:play it|pause it|resume it|play the video|pause the video|resume the video)$/.test(lower)
+    context.confirmedYouTubePlayback === true
   ) {
-    return actionPlan('Play or pause the YouTube video', 'youtube.playPause')
+    if (/^(?:pause|pause it|pause the video)$/.test(lower)) {
+      return actionPlan('Pause the YouTube video', 'youtube.pause')
+    }
+    if (/^(?:play|resume|play it|resume it|play the video|resume the video)$/.test(lower)) {
+      return actionPlan('Resume the YouTube video', 'youtube.play')
+    }
+    if (/^(?:next|next video|skip|skip it|skip this|skip this video)$/.test(lower)) {
+      return actionPlan('Play the next YouTube video', 'youtube.next')
+    }
+    if (/^(?:previous|previous video|go back|go back to the previous video)$/.test(lower)) {
+      return actionPlan('Play the previous YouTube video', 'youtube.previous')
+    }
   }
 
   const directSpotify = normalized.match(/^play\s+(.+?)\s+(?:on|in)\s+spotify$/i)

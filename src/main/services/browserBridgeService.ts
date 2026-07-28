@@ -4,10 +4,13 @@ import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
   BrowserCommandResult,
+  BrowserConnectionError,
+  BrowserConnectionPhase,
   BrowserConnectionStatus,
   BrowserPairingSession,
   YouTubePlaybackState
 } from '../../shared/types'
+import { logOperationalEvent } from './loggerService'
 import { getSettings } from './settingsService'
 import {
   BROWSER_PROTOCOL_VERSION,
@@ -37,12 +40,14 @@ const PAIRING_TTL_MS = 5 * 60_000
 const SECRET_FILE_NAME = 'orbit-browser-pairing.bin'
 const SOCKET_PATH = '/orbit-browser-v1'
 const HEARTBEAT_INTERVAL_MS = 20_000
+const AUTHENTICATED_CONTACT_TIMEOUT_MS = 60_000
 
 type StoredPairing = {
-  version: 1
+  version: 2
   extensionOrigin: string
   secret: string
   port: number
+  confirmed: boolean
 }
 
 type PendingAuth = {
@@ -73,6 +78,10 @@ let pendingAuth = new WeakMap<LocalWebSocketConnection, PendingAuth>()
 let authenticatedConnections = new WeakSet<LocalWebSocketConnection>()
 let extensionVersion: string | undefined
 let lastSeenAt: number | undefined
+let lastAuthenticatedContactAt: number | undefined
+let connectionPhase: BrowserConnectionPhase = 'unpaired'
+let retryAt: number | undefined
+let lastError: BrowserConnectionError | undefined
 let sequence = 0
 let lastResponseSequence = 0
 let grantedOrigins: string[] = []
@@ -87,7 +96,25 @@ function pairingIsValid(value: unknown): value is StoredPairing {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const candidate = value as Record<string, unknown>
   return (
-    Object.keys(candidate).length === 4 &&
+    Object.keys(candidate).length === 5 &&
+    candidate.version === 2 &&
+    typeof candidate.extensionOrigin === 'string' &&
+    /^chrome-extension:\/\/[a-p]{32}$/.test(candidate.extensionOrigin) &&
+    typeof candidate.secret === 'string' &&
+    /^[A-Za-z0-9+/]{43}=$/.test(candidate.secret) &&
+    typeof candidate.port === 'number' &&
+    Number.isInteger(candidate.port) &&
+    candidate.port >= PORT_MIN &&
+    candidate.port <= PORT_MAX &&
+    typeof candidate.confirmed === 'boolean'
+  )
+}
+
+function migrateStoredPairing(value: unknown): StoredPairing | null {
+  if (pairingIsValid(value)) return value
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const candidate = value as Record<string, unknown>
+  if (
     candidate.version === 1 &&
     typeof candidate.extensionOrigin === 'string' &&
     /^chrome-extension:\/\/[a-p]{32}$/.test(candidate.extensionOrigin) &&
@@ -97,7 +124,16 @@ function pairingIsValid(value: unknown): value is StoredPairing {
     Number.isInteger(candidate.port) &&
     candidate.port >= PORT_MIN &&
     candidate.port <= PORT_MAX
-  )
+  ) {
+    return {
+      version: 2,
+      extensionOrigin: candidate.extensionOrigin,
+      secret: candidate.secret,
+      port: candidate.port,
+      confirmed: true
+    }
+  }
+  return null
 }
 
 function secretBuffer(): Buffer | null {
@@ -121,7 +157,7 @@ function deserializePairing(value: Buffer): StoredPairing | null {
   if (!safeStorage.isEncryptionAvailable()) return null
   try {
     const parsed = JSON.parse(safeStorage.decryptString(value)) as unknown
-    return pairingIsValid(parsed) ? parsed : null
+    return migrateStoredPairing(parsed)
   } catch {
     return null
   }
@@ -142,14 +178,24 @@ async function removePairingFile(): Promise<void> {
 
 function currentStatus(): BrowserConnectionStatus {
   return {
-    paired: storedPairing !== null,
+    paired: Boolean(storedPairing?.confirmed),
     connected: activeConnection !== null,
     browser: 'chrome',
+    phase: connectionPhase,
+    ...(serverPort !== null ? { activePort: serverPort } : {}),
+    ...(retryAt ? { retryAt } : {}),
+    ...(lastError ? { lastError: { ...lastError } } : {}),
     ...(extensionVersion ? { extensionVersion } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {}),
     grantedOrigins: [...grantedOrigins],
     ...(activeTabOrigin ? { activeTabOrigin } : {})
   }
+}
+
+function setConnectionError(code: string, message: string): void {
+  connectionPhase = 'error'
+  lastError = { code, message }
+  retryAt = undefined
 }
 
 function failPendingCommands(code: string, message: string): void {
@@ -164,6 +210,20 @@ function detachConnection(connection: LocalWebSocketConnection): void {
   if (activeConnection !== connection) return
   activeConnection = null
   lastResponseSequence = 0
+  lastAuthenticatedContactAt = undefined
+  activeTabOrigin = undefined
+  if (storedPairing) {
+    connectionPhase = 'reconnecting'
+    lastError ??= {
+      code: 'BROWSER_EXTENSION_DISCONNECTED',
+      message: 'The Orbit browser extension disconnected and will retry automatically.'
+    }
+    logOperationalEvent({ event: 'browser.retry-scheduled', code: lastError.code })
+  } else {
+    connectionPhase = 'unpaired'
+    lastError = undefined
+  }
+  logOperationalEvent({ event: 'browser.disconnected', code: lastError?.code })
   failPendingCommands(
     'BROWSER_EXTENSION_DISCONNECTED',
     'The Orbit browser extension disconnected before the action completed.'
@@ -207,10 +267,11 @@ async function handlePair(
 
   const secret = randomBytes(32)
   const nextPairing: StoredPairing = {
-    version: 1,
+    version: 2,
     extensionOrigin: parsed.data.extensionOrigin,
     secret: secret.toString('base64'),
-    port: serverPort
+    port: serverPort,
+    confirmed: false
   }
   try {
     await persistPairing(nextPairing)
@@ -225,7 +286,11 @@ async function handlePair(
   }
 
   activePairing = null
+  connectionPhase = 'authenticating'
+  lastError = undefined
+  retryAt = undefined
   extensionVersion = parsed.data.extensionVersion
+  logOperationalEvent({ event: 'browser.pairing-stored', port: nextPairing.port })
   connection.sendJson({
     type: 'pair_success',
     version: BROWSER_PROTOCOL_VERSION,
@@ -260,6 +325,8 @@ function handleAuthHello(connection: LocalWebSocketConnection, message: unknown)
   }
 
   usedAuthNonces.set(payload.nonce, now + 2 * 60_000)
+  connectionPhase = 'authenticating'
+  lastError = undefined
   const serverNonce = randomBytes(32).toString('base64url')
   pendingAuth.set(connection, { clientNonce: payload.nonce, serverNonce })
   extensionVersion = payload.extensionVersion
@@ -277,7 +344,7 @@ function handleAuthHello(connection: LocalWebSocketConnection, message: unknown)
   return true
 }
 
-function handleAuthAck(connection: LocalWebSocketConnection, message: unknown): boolean {
+async function handleAuthAck(connection: LocalWebSocketConnection, message: unknown): Promise<boolean> {
   const parsed = authAckSchema.safeParse(message)
   if (!parsed.success) return false
   const secret = secretBuffer()
@@ -296,13 +363,36 @@ function handleAuthAck(connection: LocalWebSocketConnection, message: unknown): 
   }
 
   pendingAuth.delete(connection)
+  if (storedPairing && !storedPairing.confirmed) {
+    try {
+      await persistPairing({ ...storedPairing, confirmed: true })
+    } catch {
+      sendProtocolError(
+        connection,
+        'PAIRING_STORAGE_FAILED',
+        'Orbit could not finish storing the browser pairing securely.'
+      )
+      connection.close(1011, 'Secure storage failed')
+      setConnectionError(
+        'PAIRING_STORAGE_FAILED',
+        'Orbit could not finish storing the browser pairing securely.'
+      )
+      return true
+    }
+  }
   authenticatedConnections.add(connection)
   if (activeConnection && activeConnection !== connection) {
     activeConnection.close(4001, 'A newer Orbit connection replaced this connection')
   }
   activeConnection = connection
-  lastSeenAt = Date.now()
+  const now = Date.now()
+  lastSeenAt = now
+  lastAuthenticatedContactAt = now
   lastResponseSequence = 0
+  connectionPhase = 'connected'
+  retryAt = undefined
+  lastError = undefined
+  logOperationalEvent({ event: 'browser.authenticated', port: serverPort ?? undefined })
   connection.sendJson({
     type: 'authenticated',
     version: BROWSER_PROTOCOL_VERSION,
@@ -352,7 +442,9 @@ function handleCommandResult(connection: LocalWebSocketConnection, message: unkn
   lastResponseSequence = parsed.data.sequence
   pendingCommands.delete(parsed.data.requestId)
   clearTimeout(pending.timeout)
-  lastSeenAt = Date.now()
+  const now = Date.now()
+  lastSeenAt = now
+  lastAuthenticatedContactAt = now
   if (
     pending.capability.startsWith('youtube.') &&
     parsed.data.result.ok &&
@@ -370,14 +462,33 @@ function handleExtensionStatus(connection: LocalWebSocketConnection, message: un
   if (connection !== activeConnection || !authenticatedConnections.has(connection)) return true
   grantedOrigins = [...new Set(parsed.data.grantedOrigins)].sort()
   activeTabOrigin = parsed.data.activeTabOrigin
-  lastSeenAt = Date.now()
+  const now = Date.now()
+  lastSeenAt = now
+  lastAuthenticatedContactAt = now
   return true
 }
 
 async function handleMessage(connection: LocalWebSocketConnection, message: unknown): Promise<void> {
+  if (
+    typeof message === 'object' &&
+    message !== null &&
+    typeof (message as Record<string, unknown>).type === 'string' &&
+    typeof (message as Record<string, unknown>).version === 'number' &&
+    (message as Record<string, unknown>).version !== BROWSER_PROTOCOL_VERSION
+  ) {
+    const reloadMessage = 'Reload the Orbit Browser Control extension to use the current browser protocol.'
+    setConnectionError('BROWSER_PROTOCOL_INCOMPATIBLE', reloadMessage)
+    logOperationalEvent({
+      event: 'browser.protocol-incompatible',
+      code: 'BROWSER_PROTOCOL_INCOMPATIBLE'
+    })
+    sendProtocolError(connection, 'BROWSER_PROTOCOL_INCOMPATIBLE', reloadMessage)
+    connection.close(1002, 'Protocol version mismatch')
+    return
+  }
   if (await handlePair(connection, message)) return
   if (handleAuthHello(connection, message)) return
-  if (handleAuthAck(connection, message)) return
+  if (await handleAuthAck(connection, message)) return
 
   if (!authenticatedConnections.has(connection) || connection !== activeConnection) {
     sendProtocolError(connection, 'AUTHENTICATION_REQUIRED', 'Authenticate before sending messages.')
@@ -394,7 +505,9 @@ async function handleMessage(connection: LocalWebSocketConnection, message: unkn
     (message as Record<string, unknown>).type === 'heartbeat' &&
     (message as Record<string, unknown>).version === BROWSER_PROTOCOL_VERSION
   ) {
-    lastSeenAt = Date.now()
+    const now = Date.now()
+    lastSeenAt = now
+    lastAuthenticatedContactAt = now
     return
   }
 
@@ -412,6 +525,7 @@ async function startServerAt(port: number): Promise<boolean> {
     await nextServer.listen(port)
     server = nextServer
     serverPort = port
+    logOperationalEvent({ event: 'browser.bridge-listening', port })
     return true
   } catch {
     await nextServer.close().catch(() => undefined)
@@ -436,12 +550,26 @@ async function ensureServer(preferredPort?: number): Promise<number> {
 function startHeartbeat(): void {
   if (heartbeatTimer) return
   heartbeatTimer = setInterval(() => {
-    pruneAuthNonces()
+    const now = Date.now()
+    pruneAuthNonces(now)
     if (!activeConnection) return
+    if (
+      !lastAuthenticatedContactAt ||
+      now - lastAuthenticatedContactAt > AUTHENTICATED_CONTACT_TIMEOUT_MS
+    ) {
+      const staleConnection = activeConnection
+      setConnectionError(
+        'BROWSER_HEARTBEAT_TIMEOUT',
+        'The Orbit browser extension stopped responding and must reconnect.'
+      )
+      staleConnection.close(4004, 'Authenticated heartbeat timeout')
+      detachConnection(staleConnection)
+      return
+    }
     activeConnection.sendJson({
       type: 'heartbeat',
       version: BROWSER_PROTOCOL_VERSION,
-      timestamp: Date.now()
+      timestamp: now
     })
   }, HEARTBEAT_INTERVAL_MS)
   heartbeatTimer.unref?.()
@@ -463,6 +591,9 @@ export async function initializeBrowserBridgeService(): Promise<void> {
   if (storedPairing) {
     const port = await ensureServer(storedPairing.port)
     if (port !== storedPairing.port) await persistPairing({ ...storedPairing, port })
+    connectionPhase = 'connecting'
+  } else {
+    connectionPhase = 'unpaired'
   }
   startHeartbeat()
   initialized = true
@@ -488,6 +619,9 @@ export async function beginBrowserPairing(): Promise<BrowserPairingSession> {
     code: randomInt(0, 1_000_000).toString().padStart(6, '0'),
     expiresAt: now + PAIRING_TTL_MS
   }
+  connectionPhase = 'pairing'
+  lastError = undefined
+  retryAt = undefined
   return {
     port,
     code: activePairing.code,
@@ -501,6 +635,10 @@ export async function disconnectBrowser(): Promise<BrowserConnectionStatus> {
   storedPairing = null
   extensionVersion = undefined
   lastSeenAt = undefined
+  lastAuthenticatedContactAt = undefined
+  connectionPhase = 'unpaired'
+  retryAt = undefined
+  lastError = undefined
   grantedOrigins = []
   activeTabOrigin = undefined
   activeConnection?.close(4002, 'Orbit disconnected the extension')
@@ -515,6 +653,7 @@ export async function stopBrowserBridgeService(): Promise<void> {
   heartbeatTimer = null
   activeConnection?.close(1001, 'Orbit is closing')
   activeConnection = null
+  lastAuthenticatedContactAt = undefined
   failPendingCommands('BROWSER_DISCONNECTED', 'Orbit is closing.')
   await server?.close().catch(() => undefined)
   server = null
@@ -619,6 +758,10 @@ export function resetBrowserBridgeServiceForTests(): void {
   authenticatedConnections = new WeakSet()
   extensionVersion = undefined
   lastSeenAt = undefined
+  lastAuthenticatedContactAt = undefined
+  connectionPhase = 'unpaired'
+  retryAt = undefined
+  lastError = undefined
   sequence = 0
   lastResponseSequence = 0
   grantedOrigins = []

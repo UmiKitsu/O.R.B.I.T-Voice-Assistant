@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import type { BrowserCommandResult } from '../../shared/types'
 
-export const BROWSER_PROTOCOL_VERSION = 1 as const
+export const BROWSER_PROTOCOL_VERSION = 2 as const
 export const BROWSER_MAX_MESSAGE_BYTES = 64 * 1024
 export const BROWSER_REQUEST_TTL_MS = 60_000
 export const BROWSER_AUTH_CLOCK_SKEW_MS = 30_000
@@ -19,6 +19,10 @@ export const registeredBrowserCapabilities = [
   'browser.reload',
   'browser.scroll',
   'youtube.playSearch',
+  'youtube.play',
+  'youtube.pause',
+  'youtube.next',
+  'youtube.previous',
   'youtube.playPause',
   'youtube.seekBy',
   'youtube.setVolume',
@@ -110,6 +114,23 @@ export const authAckSchema = z
   })
   .strict()
 
+function isExactHttpOriginPattern(value: string): boolean {
+  if (!value.endsWith('/*')) return false
+  const origin = value.slice(0, -2)
+  try {
+    const url = new URL(origin)
+    return (
+      ['http:', 'https:'].includes(url.protocol) &&
+      !url.username &&
+      !url.password &&
+      !url.hostname.includes('*') &&
+      url.origin === origin
+    )
+  } catch {
+    return false
+  }
+}
+
 export const extensionStatusSchema = z
   .object({
     type: z.literal('extension_status'),
@@ -121,7 +142,7 @@ export const extensionStatusSchema = z
           .trim()
           .min(6)
           .max(500)
-          .regex(/^https?:\/\/[^\s]+\/\*$/)
+          .refine(isExactHttpOriginPattern, 'An exact HTTP(S) origin grant is required.')
       )
       .max(200),
     activeTabOrigin: z.string().url().optional()
@@ -171,7 +192,7 @@ export function commandMacPayload(
 }
 
 export function responseMacPayload(response: {
-  version: 1
+  version: 2
   requestId: string
   sequence: number
   result: BrowserCommandResult<unknown>

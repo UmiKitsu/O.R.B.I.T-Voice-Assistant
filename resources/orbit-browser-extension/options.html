@@ -27,12 +27,13 @@
       <label>Orbit port <input id="port" inputmode="numeric" maxlength="5" placeholder="43117" /></label>
       <label>Pairing code <input id="code" inputmode="numeric" maxlength="6" placeholder="000000" /></label>
       <button id="pair">Pair with Orbit</button>
+      <button id="retry" class="secondary">Retry connection</button>
       <button id="disconnect" class="secondary">Forget pairing</button>
       <p id="status" role="status">Loading status…</p>
+      <ul id="diagnostics"></ul>
 
-      <h2>Optional site access</h2>
-      <p>Stage two access is granted one origin at a time. Passwords, payment fields, uploads, downloads, protected Chrome pages, and arbitrary scripts remain blocked.</p>
-      <button id="grant-site">Grant current site</button>
+      <h2>Granted site access</h2>
+      <p>Use the extension toolbar popup while a web page is active to grant or revoke that exact origin. Passwords, payment fields, uploads, downloads, protected Chrome pages, and arbitrary scripts remain blocked.</p>
       <button id="refresh-sites" class="secondary">Refresh sites</button>
       <ul id="sites"></ul>
     </main>

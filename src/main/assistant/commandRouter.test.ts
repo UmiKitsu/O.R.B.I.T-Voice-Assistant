@@ -49,7 +49,10 @@ describe('routeDeterministicCommand', () => {
       'browser.searchYouTube',
       { query: 'TypeScript tutorials' }
     ],
-    ['Pause the YouTube video.', 'Play or pause the YouTube video', 'youtube.playPause', {}],
+    ['Pause the YouTube video.', 'Pause the YouTube video', 'youtube.pause', {}],
+    ['Resume the YouTube video.', 'Resume the YouTube video', 'youtube.play', {}],
+    ['Skip the YouTube video.', 'Play the next YouTube video', 'youtube.next', {}],
+    ['Previous YouTube video.', 'Play the previous YouTube video', 'youtube.previous', {}],
     ['Skip forward thirty seconds.', 'Seek the YouTube video', 'youtube.seekBy', { seconds: 30 }],
     ['Skip backward 15 seconds.', 'Seek the YouTube video', 'youtube.seekBy', { seconds: -15 }],
     [
@@ -150,11 +153,48 @@ describe('context-aware routing', () => {
     expect(routeCommand('Play Minecraft tutorials on YouTube.')).toMatchObject({
       actions: [{ capability: 'youtube.playSearch', parameters: { query: 'Minecraft tutorials' } }]
     })
-    expect(routeCommand('pause it', { lastMediaApplication: 'youtube' })).toMatchObject({
-      actions: [{ capability: 'youtube.playPause', parameters: {} }]
+    expect(
+      routeCommand('pause it', {
+        lastMediaApplication: 'youtube',
+        confirmedYouTubePlayback: true
+      })
+    ).toMatchObject({
+      actions: [{ capability: 'youtube.pause', parameters: {} }]
     })
-    expect(routeCommand('resume it', { lastMediaApplication: 'youtube' })).toMatchObject({
-      actions: [{ capability: 'youtube.playPause', parameters: {} }]
+    expect(
+      routeCommand('resume it', {
+        lastMediaApplication: 'youtube',
+        confirmedYouTubePlayback: true
+      })
+    ).toMatchObject({
+      actions: [{ capability: 'youtube.play', parameters: {} }]
+    })
+    expect(
+      routeCommand('skip it', {
+        lastMediaApplication: 'youtube',
+        confirmedYouTubePlayback: true
+      })
+    ).toMatchObject({
+      actions: [{ capability: 'youtube.next', parameters: {} }]
+    })
+    expect(
+      routeCommand('previous', {
+        lastMediaApplication: 'youtube',
+        confirmedYouTubePlayback: true
+      })
+    ).toMatchObject({
+      actions: [{ capability: 'youtube.previous', parameters: {} }]
+    })
+    expect(routeCommand('skip it', { lastMediaApplication: 'spotify' })).toMatchObject({
+      actions: [{ capability: 'media.next', parameters: {} }]
+    })
+    expect(
+      routeCommand('skip it', {
+        lastMediaApplication: 'youtube',
+        confirmedYouTubePlayback: false
+      })
+    ).toMatchObject({
+      actions: [{ capability: 'media.next', parameters: {} }]
     })
   })
 

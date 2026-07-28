@@ -211,7 +211,6 @@ export type OrbitSettings = {
   preferredMusicProvider: MusicProvider
   musicFallbackEnabled: boolean
   browserControlEnabled: boolean
-  generalBrowserAutomationEnabled: boolean
 }
 
 export type AssistantEffect = 'stop-speaking' | 'disable'
@@ -231,10 +230,28 @@ export type SpotifyConnectionStatus = {
   product?: string
 }
 
+export type BrowserConnectionPhase =
+  | 'unpaired'
+  | 'pairing'
+  | 'connecting'
+  | 'authenticating'
+  | 'connected'
+  | 'reconnecting'
+  | 'error'
+
+export type BrowserConnectionError = {
+  code: string
+  message: string
+}
+
 export type BrowserConnectionStatus = {
   paired: boolean
   connected: boolean
   browser: 'chrome'
+  phase: BrowserConnectionPhase
+  activePort?: number
+  retryAt?: number
+  lastError?: BrowserConnectionError
   extensionVersion?: string
   lastSeenAt?: number
   grantedOrigins: string[]

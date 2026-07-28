@@ -1,12 +1,23 @@
 /* global chrome */
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
+import {
+  migrateExactOriginPatterns,
+  normalizeExactOrigin
+} from './origin-grants.js'
+import { navigateYouTubePlayer, setYouTubePlayback } from './youtube-controls.js'
 import { evaluateYouTubePlaybackMeasurement } from './youtube-playback.js'
 import { selectFirstRegularYouTubeVideo } from './youtube-selection.js'
 
-const PROTOCOL_VERSION = 1
+const PROTOCOL_VERSION = 2
 const SOCKET_PATH = '/orbit-browser-v1'
 const REQUEST_TTL_MS = 60_000
+const PORT_MIN = 43117
+const PORT_MAX = 43127
+const HEARTBEAT_INTERVAL_MS = 20000
+const AUTHENTICATED_CONTACT_TIMEOUT_MS = 60000
+const RETRY_ALARM = 'orbit-browser-reconnect'
+const RETRY_DELAYS_MS = [30000, 60000, 120000, 300000]
 const EXTENSION_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '')
 const EXTENSION_VERSION = chrome.runtime.getManifest().version
 const KNOWN_CAPABILITIES = new Set([
@@ -21,6 +32,10 @@ const KNOWN_CAPABILITIES = new Set([
   'browser.reload',
   'browser.scroll',
   'youtube.playSearch',
+  'youtube.play',
+  'youtube.pause',
+  'youtube.next',
+  'youtube.previous',
   'youtube.playPause',
   'youtube.seekBy',
   'youtube.setVolume',
@@ -37,7 +52,6 @@ const KNOWN_CAPABILITIES = new Set([
 
 let socket = null
 let socketAuthenticated = false
-let reconnectTimer = null
 let heartbeatTimer = null
 let pairingAttempt = null
 let authClientNonce = null
@@ -45,6 +59,14 @@ let lastCommandSequence = 0
 let pairResolver = null
 let pairRejecter = null
 let activeCommands = new Map()
+let connectionPhase = 'unpaired'
+let activePort = null
+let retryAt = null
+let retryAttempt = 0
+let lastError = null
+let lastAuthenticatedContactAt = 0
+let connectionAttempt = null
+let connectionGeneration = 0
 
 function normalizeJson(value) {
   if (Array.isArray(value)) return value.map(normalizeJson)
@@ -130,18 +152,74 @@ function parseSafeUrl(value) {
   }
 }
 
-function originPattern(value) {
-  const url = parseSafeUrl(value)
-  return url ? `${url.origin}/*` : null
+async function getGrantedOriginAllowlist() {
+  const stored = await chrome.storage.local.get([
+    'orbitGrantedOrigins',
+    'orbitOriginAllowlistMigrated'
+  ])
+  const existing = Array.isArray(stored.orbitGrantedOrigins)
+    ? stored.orbitGrantedOrigins.flatMap((origin) => {
+        const normalized = normalizeExactOrigin(origin)
+        return normalized ? [normalized] : []
+      })
+    : []
+  if (stored.orbitOriginAllowlistMigrated === true) return [...new Set(existing)].sort()
+
+  const permissions = await chrome.permissions.getAll()
+  const origins = migrateExactOriginPatterns(permissions.origins ?? [], existing)
+  await chrome.storage.local.set({
+    orbitGrantedOrigins: origins,
+    orbitOriginAllowlistMigrated: true
+  })
+  return origins
+}
+
+async function setGrantedOrigin(origin, granted) {
+  const normalized = normalizeExactOrigin(origin)
+  if (!normalized) return false
+  const existing = await getGrantedOriginAllowlist()
+  const next = granted
+    ? [...new Set([...existing, normalized])].sort()
+    : existing.filter((candidate) => candidate !== normalized)
+  await chrome.storage.local.set({
+    orbitGrantedOrigins: next,
+    orbitOriginAllowlistMigrated: true
+  })
+  return true
+}
+
+async function getEffectiveGrantedOrigins() {
+  const allowed = await getGrantedOriginAllowlist()
+  const checks = await Promise.all(
+    allowed.map(async (origin) => ({
+      origin,
+      granted: await chrome.permissions.contains({ origins: [`${origin}/*`] })
+    }))
+  )
+  const effective = checks.filter((entry) => entry.granted).map((entry) => entry.origin)
+  if (effective.length !== allowed.length) {
+    await chrome.storage.local.set({
+      orbitGrantedOrigins: effective,
+      orbitOriginAllowlistMigrated: true
+    })
+  }
+  return effective
 }
 
 async function getPairing() {
-  const stored = await chrome.storage.local.get(['orbitPort', 'orbitSecret', 'orbitExtensionOrigin'])
+  const stored = await chrome.storage.local.get([
+    'orbitPort',
+    'orbitSecret',
+    'orbitExtensionOrigin',
+    'orbitPairingConfirmed'
+  ])
+  const secret = typeof stored.orbitSecret === 'string' ? stored.orbitSecret : null
   return {
     port: Number.isInteger(stored.orbitPort) ? stored.orbitPort : null,
-    secret: typeof stored.orbitSecret === 'string' ? stored.orbitSecret : null,
+    secret,
     extensionOrigin:
-      typeof stored.orbitExtensionOrigin === 'string' ? stored.orbitExtensionOrigin : null
+      typeof stored.orbitExtensionOrigin === 'string' ? stored.orbitExtensionOrigin : null,
+    confirmed: Boolean(secret) && stored.orbitPairingConfirmed !== false
   }
 }
 
@@ -194,6 +272,13 @@ async function requireControllableTab() {
   return { tab }
 }
 
+async function requireActiveWebTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (!tab?.id || !tab.url || !parseSafeUrl(tab.url)) return { error: protectedPageFailure() }
+  await setControlledTabId(tab.id)
+  return { tab }
+}
+
 async function waitForTabComplete(tabId, timeoutMs = 12000) {
   const initial = await chrome.tabs.get(tabId).catch(() => null)
   if (initial?.status === 'complete') return initial
@@ -213,8 +298,11 @@ async function waitForTabComplete(tabId, timeoutMs = 12000) {
 }
 
 async function hasPagePermission(url) {
-  const pattern = originPattern(url)
-  return pattern ? chrome.permissions.contains({ origins: [pattern] }) : false
+  const parsed = parseSafeUrl(url)
+  if (!parsed) return false
+  const allowed = await getEffectiveGrantedOrigins()
+  if (!allowed.includes(parsed.origin)) return false
+  return chrome.permissions.contains({ origins: [`${parsed.origin}/*`] })
 }
 
 async function executeFixedScript(tabId, func, args = []) {
@@ -757,9 +845,19 @@ async function withYouTubeTab(command) {
   if (!tab.url.startsWith('https://www.youtube.com/')) {
     return failure('YOUTUBE_NOT_CONTROLLED', 'The controlled tab is not a supported YouTube page.')
   }
-  const result = await command(tab)
-  if (result?.ok && result.data) result.data.controlledTabId = tab.id
-  return result
+  try {
+    const result = await command(tab)
+    if (result?.ok && result.data) result.data.controlledTabId = tab.id
+    return result
+  } catch {
+    const tabStillExists = await chrome.tabs.get(tab.id).then(
+      () => true,
+      () => false
+    )
+    return tabStillExists
+      ? failure('YOUTUBE_CONTROL_FAILED', 'The YouTube player control failed.')
+      : failure('YOUTUBE_TAB_CLOSED', 'The controlled YouTube tab was closed.')
+  }
 }
 
 async function executeCapability(capability, parameters, signal) {
@@ -837,9 +935,9 @@ async function executeCapability(capability, parameters, signal) {
     ) {
       return failure('BROWSER_INVALID_PARAMETERS', 'The scroll parameters are invalid.')
     }
-    const required = await requireControllableTab()
+    const required = await requireActiveWebTab()
     if (required.error) return required.error
-    if (!(await hasPagePermission(required.tab.url))) return failure('BROWSER_SITE_ACCESS_REQUIRED', 'Grant this site to the Orbit extension before page actions.')
+    if (!(await hasPagePermission(required.tab.url))) return failure('BROWSER_SITE_ACCESS_REQUIRED', 'Grant this exact site from the Orbit extension toolbar before page actions.')
     return executeFixedScript(required.tab.id, scrollPage, [parameters.direction, parameters.amount])
   }
 
@@ -887,6 +985,18 @@ async function executeCapability(capability, parameters, signal) {
     return playback ?? failure('YOUTUBE_PLAYBACK_NOT_VERIFIED', 'The YouTube video could not be verified.')
   }
 
+  if (capability === 'youtube.play' || capability === 'youtube.pause') {
+    if (!hasOnlyKeys(parameters, [])) return failure('BROWSER_INVALID_PARAMETERS', 'Invalid YouTube parameters.')
+    return withYouTubeTab((tab) =>
+      executeFixedScript(tab.id, setYouTubePlayback, [capability === 'youtube.play'])
+    )
+  }
+  if (capability === 'youtube.next' || capability === 'youtube.previous') {
+    if (!hasOnlyKeys(parameters, [])) return failure('BROWSER_INVALID_PARAMETERS', 'Invalid YouTube parameters.')
+    return withYouTubeTab((tab) =>
+      executeFixedScript(tab.id, navigateYouTubePlayer, [capability === 'youtube.next' ? 'next' : 'previous'])
+    )
+  }
   if (capability === 'youtube.playPause') {
     if (!hasOnlyKeys(parameters, [])) return failure('BROWSER_INVALID_PARAMETERS', 'Invalid YouTube parameters.')
     return withYouTubeTab((tab) => executeFixedScript(tab.id, toggleYouTubePlayback))
@@ -916,10 +1026,10 @@ async function executeCapability(capability, parameters, signal) {
     return withYouTubeTab((tab) => executeFixedScript(tab.id, readYouTubePlaybackState))
   }
 
-  const stageTwo = await requireControllableTab()
+  const stageTwo = await requireActiveWebTab()
   if (stageTwo.error) return stageTwo.error
   if (!(await hasPagePermission(stageTwo.tab.url))) {
-    return failure('BROWSER_SITE_ACCESS_REQUIRED', 'Grant this site to the Orbit extension before page actions.')
+    return failure('BROWSER_SITE_ACCESS_REQUIRED', 'Grant this exact site from the Orbit extension toolbar before page actions.')
   }
   if (capability === 'browser.readVisiblePage') {
     if (!hasOnlyKeys(parameters, [])) return failure('BROWSER_INVALID_PARAMETERS', 'Invalid page-read parameters.')
@@ -1022,11 +1132,13 @@ async function handleCommand(message) {
 
 async function sendExtensionStatus() {
   if (!socketAuthenticated || !socket || socket.readyState !== WebSocket.OPEN) return
-  const permissions = await chrome.permissions.getAll()
-  const controlled = await getControlledTab()
+  const grantedOrigins = await getEffectiveGrantedOrigins()
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
   let activeTabOrigin
   try {
-    activeTabOrigin = controlled?.url ? new URL(controlled.url).origin : undefined
+    activeTabOrigin = activeTab?.url && parseSafeUrl(activeTab.url)
+      ? new URL(activeTab.url).origin
+      : undefined
   } catch {
     activeTabOrigin = undefined
   }
@@ -1034,7 +1146,7 @@ async function sendExtensionStatus() {
     JSON.stringify({
       type: 'extension_status',
       version: PROTOCOL_VERSION,
-      grantedOrigins: [...new Set(permissions.origins ?? [])].sort(),
+      grantedOrigins: grantedOrigins.map((origin) => `${origin}/*`),
       ...(activeTabOrigin ? { activeTabOrigin } : {})
     })
   )
@@ -1045,191 +1157,469 @@ function clearSocketTimers() {
   heartbeatTimer = null
 }
 
+async function persistLifecycle() {
+  await chrome.storage.session.set({
+    orbitConnectionLifecycle: {
+      phase: connectionPhase,
+      activePort,
+      retryAt,
+      lastError,
+      retryAttempt
+    }
+  })
+}
+
+function notifyConnectionStatus() {
+  void persistLifecycle().catch(() => undefined)
+  chrome.runtime.sendMessage({ type: 'connection-status' }).catch(() => undefined)
+}
+
+function setLifecycle(phase, options = {}) {
+  connectionPhase = phase
+  if ('activePort' in options) activePort = options.activePort
+  if ('retryAt' in options) retryAt = options.retryAt
+  if ('lastError' in options) lastError = options.lastError
+  notifyConnectionStatus()
+}
+
+async function getSafeConnectionStatus() {
+  const [pairing, grantedOrigins] = await Promise.all([
+    getPairing(),
+    getEffectiveGrantedOrigins()
+  ])
+  return {
+    paired: Boolean(pairing.confirmed && pairing.port),
+    connected: socketAuthenticated,
+    phase: connectionPhase,
+    activePort: activePort ?? pairing.port,
+    retryAt,
+    lastError,
+    grantedOrigins
+  }
+}
+
 function startHeartbeat() {
   clearSocketTimers()
   heartbeatTimer = setInterval(() => {
     if (!socketAuthenticated || !socket || socket.readyState !== WebSocket.OPEN) return
-    socket.send(JSON.stringify({ type: 'heartbeat', version: PROTOCOL_VERSION, timestamp: Date.now() }))
+    const now = Date.now()
+    if (
+      !lastAuthenticatedContactAt ||
+      now - lastAuthenticatedContactAt > AUTHENTICATED_CONTACT_TIMEOUT_MS
+    ) {
+      lastError = {
+        code: 'BROWSER_HEARTBEAT_TIMEOUT',
+        message: 'Orbit stopped responding. The extension will reconnect automatically.'
+      }
+      socket.close(4004, 'Authenticated heartbeat timeout')
+      return
+    }
+    socket.send(JSON.stringify({ type: 'heartbeat', version: PROTOCOL_VERSION, timestamp: now }))
     void sendExtensionStatus()
-  }, 20000)
+  }, HEARTBEAT_INTERVAL_MS)
 }
 
-function scheduleReconnect() {
-  if (reconnectTimer) return
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    void connectToOrbit()
-  }, 3000)
+function orderedPorts(savedPort) {
+  const allPorts = Array.from({ length: PORT_MAX - PORT_MIN + 1 }, (_, index) => PORT_MIN + index)
+  return Number.isInteger(savedPort) && savedPort >= PORT_MIN && savedPort <= PORT_MAX
+    ? [savedPort, ...allPorts.filter((port) => port !== savedPort)]
+    : allPorts
 }
 
-async function handleSocketMessage(message) {
+async function clearRetrySchedule() {
+  await chrome.alarms.clear(RETRY_ALARM).catch(() => false)
+  retryAt = null
+}
+
+async function scheduleReconnect(error) {
   const pairing = await getPairing()
-  if (message?.type === 'pair_success' && pairingAttempt) {
-    if (
-      message.version !== PROTOCOL_VERSION ||
-      message.extensionOrigin !== EXTENSION_ORIGIN ||
-      !Number.isInteger(message.port) ||
-      message.port < 43117 ||
-      message.port > 43127 ||
-      typeof message.secret !== 'string' ||
-      !/^[A-Za-z0-9+/]{43}=$/.test(message.secret)
-    ) {
-      pairRejecter?.(new Error('Orbit returned an invalid pairing response.'))
-      return
-    }
-    const resolvePairing = pairResolver
-    const rejectPairing = pairRejecter
-    pairingAttempt = null
-    pairResolver = null
-    pairRejecter = null
-    try {
-      await chrome.storage.local.set({
-        orbitPort: message.port,
-        orbitSecret: message.secret,
-        orbitExtensionOrigin: EXTENSION_ORIGIN
-      })
-      lastCommandSequence = 0
-      resolvePairing?.()
-    } catch {
-      rejectPairing?.(new Error('Chrome could not store the pairing secret.'))
-    }
+  if (!pairing.secret) {
+    retryAt = null
+    retryAttempt = 0
+    setLifecycle('unpaired', { activePort: null, lastError: null, retryAt: null })
     return
   }
-  if (message?.type === 'auth_challenge' && pairing.secret && authClientNonce) {
-    const payload = {
-      version: message.version,
-      clientNonce: message.clientNonce,
-      serverNonce: message.serverNonce,
-      timestamp: message.timestamp
-    }
-    if (
-      message.version !== PROTOCOL_VERSION ||
-      message.clientNonce !== authClientNonce ||
-      typeof message.serverNonce !== 'string' ||
-      Math.abs(Date.now() - message.timestamp) > 30000 ||
-      !(await verifyMac(pairing.secret, 'auth-server', payload, message.mac))
-    ) {
-      socket?.close(1008, 'Server authentication failed')
-      return
-    }
-    const ack = {
-      type: 'auth_ack',
-      version: PROTOCOL_VERSION,
-      clientNonce: authClientNonce,
-      serverNonce: message.serverNonce
-    }
-    socket?.send(JSON.stringify({ ...ack, mac: await createMac(pairing.secret, 'auth-ack', ack) }))
-    return
+  const delay = RETRY_DELAYS_MS[Math.min(retryAttempt, RETRY_DELAYS_MS.length - 1)]
+  retryAttempt = Math.min(retryAttempt + 1, RETRY_DELAYS_MS.length - 1)
+  retryAt = Date.now() + delay
+  lastError = error ?? {
+    code: 'BROWSER_BRIDGE_UNAVAILABLE',
+    message: 'Orbit is not available on the local browser-control ports.'
   }
-  if (message?.type === 'authenticated' && message.version === PROTOCOL_VERSION) {
-    socketAuthenticated = true
-    lastCommandSequence = 0
-    startHeartbeat()
-    await sendExtensionStatus()
-    chrome.runtime.sendMessage({ type: 'connection-status' }).catch(() => undefined)
-    return
-  }
-  if (message?.type === 'command') {
-    await handleCommand(message)
-    return
-  }
-  if (message?.type === 'cancel' && message.version === PROTOCOL_VERSION && typeof message.requestId === 'string') {
-    activeCommands.get(message.requestId)?.abort()
-    return
-  }
-  if (message?.type === 'heartbeat' && message.version === PROTOCOL_VERSION) {
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: 'heartbeat', version: PROTOCOL_VERSION, timestamp: Date.now() }))
-    }
-  }
+  connectionPhase = 'reconnecting'
+  await chrome.alarms.create(RETRY_ALARM, { delayInMinutes: delay / 60000 })
+  notifyConnectionStatus()
 }
 
-async function connectToOrbit(pairOverride) {
-  if (reconnectTimer) clearTimeout(reconnectTimer)
-  reconnectTimer = null
-  const pairing = await getPairing()
-  const port = pairOverride?.port ?? pairing.port
-  if (!Number.isInteger(port) || port < 43117 || port > 43127) return
-  if (socket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(socket.readyState)) socket.close()
-  socketAuthenticated = false
-  clearSocketTimers()
-  authClientNonce = null
-  pairingAttempt = pairOverride ?? null
-  const currentSocket = new WebSocket(`ws://127.0.0.1:${port}${SOCKET_PATH}`)
-  socket = currentSocket
-  currentSocket.addEventListener('open', async () => {
-    if (socket !== currentSocket) return
-    if (pairOverride) {
-      currentSocket.send(
-        JSON.stringify({
-          type: 'pair',
-          version: PROTOCOL_VERSION,
-          code: pairOverride.code,
-          extensionOrigin: EXTENSION_ORIGIN,
-          extensionVersion: EXTENSION_VERSION
-        })
-      )
-      return
+function connectPort(port, pairOverride, generation) {
+  return new Promise((resolve) => {
+    let settled = false
+    let authenticated = false
+    let outcome = 'failed'
+    const finish = (nextOutcome) => {
+      if (settled) return
+      settled = true
+      outcome = nextOutcome
+      clearTimeout(timeout)
+      resolve(nextOutcome)
     }
-    if (!pairing.secret || pairing.extensionOrigin !== EXTENSION_ORIGIN) return
-    authClientNonce = randomNonce()
-    const hello = {
-      type: 'auth_hello',
-      version: PROTOCOL_VERSION,
-      extensionOrigin: EXTENSION_ORIGIN,
-      extensionVersion: EXTENSION_VERSION,
-      nonce: authClientNonce,
-      timestamp: Date.now()
-    }
-    currentSocket.send(JSON.stringify({ ...hello, mac: await createMac(pairing.secret, 'auth-client', hello) }))
-  })
-  currentSocket.addEventListener('message', (event) => {
-    try {
-      void handleSocketMessage(JSON.parse(event.data))
-    } catch {
-      currentSocket.close(1003, 'Invalid Orbit message')
-    }
-  })
-  currentSocket.addEventListener('close', () => {
-    if (socket !== currentSocket) return
-    socket = null
+    const timeout = setTimeout(() => {
+      if (socket === currentSocket) currentSocket.close(4005, 'Connection attempt timed out')
+      finish('failed')
+    }, pairOverride ? 8000 : 1500)
+
+    const currentSocket = new WebSocket(`ws://127.0.0.1:${port}${SOCKET_PATH}`)
+    socket = currentSocket
     socketAuthenticated = false
     clearSocketTimers()
-    chrome.runtime.sendMessage({ type: 'connection-status' }).catch(() => undefined)
-    if (pairOverride && pairRejecter) {
-      pairRejecter(new Error('Orbit closed the pairing connection.'))
-      pairResolver = null
-      pairRejecter = null
-      pairingAttempt = null
-      return
-    }
-    void getPairing().then((latest) => {
-      if (latest.secret && latest.port) scheduleReconnect()
+    authClientNonce = null
+    activePort = port
+    pairingAttempt = pairOverride ?? null
+    setLifecycle(pairOverride ? 'pairing' : 'connecting', {
+      activePort: port,
+      retryAt: null,
+      lastError: null
     })
+
+    currentSocket.addEventListener('open', async () => {
+      if (generation !== connectionGeneration || socket !== currentSocket) {
+        currentSocket.close(4001, 'A newer connection attempt replaced this connection')
+        return
+      }
+      if (pairOverride) {
+        currentSocket.send(
+          JSON.stringify({
+            type: 'pair',
+            version: PROTOCOL_VERSION,
+            code: pairOverride.code,
+            extensionOrigin: EXTENSION_ORIGIN,
+            extensionVersion: EXTENSION_VERSION
+          })
+        )
+        return
+      }
+      const pairing = await getPairing()
+      if (!pairing.secret || pairing.extensionOrigin !== EXTENSION_ORIGIN) {
+        finish('fatal')
+        currentSocket.close(1008, 'Pairing is unavailable')
+        return
+      }
+      authClientNonce = randomNonce()
+      const hello = {
+        type: 'auth_hello',
+        version: PROTOCOL_VERSION,
+        extensionOrigin: EXTENSION_ORIGIN,
+        extensionVersion: EXTENSION_VERSION,
+        nonce: authClientNonce,
+        timestamp: Date.now()
+      }
+      currentSocket.send(
+        JSON.stringify({
+          ...hello,
+          mac: await createMac(pairing.secret, 'auth-client', hello)
+        })
+      )
+      setLifecycle('authenticating', { activePort: port, retryAt: null, lastError: null })
+    })
+
+    currentSocket.addEventListener('message', (event) => {
+      void (async () => {
+        let message
+        try {
+          message = JSON.parse(event.data)
+        } catch {
+          currentSocket.close(1003, 'Invalid Orbit message')
+          return
+        }
+        if (generation !== connectionGeneration || socket !== currentSocket) return
+
+        if (message?.type === 'protocol_error') {
+          const incompatible = message.code === 'BROWSER_PROTOCOL_INCOMPATIBLE'
+          const safeMessage = incompatible
+            ? 'Reload the Orbit Browser Control extension to use the current browser protocol.'
+            : typeof message.message === 'string' && message.message.length <= 500
+              ? message.message
+              : 'Orbit rejected the browser connection.'
+          lastError = {
+            code: incompatible ? 'BROWSER_PROTOCOL_INCOMPATIBLE' : 'BROWSER_PROTOCOL_ERROR',
+            message: safeMessage
+          }
+          setLifecycle('error', { activePort: port, retryAt: null, lastError })
+          finish(incompatible ? 'fatal' : 'failed')
+          currentSocket.close(1002, 'Protocol error')
+          return
+        }
+
+        if (message?.type === 'pair_success' && pairingAttempt) {
+          if (
+            message.version !== PROTOCOL_VERSION ||
+            message.extensionOrigin !== EXTENSION_ORIGIN ||
+            !Number.isInteger(message.port) ||
+            message.port < PORT_MIN ||
+            message.port > PORT_MAX ||
+            typeof message.secret !== 'string' ||
+            !/^[A-Za-z0-9+/]{43}=$/.test(message.secret)
+          ) {
+            lastError = {
+              code: 'PAIRING_RESPONSE_INVALID',
+              message: 'Orbit returned an invalid pairing response.'
+            }
+            setLifecycle('error', { activePort: port, retryAt: null, lastError })
+            finish('fatal')
+            currentSocket.close(1008, 'Invalid pairing response')
+            return
+          }
+          try {
+            await chrome.storage.local.set({
+              orbitPort: message.port,
+              orbitSecret: message.secret,
+              orbitExtensionOrigin: EXTENSION_ORIGIN,
+              orbitPairingConfirmed: false
+            })
+            pairingAttempt = null
+            lastCommandSequence = 0
+            setLifecycle('authenticating', {
+              activePort: message.port,
+              retryAt: null,
+              lastError: null
+            })
+            finish('paired')
+            currentSocket.close(4000, 'Reconnect with authentication')
+          } catch {
+            lastError = {
+              code: 'PAIRING_STORAGE_FAILED',
+              message: 'Chrome could not store the pairing secret securely.'
+            }
+            setLifecycle('error', { activePort: port, retryAt: null, lastError })
+            finish('fatal')
+            currentSocket.close(1011, 'Pairing storage failed')
+          }
+          return
+        }
+
+        const pairing = await getPairing()
+        if (message?.type === 'auth_challenge' && pairing.secret && authClientNonce) {
+          const payload = {
+            version: message.version,
+            clientNonce: message.clientNonce,
+            serverNonce: message.serverNonce,
+            timestamp: message.timestamp
+          }
+          if (
+            message.version !== PROTOCOL_VERSION ||
+            message.clientNonce !== authClientNonce ||
+            typeof message.serverNonce !== 'string' ||
+            Math.abs(Date.now() - message.timestamp) > 30000 ||
+            !(await verifyMac(pairing.secret, 'auth-server', payload, message.mac))
+          ) {
+            lastError = {
+              code: 'AUTHENTICATION_FAILED',
+              message: 'Orbit browser authentication failed. Pair the extension again.'
+            }
+            setLifecycle('error', { activePort: port, retryAt: null, lastError })
+            finish('fatal')
+            currentSocket.close(1008, 'Server authentication failed')
+            return
+          }
+          lastAuthenticatedContactAt = Date.now()
+          const ack = {
+            type: 'auth_ack',
+            version: PROTOCOL_VERSION,
+            clientNonce: authClientNonce,
+            serverNonce: message.serverNonce
+          }
+          currentSocket.send(
+            JSON.stringify({
+              ...ack,
+              mac: await createMac(pairing.secret, 'auth-ack', ack)
+            })
+          )
+          return
+        }
+
+        if (message?.type === 'authenticated' && message.version === PROTOCOL_VERSION) {
+          authenticated = true
+          socketAuthenticated = true
+          lastCommandSequence = 0
+          lastAuthenticatedContactAt = Date.now()
+          retryAttempt = 0
+          await clearRetrySchedule()
+          await chrome.storage.local.set({ orbitPort: port, orbitPairingConfirmed: true })
+          setLifecycle('connected', { activePort: port, retryAt: null, lastError: null })
+          startHeartbeat()
+          await sendExtensionStatus()
+          finish('connected')
+          const resolvePairing = pairResolver
+          pairResolver = null
+          pairRejecter = null
+          resolvePairing?.()
+          return
+        }
+
+        if (!socketAuthenticated) return
+        lastAuthenticatedContactAt = Date.now()
+        if (message?.type === 'command') {
+          await handleCommand(message)
+          return
+        }
+        if (
+          message?.type === 'cancel' &&
+          message.version === PROTOCOL_VERSION &&
+          typeof message.requestId === 'string'
+        ) {
+          activeCommands.get(message.requestId)?.abort()
+          return
+        }
+        if (message?.type === 'heartbeat' && message.version === PROTOCOL_VERSION) {
+          if (currentSocket.readyState === WebSocket.OPEN) {
+            currentSocket.send(
+              JSON.stringify({ type: 'heartbeat', version: PROTOCOL_VERSION, timestamp: Date.now() })
+            )
+          }
+        }
+      })().catch(() => {
+        if (currentSocket.readyState === WebSocket.OPEN) currentSocket.close(1011, 'Connection handling failed')
+      })
+    })
+
+    currentSocket.addEventListener('close', () => {
+      clearTimeout(timeout)
+      if (socket === currentSocket) {
+        socket = null
+        socketAuthenticated = false
+        clearSocketTimers()
+      }
+      if (!settled) finish('failed')
+      if (
+        authenticated &&
+        generation === connectionGeneration &&
+        outcome === 'connected'
+      ) {
+        lastError ??= {
+          code: 'BROWSER_EXTENSION_DISCONNECTED',
+          message: 'The browser connection closed and will retry automatically.'
+        }
+        setLifecycle('reconnecting', { activePort: port, retryAt: null, lastError })
+        void (async () => {
+          const finishingAttempt = connectionAttempt
+          if (finishingAttempt) await finishingAttempt.catch(() => false)
+          if (!socketAuthenticated) await requestConnection('authenticated-disconnect')
+        })()
+      }
+    })
+    currentSocket.addEventListener('error', () => undefined)
   })
-  currentSocket.addEventListener('error', () => undefined)
+}
+
+async function runConnectionAttempt(pairOverride, generation) {
+  if (pairOverride) {
+    const pairedOutcome = await connectPort(pairOverride.port, pairOverride, generation)
+    if (pairedOutcome !== 'paired' || generation !== connectionGeneration) {
+      if (pairedOutcome !== 'fatal') {
+        await scheduleReconnect({
+          code: 'PAIRING_CONNECTION_FAILED',
+          message: 'Orbit could not complete the pairing connection.'
+        })
+      }
+      return false
+    }
+  }
+
+  const pairing = await getPairing()
+  if (!pairing.secret || pairing.extensionOrigin !== EXTENSION_ORIGIN) {
+    setLifecycle('unpaired', { activePort: null, retryAt: null, lastError: null })
+    return false
+  }
+
+  for (const port of orderedPorts(pairing.port)) {
+    if (generation !== connectionGeneration) return false
+    const outcome = await connectPort(port, null, generation)
+    if (outcome === 'connected') return true
+    if (outcome === 'fatal') return false
+  }
+
+  await scheduleReconnect({
+    code: 'BROWSER_BRIDGE_UNAVAILABLE',
+    message: 'Orbit is not available on localhost ports 43117 through 43127.'
+  })
+  return false
+}
+
+function requestConnection(_reason, pairOverride = null, force = false) {
+  if (connectionAttempt && !force) return connectionAttempt
+  if (socketAuthenticated && !force) return Promise.resolve(true)
+  if (force) {
+    connectionGeneration += 1
+    const previousSocket = socket
+    socket = null
+    socketAuthenticated = false
+    previousSocket?.close(4001, 'Manual connection retry')
+  }
+  const generation = ++connectionGeneration
+  const nextAttempt = runConnectionAttempt(pairOverride, generation)
+  connectionAttempt = nextAttempt
+  void nextAttempt.finally(() => {
+    if (connectionAttempt === nextAttempt) connectionAttempt = null
+  })
+  return nextAttempt
 }
 
 async function pairWithOrbit(port, code) {
+  if (!Number.isInteger(port) || port < PORT_MIN || port > PORT_MAX || !/^\d{6}$/.test(code)) {
+    return { ok: false, message: 'Enter a valid Orbit port and six-digit pairing code.' }
+  }
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
       pairResolver = null
       pairRejecter = null
       pairingAttempt = null
-      socket?.close()
-      resolve({ ok: false, message: 'Pairing timed out. Start a new pairing session in Orbit.' })
-    }, 12000)
+      resolve({
+        ok: false,
+        message: 'Pairing did not reach an authenticated connection. Start a new pairing session in Orbit.'
+      })
+    }, 15000)
     pairResolver = () => {
       clearTimeout(timeout)
-      resolve({ ok: true, message: 'Paired successfully. Reconnecting securely to Orbit…' })
-      setTimeout(() => void connectToOrbit(), 250)
+      resolve({ ok: true, message: 'Paired and connected securely to Orbit.' })
     }
     pairRejecter = (error) => {
       clearTimeout(timeout)
+      pairResolver = null
+      pairRejecter = null
       resolve({ ok: false, message: error.message || 'Pairing failed.' })
     }
-    void connectToOrbit({ port, code })
+    void clearRetrySchedule()
+      .then(() => requestConnection('pairing', { port, code }, true))
+      .then((connected) => {
+        if (!connected && pairRejecter) {
+          pairRejecter(new Error(lastError?.message || 'Pairing could not authenticate.'))
+        }
+      })
   })
+}
+
+async function forgetPairing() {
+  connectionGeneration += 1
+  await clearRetrySchedule()
+  const previousSocket = socket
+  socket = null
+  socketAuthenticated = false
+  previousSocket?.close(4003, 'Pairing forgotten')
+  clearSocketTimers()
+  await chrome.storage.local.remove([
+    'orbitPort',
+    'orbitSecret',
+    'orbitExtensionOrigin',
+    'orbitPairingConfirmed'
+  ])
+  await chrome.storage.session.remove(['controlledTabId', 'orbitConnectionLifecycle'])
+  pairingAttempt = null
+  pairResolver = null
+  pairRejecter = null
+  lastCommandSequence = 0
+  retryAttempt = 0
+  lastAuthenticatedContactAt = 0
+  setLifecycle('unpaired', { activePort: null, retryAt: null, lastError: null })
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -1238,45 +1628,82 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true
   }
   if (message?.type === 'forget-pairing') {
-    void (async () => {
-      if (reconnectTimer) clearTimeout(reconnectTimer)
-      reconnectTimer = null
-      socket?.close(4003, 'Pairing forgotten')
-      socket = null
-      socketAuthenticated = false
-      clearSocketTimers()
-      await chrome.storage.local.remove(['orbitPort', 'orbitSecret', 'orbitExtensionOrigin'])
-      lastCommandSequence = 0
-      await chrome.storage.session.remove('controlledTabId')
-      sendResponse({ ok: true })
-    })()
+    void forgetPairing().then(() => sendResponse({ ok: true }))
     return true
   }
   if (message?.type === 'get-status') {
-    void getPairing().then((pairing) =>
+    void getSafeConnectionStatus().then(sendResponse)
+    return true
+  }
+  if (message?.type === 'retry-connection' || message?.type === 'ui-opened') {
+    void clearRetrySchedule()
+      .then(() => requestConnection(message.type, null, message.type === 'retry-connection'))
+      .then((connected) =>
+        sendResponse({
+          ok: connected,
+          message: connected
+            ? 'Connected securely to Orbit.'
+            : lastError?.message || 'Orbit is not connected yet.'
+        })
+      )
+    return true
+  }
+  if (message?.type === 'get-origin-access') {
+    void (async () => {
+      const normalized = normalizeExactOrigin(message.origin)
+      const origins = await getEffectiveGrantedOrigins()
       sendResponse({
-        paired: Boolean(pairing.secret && pairing.port),
-        connected: socketAuthenticated,
-        port: pairing.port
+        ok: Boolean(normalized),
+        granted: Boolean(normalized && origins.includes(normalized))
       })
-    )
+    })()
+    return true
+  }
+  if (message?.type === 'site-granted' || message?.type === 'site-revoked') {
+    void (async () => {
+      const updated = await setGrantedOrigin(message.origin, message.type === 'site-granted')
+      if (updated) await sendExtensionStatus()
+      sendResponse({ ok: updated })
+    })()
     return true
   }
   if (message?.type === 'permissions-changed') {
-    void sendExtensionStatus().then(() => sendResponse({ ok: true }))
+    void getEffectiveGrantedOrigins()
+      .then(() => sendExtensionStatus())
+      .then(() => sendResponse({ ok: true }))
     return true
   }
   return false
 })
 
-chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage())
-chrome.runtime.onInstalled.addListener(() => chrome.runtime.openOptionsPage())
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== RETRY_ALARM) return
+  retryAt = null
+  void requestConnection('alarm')
+})
+chrome.runtime.onStartup.addListener(() => void requestConnection('chrome-startup'))
+chrome.runtime.onInstalled.addListener(() => {
+  void chrome.runtime.openOptionsPage()
+  void requestConnection('extension-installed')
+})
 chrome.tabs.onRemoved.addListener((tabId) => {
   void getControlledTabId().then((controlledTabId) => {
     if (controlledTabId === tabId) void setControlledTabId(null)
   })
 })
 chrome.permissions.onAdded.addListener(() => void sendExtensionStatus())
-chrome.permissions.onRemoved.addListener(() => void sendExtensionStatus())
+chrome.permissions.onRemoved.addListener(() => {
+  void getEffectiveGrantedOrigins().then(() => sendExtensionStatus())
+})
 
-void connectToOrbit()
+void (async () => {
+  const saved = await chrome.storage.session.get('orbitConnectionLifecycle')
+  const lifecycle = saved.orbitConnectionLifecycle
+  if (isPlainObject(lifecycle)) {
+    retryAttempt = Number.isInteger(lifecycle.retryAttempt) ? lifecycle.retryAttempt : 0
+    retryAt = Number.isFinite(lifecycle.retryAt) ? lifecycle.retryAt : null
+    lastError = isPlainObject(lifecycle.lastError) ? lifecycle.lastError : null
+  }
+  await getGrantedOriginAllowlist()
+  await requestConnection('service-worker-startup')
+})()

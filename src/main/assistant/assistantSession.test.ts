@@ -56,6 +56,36 @@ describe('assistant session context', () => {
     expect(createSessionContextMessage(session.context)?.content).toContain('spotify')
   })
 
+  it('keeps a verified YouTube session confirmed while the video is paused', () => {
+    const session = createAssistantSession()
+    recordSuccessfulExchange(
+      session,
+      'Pause the YouTube video',
+      'Paused the YouTube video.',
+      plan('youtube.pause', {}),
+      {
+        controlledTabId: 42,
+        videoId: 'dQw4w9WgXcQ',
+        title: 'Fixture video',
+        url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        paused: true,
+        ended: false,
+        muted: false,
+        volume: 50,
+        currentTime: 15,
+        duration: 300,
+        confirmedPlaying: false
+      }
+    )
+
+    expect(session.context).toMatchObject({
+      lastMediaApplication: 'youtube',
+      controlledBrowserTabId: 42,
+      selectedYouTubeVideoId: 'dQw4w9WgXcQ',
+      confirmedYouTubePlayback: true
+    })
+  })
+
   it('does not update context unless a successful exchange is explicitly recorded', () => {
     const session = createAssistantSession()
     expect(session.context).toEqual({})

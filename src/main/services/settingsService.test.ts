@@ -192,4 +192,22 @@ describe('settings validation', () => {
     expect(getSettings().speechVolume).toBe(0.4)
     expect(storage.store).toEqual({ ...DEFAULT_ORBIT_SETTINGS, speechVolume: 0.4 })
   })
+
+  it('removes the obsolete general browser automation setting without resetting preferences', () => {
+    const storage = memoryStorage({
+      ...DEFAULT_ORBIT_SETTINGS,
+      generalBrowserAutomationEnabled: true,
+      browserControlEnabled: true,
+      speechVolume: 0.55,
+      preferredMusicProvider: 'youtube'
+    })
+    setSettingsStorageForTests(storage)
+
+    expect(getSettings()).toMatchObject({
+      browserControlEnabled: true,
+      speechVolume: 0.55,
+      preferredMusicProvider: 'youtube'
+    })
+    expect(storage.store).not.toHaveProperty('generalBrowserAutomationEnabled')
+  })
 })

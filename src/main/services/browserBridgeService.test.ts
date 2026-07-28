@@ -44,8 +44,7 @@ function settings(browserControlEnabled: boolean): OrbitSettings {
     spotifyPlaybackMode: 'desktop',
     preferredMusicProvider: 'spotify',
     musicFallbackEnabled: true,
-    browserControlEnabled,
-    generalBrowserAutomationEnabled: false
+    browserControlEnabled
   }
 }
 
@@ -66,6 +65,7 @@ describe('browserBridgeService disconnected behavior', () => {
       paired: false,
       connected: false,
       browser: 'chrome',
+      phase: 'unpaired',
       grantedOrigins: []
     })
     expect(JSON.stringify(getBrowserStatus())).not.toMatch(/secret|nonce|hmac/i)

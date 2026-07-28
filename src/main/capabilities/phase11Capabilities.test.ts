@@ -103,6 +103,19 @@ describe('Phase 11 capabilities', () => {
     )
   })
 
+  it.each([
+    'youtube.play',
+    'youtube.pause',
+    'youtube.next',
+    'youtube.previous'
+  ])('registers %s without falling back to Windows media keys', async (capability) => {
+    await expect(execute(capability)).resolves.toMatchObject({
+      status: 'executed',
+      result: { ok: false, code: 'BROWSER_CONTROL_DISABLED', recoverable: true }
+    })
+    expect(sendMediaKey).not.toHaveBeenCalled()
+  })
+
   it('does not silently fall back for controlled-tab-only actions', async () => {
     await expect(execute('browser.newTab')).resolves.toMatchObject({
       status: 'executed',

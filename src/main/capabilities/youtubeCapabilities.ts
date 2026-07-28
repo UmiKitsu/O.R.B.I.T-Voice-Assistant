@@ -49,6 +49,10 @@ const playbackStateSchema = z
 function definition<TParameters>(
   name:
     | 'youtube.playSearch'
+    | 'youtube.play'
+    | 'youtube.pause'
+    | 'youtube.next'
+    | 'youtube.previous'
     | 'youtube.playPause'
     | 'youtube.seekBy'
     | 'youtube.setVolume'
@@ -70,6 +74,14 @@ function verifiedMessage(
   switch (capability) {
     case 'youtube.playSearch':
       return `Playing ${state.title ?? 'the selected video'} on YouTube.`
+    case 'youtube.play':
+      return 'Resumed the YouTube video.'
+    case 'youtube.pause':
+      return 'Paused the YouTube video.'
+    case 'youtube.next':
+      return `Playing the next YouTube video${state.title ? `: ${state.title}` : ''}.`
+    case 'youtube.previous':
+      return `Playing the previous YouTube video${state.title ? `: ${state.title}` : ''}.`
     case 'youtube.playPause':
       return state.paused ? 'Paused the YouTube video.' : 'Resumed the YouTube video.'
     case 'youtube.seekBy':
@@ -109,6 +121,10 @@ async function openUnverifiedYouTubeResults(
 
 async function runYouTubeCommand(
   capability:
+    | 'youtube.play'
+    | 'youtube.pause'
+    | 'youtube.next'
+    | 'youtube.previous'
     | 'youtube.playPause'
     | 'youtube.seekBy'
     | 'youtube.setVolume'
@@ -179,6 +195,21 @@ export function registerYouTubeCapabilities(
     queryParametersSchema,
     actionResultSchema(playbackStateSchema)
   )
+
+  for (const capability of [
+    'youtube.play',
+    'youtube.pause',
+    'youtube.next',
+    'youtube.previous'
+  ] as const) {
+    registry.register(
+      definition<z.infer<typeof emptyParametersSchema>>(capability, (_parameters, signal) =>
+        runYouTubeCommand(capability, {}, signal)
+      ),
+      emptyParametersSchema,
+      actionResultSchema(playbackStateSchema)
+    )
+  }
 
   registry.register(
     definition<z.infer<typeof emptyParametersSchema>>('youtube.playPause', (_parameters, signal) =>

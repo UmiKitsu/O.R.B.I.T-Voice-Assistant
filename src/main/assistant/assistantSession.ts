@@ -104,7 +104,9 @@ export function recordSuccessfulExchange(
     session.context.controlledBrowserTabId = youtubePlaybackState.controlledTabId
     session.context.selectedYouTubeVideoId = youtubePlaybackState.videoId
     session.context.selectedYouTubeTitle = youtubePlaybackState.title
-    session.context.confirmedYouTubePlayback = youtubePlaybackState.confirmedPlaying
+    session.context.confirmedYouTubePlayback = Boolean(
+      youtubePlaybackState.controlledTabId && youtubePlaybackState.videoId
+    )
   }
 }
 
