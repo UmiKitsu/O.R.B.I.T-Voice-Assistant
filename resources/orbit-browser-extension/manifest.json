@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Orbit Browser Control",
+  "version": "1.0.0",
+  "description": "Trusted typed browser control for the local Orbit Voice Assistant.",
+  "minimum_chrome_version": "116",
+  "permissions": ["tabs", "scripting", "storage"],
+  "host_permissions": ["https://www.youtube.com/*"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Orbit Browser Control"
+  }
+}

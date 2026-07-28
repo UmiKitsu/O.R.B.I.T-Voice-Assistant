@@ -12,6 +12,7 @@ import type {
   WakeWordState,
   WakeWordTestResult
 } from '../../shared/types'
+import { BrowserConnectionPanel } from './BrowserConnectionPanel'
 import { ConfirmationDialog } from './ConfirmationDialog'
 import { SecurityPinSettings } from './SecurityPinSettings'
 import { useMicrophoneTest } from './hooks/useMicrophoneTest'
@@ -1136,6 +1137,8 @@ function App(): React.JSX.Element {
             />
           </label>
         </fieldset>
+
+        <BrowserConnectionPanel />
 
         <SecurityPinSettings
           status={pinStatus}

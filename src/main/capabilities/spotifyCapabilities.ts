@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import type { ActionResult } from '../../shared/types'
 import {
-  openYouTubeMusicSearch,
   playSpotifyTopResult,
   type MusicPlaybackData,
   type SpotifyPlaybackDependencies
@@ -75,22 +74,6 @@ export function registerSpotifyCapabilities(
     definition('spotify.playSearch', ({ query }, signal) =>
       playSpotifyTopResult(query, signal, dependencies)
     ),
-    parametersSchema,
-    actionResultSchema(dataSchema)
-  )
-
-  registry.register(
-    definition('youtube.playSearch', async ({ query }, signal) => {
-      if (signal.aborted) {
-        return {
-          ok: false,
-          code: 'ACTION_CANCELLED',
-          message: 'The request was cancelled.',
-          recoverable: true
-        }
-      }
-      return openYouTubeMusicSearch(query, dependencies.openExternalUrl)
-    }),
     parametersSchema,
     actionResultSchema(dataSchema)
   )

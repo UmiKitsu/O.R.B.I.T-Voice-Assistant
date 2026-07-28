@@ -42,6 +42,10 @@ extraResources:
     to: wake-word
     filter:
       - '**/*'
+  - from: resources/orbit-browser-extension
+    to: orbit-browser-extension
+    filter:
+      - '**/*'
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   oneClick: false

@@ -1,4 +1,8 @@
-import type { AssistantSessionContext, ChatMessage } from '../../shared/types'
+import type {
+  AssistantSessionContext,
+  ChatMessage,
+  YouTubePlaybackState
+} from '../../shared/types'
 import { resolveApplication } from '../services/applicationDiscoveryService'
 import type { ActionPlan } from './actionPlanSchemas'
 
@@ -33,7 +37,21 @@ export function updateSessionContext(context: AssistantSessionContext, plan: Act
     if (action.capability === 'youtube.playSearch') {
       context.lastApplication = 'browser'
       context.lastMediaApplication = 'youtube'
+      context.confirmedYouTubePlayback = true
+      if (typeof action.parameters.query === 'string') {
+        context.lastYouTubeQuery = action.parameters.query
+      }
       continue
+    }
+
+    if (action.capability.startsWith('youtube.')) {
+      context.lastApplication = 'browser'
+      context.lastMediaApplication = 'youtube'
+      continue
+    }
+
+    if (action.capability.startsWith('browser.')) {
+      context.lastApplication = 'browser'
     }
 
     if (action.capability.startsWith('application.')) {
@@ -72,7 +90,8 @@ export function recordSuccessfulExchange(
   session: AssistantSession,
   userContent: string,
   assistantContent: string,
-  plan?: ActionPlan
+  plan?: ActionPlan,
+  youtubePlaybackState?: YouTubePlaybackState
 ): void {
   const exchange: ChatMessage[] = [
     { role: 'user', content: userContent },
@@ -81,6 +100,12 @@ export function recordSuccessfulExchange(
   session.messages = retainBoundedMessages([...session.messages, ...exchange])
 
   if (plan) updateSessionContext(session.context, plan)
+  if (plan?.actions.some((action) => action.capability.startsWith('youtube.')) && youtubePlaybackState) {
+    session.context.controlledBrowserTabId = youtubePlaybackState.controlledTabId
+    session.context.selectedYouTubeVideoId = youtubePlaybackState.videoId
+    session.context.selectedYouTubeTitle = youtubePlaybackState.title
+    session.context.confirmedYouTubePlayback = youtubePlaybackState.confirmedPlaying
+  }
 }
 
 export function createSessionContextMessage(context: AssistantSessionContext): ChatMessage | null {

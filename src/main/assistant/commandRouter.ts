@@ -12,6 +12,56 @@ function actionPlan(
   }
 }
 
+const SPOKEN_NUMBERS: Readonly<Record<string, number>> = {
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90
+}
+
+function parseSpokenNumber(value: string): number | null {
+  const normalized = value.trim().toLocaleLowerCase().replaceAll('-', ' ')
+  if (/^\d{1,3}$/.test(normalized)) return Number(normalized)
+  const tokens = normalized.split(/\s+/).filter((token) => token !== 'and')
+  if (tokens.length === 0) return null
+  let total = 0
+  for (const token of tokens) {
+    if (token === 'hundred') {
+      if (total < 1 || total > 3) return null
+      total *= 100
+      continue
+    }
+    const number = SPOKEN_NUMBERS[token]
+    if (number === undefined) return null
+    total += number
+  }
+  return total >= 0 && total <= 300 ? total : null
+}
+
 export function routeDeterministicCommand(message: string): ActionPlan | null {
   const normalized = message
     .trim()
@@ -110,6 +160,85 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
     return actionPlan('Open YouTube', 'browser.openUrl', { url: 'https://www.youtube.com' })
   }
 
+  if (/^(?:pause|resume|play|play or pause) (?:the )?youtube video$/.test(lower)) {
+    return actionPlan('Play or pause the YouTube video', 'youtube.playPause')
+  }
+
+  const youtubeSeekRequest = normalized.match(
+    /^(?:skip|seek|jump)\s+(forward|ahead|back|backward)\s+(.+?)\s+seconds?$/i
+  )
+  if (youtubeSeekRequest) {
+    const amount = parseSpokenNumber(youtubeSeekRequest[2])
+    if (amount !== null && amount > 0) {
+      const seconds = /^(?:back|backward)$/i.test(youtubeSeekRequest[1]) ? -amount : amount
+      return actionPlan('Seek the YouTube video', 'youtube.seekBy', { seconds })
+    }
+  }
+
+  const youtubeVolumeRequest = normalized.match(
+    /^(?:set|change) (?:the )?(?:youtube |video )?volume to (.+?)(?:\s*(?:percent|%))?$/i
+  )
+  if (youtubeVolumeRequest && /(?:youtube|video)/i.test(normalized)) {
+    const volume = parseSpokenNumber(youtubeVolumeRequest[1])
+    if (volume !== null && volume >= 0 && volume <= 100) {
+      return actionPlan(`Set the YouTube volume to ${volume} percent`, 'youtube.setVolume', {
+        volume
+      })
+    }
+  }
+
+  if (/^(?:make|put) (?:the )?(?:youtube )?video (?:in )?fullscreen$/.test(lower)) {
+    return actionPlan('Make the YouTube video fullscreen', 'youtube.fullscreen')
+  }
+
+  if (/^(?:mute) (?:the )?(?:youtube )?video$/.test(lower)) {
+    return actionPlan('Mute the YouTube video', 'youtube.mute')
+  }
+
+  if (/^(?:unmute) (?:the )?(?:youtube )?video$/.test(lower)) {
+    return actionPlan('Unmute the YouTube video', 'youtube.unmute')
+  }
+
+  if (/^(?:open )?(?:a )?new (?:browser )?tab$/.test(lower)) {
+    return actionPlan('Open a new controlled browser tab', 'browser.newTab')
+  }
+
+  if (/^(?:close) (?:the )?(?:browser )?tab$/.test(lower)) {
+    return actionPlan('Close the controlled browser tab', 'browser.closeTab')
+  }
+
+  const switchTabRequest = normalized.match(/^(?:switch|go) to (?:the )?(.+?) tab$/i)
+  if (switchTabRequest) {
+    return actionPlan('Switch the controlled browser tab', 'browser.switchTab', {
+      query: switchTabRequest[1].trim()
+    })
+  }
+
+  if (/^(?:browser back|go back in (?:the )?browser)$/.test(lower)) {
+    return actionPlan('Go back in the controlled browser tab', 'browser.goBack')
+  }
+
+  if (/^(?:browser forward|go forward in (?:the )?browser)$/.test(lower)) {
+    return actionPlan('Go forward in the controlled browser tab', 'browser.goForward')
+  }
+
+  if (/^(?:reload|refresh)(?: the)?(?: browser| page| tab)?$/.test(lower)) {
+    return actionPlan('Reload the controlled browser tab', 'browser.reload')
+  }
+
+  const scrollRequest = normalized.match(
+    /^scroll\s+(up|down|left|right)(?:\s+(\d{2,4})(?:\s+pixels?)?)?$/i
+  )
+  if (scrollRequest) {
+    const amount = scrollRequest[2] ? Number(scrollRequest[2]) : 700
+    if (amount >= 100 && amount <= 5_000) {
+      return actionPlan('Scroll the controlled browser tab', 'browser.scroll', {
+        direction: scrollRequest[1].toLocaleLowerCase(),
+        amount
+      })
+    }
+  }
+
   const setVolumeRequest = normalized.match(
     /^(?:set|change) (?:the )?volume to (\d{1,3})(?:\s*(?:percent|%))?$/i
   )
@@ -184,6 +313,15 @@ export function routeContextualCommand(
     .trim()
     .replace(/[.!?]+$/, '')
     .trim()
+  const lower = normalized.toLocaleLowerCase()
+
+  if (
+    context.lastMediaApplication === 'youtube' &&
+    /^(?:play it|pause it|resume it|play the video|pause the video|resume the video)$/.test(lower)
+  ) {
+    return actionPlan('Play or pause the YouTube video', 'youtube.playPause')
+  }
+
   const directSpotify = normalized.match(/^play\s+(.+?)\s+(?:on|in)\s+spotify$/i)
   const directYouTube = normalized.match(
     /^play\s+(.+?)\s+(?:on|in)\s+(?:youtube|the browser|browser|the web|web)$/i

@@ -22,6 +22,7 @@ import { registerFilesystemCapabilities } from './filesystemCapabilities'
 import { registerSoftwareCapabilities } from './softwareCapabilities'
 import { registerSpotifyCapabilities } from './spotifyCapabilities'
 import { registerSystemCapabilities } from './systemCapabilities'
+import { registerYouTubeCapabilities } from './youtubeCapabilities'
 import { registerWindowInputCapabilities } from './windowInputCapabilityDefinitions'
 
 export type CapabilityRuntimeDependencies = {
@@ -61,6 +62,7 @@ export function createCapabilityRegistry(
     openExternalUrl: dependencies.openExternalUrl,
     webApi: dependencies.spotifyWebApi
   })
+  registerYouTubeCapabilities(registry, dependencies.openExternalUrl)
   registerAssistantCapabilities(registry)
   registerWindowInputCapabilities(registry, dependencies.windowController)
   registerFilesystemCapabilities(registry, dependencies.trashController)

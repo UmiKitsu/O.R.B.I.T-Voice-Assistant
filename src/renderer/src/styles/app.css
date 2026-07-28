@@ -737,6 +737,140 @@ h1 {
   font-size: 11px;
 }
 
+.browser-connection-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid rgba(112, 211, 255, 0.18);
+  border-radius: 14px;
+  background: rgba(18, 31, 47, 0.72);
+}
+
+.browser-connection-panel legend {
+  padding: 0 8px;
+  color: #d9eeff;
+  font-weight: 800;
+}
+
+.browser-connection-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.browser-connection-heading p,
+.browser-granted-sites p {
+  margin: 4px 0 0;
+  color: #8fa2bb;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.browser-health {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: #6e7b8f;
+  box-shadow: 0 0 0 5px rgba(110, 123, 143, 0.12);
+}
+
+.browser-health.online {
+  background: #4ed387;
+  box-shadow: 0 0 0 5px rgba(78, 211, 135, 0.12);
+}
+
+.browser-setup-steps {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 22px;
+  color: #aebdd1;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.browser-setup-steps code,
+.browser-granted-sites li {
+  overflow-wrap: anywhere;
+  color: #91e7ff;
+}
+
+.browser-pairing-code {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid rgba(78, 211, 135, 0.22);
+  border-radius: 10px;
+  background: rgba(33, 142, 81, 0.08);
+}
+
+.browser-pairing-code span,
+.browser-pairing-code small {
+  color: #b8cbe0;
+  font-size: 12px;
+}
+
+.browser-pairing-code strong {
+  display: block;
+  margin-top: 3px;
+  color: #e8fff1;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+}
+
+.browser-pairing-code small {
+  grid-column: 1 / -1;
+}
+
+.browser-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.browser-setting-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #c2d0e2;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.browser-setting-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: #67d5ff;
+}
+
+.browser-granted-sites {
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.browser-granted-sites ul {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 11px;
+}
+
+.browser-panel-notice {
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  color: #cbeeff;
+  background: rgba(57, 156, 199, 0.1);
+  font-size: 12px;
+}
+
 @media (max-width: 700px) {
   .voice-pipeline {
     grid-template-columns: 1fr;

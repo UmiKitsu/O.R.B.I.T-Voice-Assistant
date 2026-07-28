@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerAssistantHandlers } from './ipc/assistantHandlers'
 import { registerAudioHandlers } from './ipc/audioHandlers'
+import { registerBrowserHandlers } from './ipc/browserHandlers'
 import { registerSettingsHandlers } from './ipc/settingsHandlers'
 import { registerSecurityHandlers } from './ipc/securityHandlers'
 import { registerSpeechHandlers } from './ipc/speechHandlers'
@@ -15,9 +16,14 @@ import { initializeSpotifyAuthService } from './services/spotifyAuthService'
 import { initializeSecurityPinService } from './security/securityPinService'
 import { stopAllWakeWordSessions } from './services/wakeWordService'
 import { stopAllSpeechSynthesis } from './services/speechSynthesisService'
+import {
+  initializeBrowserBridgeService,
+  stopBrowserBridgeService
+} from './services/browserBridgeService'
 
 registerAssistantHandlers()
 registerAudioHandlers()
+registerBrowserHandlers()
 registerSettingsHandlers()
 registerSecurityHandlers()
 registerSpeechHandlers()
@@ -66,6 +72,7 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   initializeLogger(app.getPath('userData'))
   await initializeSettingsService()
+  await initializeBrowserBridgeService()
   initializeSpotifyAuthService(app.getPath('userData'))
   await initializeSecurityPinService()
   logOperationalEvent({ event: 'app.started' })
@@ -99,7 +106,7 @@ app.on('before-quit', (event) => {
   logOperationalEvent({ event: 'app.closed' })
   stopAllWakeWordSessions()
   stopAllSpeechSynthesis()
-  void flushLogs().finally(() => {
+  void stopBrowserBridgeService().finally(() => flushLogs()).finally(() => {
     logsFlushedForQuit = true
     app.quit()
   })

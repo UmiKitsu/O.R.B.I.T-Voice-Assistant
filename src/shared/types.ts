@@ -21,6 +21,11 @@ export type AssistantSessionContext = {
   lastApplication?: string
   lastMediaApplication?: string
   lastSuccessfulCapability?: string
+  controlledBrowserTabId?: number
+  lastYouTubeQuery?: string
+  selectedYouTubeVideoId?: string
+  selectedYouTubeTitle?: string
+  confirmedYouTubePlayback?: boolean
 }
 
 export type OllamaHealth = {
@@ -205,6 +210,8 @@ export type OrbitSettings = {
   spotifyPlaybackMode: SpotifyPlaybackMode
   preferredMusicProvider: MusicProvider
   musicFallbackEnabled: boolean
+  browserControlEnabled: boolean
+  generalBrowserAutomationEnabled: boolean
 }
 
 export type AssistantEffect = 'stop-speaking' | 'disable'
@@ -222,6 +229,67 @@ export type SpotifyConnectionStatus = {
   redirectUri: string
   displayName?: string
   product?: string
+}
+
+export type BrowserConnectionStatus = {
+  paired: boolean
+  connected: boolean
+  browser: 'chrome'
+  extensionVersion?: string
+  lastSeenAt?: number
+  grantedOrigins: string[]
+  activeTabOrigin?: string
+}
+
+export type BrowserPairingSession = {
+  port: number
+  code: string
+  expiresAt: number
+  extensionPath: string
+}
+
+export type BrowserCommandResult<T = undefined> =
+  | {
+      ok: true
+      message: string
+      data?: T
+    }
+  | {
+      ok: false
+      code: string
+      message: string
+      recoverable: boolean
+    }
+
+export type YouTubePlaybackState = {
+  controlledTabId?: number
+  videoId?: string
+  title?: string
+  url: string
+  paused: boolean
+  ended: boolean
+  muted: boolean
+  volume: number
+  currentTime: number
+  duration?: number
+  confirmedPlaying: boolean
+}
+
+export type BrowserPageElement = {
+  ref: string
+  role: string
+  name: string
+  text?: string
+  disabled?: boolean
+}
+
+export type BrowserPageSnapshot = {
+  origin: string
+  url: string
+  title: string
+  visibleText: string
+  domVersion: number
+  elements: BrowserPageElement[]
 }
 
 export type ConfirmationPrompt = {

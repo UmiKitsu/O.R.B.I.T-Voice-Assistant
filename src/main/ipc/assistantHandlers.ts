@@ -6,6 +6,7 @@ import type {
   AssistantResponse,
   OllamaHealth
 } from '../../shared/types'
+import { BrowserTaskFlow } from '../assistant/browserTaskFlow'
 import { ConfirmationFlow, parseConfirmationResponse } from '../assistant/confirmationFlow'
 import { planAssistantRequest } from '../assistant/actionPlanner'
 import { executeActionPlan } from '../assistant/actionPlanExecutor'
@@ -29,6 +30,7 @@ import {
 import { checkConnection } from '../services/ollamaService'
 import { prepareOllama } from '../services/ollamaStartupService'
 import { logOperationalEvent } from '../services/loggerService'
+import { getLastYouTubePlaybackState } from '../services/browserBridgeService'
 import { getSettings } from '../services/settingsService'
 
 const MAX_MESSAGE_LENGTH = 4_000
@@ -38,6 +40,7 @@ const activeRequests = new Map<number, AbortController>()
 const capabilityRegistry = createCapabilityRegistry()
 const capabilityRuntime = createCapabilityRuntime({}, capabilityRegistry)
 const confirmationFlow = new ConfirmationFlow(capabilityRuntime)
+const browserTaskFlow = new BrowserTaskFlow(capabilityRegistry, capabilityRuntime)
 
 function parseAssistantRequest(value: unknown): string | null {
   if (
@@ -71,6 +74,8 @@ function getOrCreateSession(event: IpcMainInvokeEvent): AssistantSession {
   event.sender.once('destroyed', () => {
     activeRequests.get(senderId)?.abort()
     activeRequests.delete(senderId)
+    confirmationFlow.cancelSender(senderId)
+    browserTaskFlow.cancelSender(senderId)
     sessions.delete(senderId)
   })
   return session
@@ -142,6 +147,7 @@ export function registerAssistantHandlers(): void {
 
       if (isConversationResetCommand(message)) {
         confirmationFlow.cancelSender(senderId)
+        browserTaskFlow.cancelSender(senderId)
         activeRequests.get(senderId)?.abort()
         activeRequests.delete(senderId)
         sessions.delete(senderId)
@@ -183,7 +189,13 @@ export function registerAssistantHandlers(): void {
           const actionResult = await executeActionPlan(destinationPlan, capabilityRuntime)
           if (actionResult.ok && actionResult.data?.response) {
             session.pendingMediaDestination = undefined
-            recordSuccessfulExchange(session, message, actionResult.data.response, destinationPlan)
+            recordSuccessfulExchange(
+              session,
+              message,
+              actionResult.data.response,
+              destinationPlan,
+              getLastYouTubePlaybackState()
+            )
           }
           return actionResult
         }
@@ -201,7 +213,13 @@ export function registerAssistantHandlers(): void {
       if (deterministicPlan) {
         const actionResult = await executeActionPlan(deterministicPlan, capabilityRuntime)
         if (actionResult.ok && actionResult.data?.response) {
-          recordSuccessfulExchange(session, message, actionResult.data.response, deterministicPlan)
+          recordSuccessfulExchange(
+            session,
+            message,
+            actionResult.data.response,
+            deterministicPlan,
+            getLastYouTubePlaybackState()
+          )
         }
         return actionResult
       }
@@ -265,14 +283,17 @@ export function registerAssistantHandlers(): void {
                 message: 'Orbit responded.',
                 data: { response: output.response }
               }
-            : await confirmationFlow.execute(output, senderId)
+            : output.kind === 'browser_task'
+              ? await browserTaskFlow.start(message, senderId, controller.signal)
+              : await confirmationFlow.execute(output, senderId)
 
         if (result.ok && result.data?.response) {
           recordSuccessfulExchange(
             session,
             message,
             result.data.response,
-            output.kind === 'action_plan' ? output : undefined
+            output.kind === 'action_plan' ? output : undefined,
+            getLastYouTubePlaybackState()
           )
         }
 
@@ -301,6 +322,10 @@ export function registerAssistantHandlers(): void {
         }
       }
 
+      if (browserTaskFlow.hasPending(event.sender.id, response.requestId)) {
+        return browserTaskFlow.respond(event.sender.id, response.requestId, response.approved)
+      }
+
       return confirmationFlow.respond(
         event.sender.id,
         response.requestId,
@@ -312,6 +337,7 @@ export function registerAssistantHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.assistantCancel, (event: IpcMainInvokeEvent): ActionResult => {
     confirmationFlow.cancelSender(event.sender.id)
+    browserTaskFlow.cancelSender(event.sender.id)
     const session = sessions.get(event.sender.id)
     const hadPendingDestination = Boolean(session?.pendingMediaDestination)
     if (session) session.pendingMediaDestination = undefined

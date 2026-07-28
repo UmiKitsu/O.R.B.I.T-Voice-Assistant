@@ -16,6 +16,7 @@ export type PolicyRequest = {
   parameters: unknown
   summary: string
   confirmationRequestId?: string
+  signal?: AbortSignal
 }
 
 export type PolicyResult =
@@ -124,7 +125,12 @@ export class PolicyEngine {
     }
 
     this.logPolicyDecision(request.capability, 'allowed')
+    if (request.signal?.aborted) {
+      return { status: 'execution-failed', message: 'The action was cancelled.' }
+    }
     const controller = new AbortController()
+    const abortFromRequest = (): void => controller.abort()
+    request.signal?.addEventListener('abort', abortFromRequest, { once: true })
     const timeout = setTimeout(() => controller.abort(), capability.timeoutMs)
     const timeoutFailure = new Promise<never>((_, reject) => {
       controller.signal.addEventListener(
@@ -160,6 +166,7 @@ export class PolicyEngine {
       }
     } finally {
       clearTimeout(timeout)
+      request.signal?.removeEventListener('abort', abortFromRequest)
     }
   }
 

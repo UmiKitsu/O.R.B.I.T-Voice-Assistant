@@ -26,8 +26,15 @@ export const assistantOutputSchema = z.discriminatedUnion('kind', [
       summary: z.string().trim().min(1).max(500),
       actions: z.array(actionSchema).min(1).max(5)
     })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('browser_task'),
+      goal: z.string().trim().min(1).max(1_000)
+    })
     .strict()
 ])
 
 export type AssistantOutput = z.infer<typeof assistantOutputSchema>
 export type ActionPlan = Extract<AssistantOutput, { kind: 'action_plan' }>
+export type BrowserTaskOutput = Extract<AssistantOutput, { kind: 'browser_task' }>

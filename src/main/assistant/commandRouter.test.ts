@@ -48,7 +48,21 @@ describe('routeDeterministicCommand', () => {
       'Search YouTube',
       'browser.searchYouTube',
       { query: 'TypeScript tutorials' }
-    ]
+    ],
+    ['Pause the YouTube video.', 'Play or pause the YouTube video', 'youtube.playPause', {}],
+    ['Skip forward thirty seconds.', 'Seek the YouTube video', 'youtube.seekBy', { seconds: 30 }],
+    ['Skip backward 15 seconds.', 'Seek the YouTube video', 'youtube.seekBy', { seconds: -15 }],
+    [
+      'Set the video volume to fifty percent.',
+      'Set the YouTube volume to 50 percent',
+      'youtube.setVolume',
+      { volume: 50 }
+    ],
+    ['Make the video fullscreen.', 'Make the YouTube video fullscreen', 'youtube.fullscreen', {}],
+    ['Open a new browser tab.', 'Open a new controlled browser tab', 'browser.newTab', {}],
+    ['Close the browser tab.', 'Close the controlled browser tab', 'browser.closeTab', {}],
+    ['Go back in the browser.', 'Go back in the controlled browser tab', 'browser.goBack', {}],
+    ['Scroll down.', 'Scroll the controlled browser tab', 'browser.scroll', { direction: 'down', amount: 700 }]
   ])('routes %s to a normal action plan', (message, summary, capability, parameters) => {
     expect(routeDeterministicCommand(message)).toEqual({
       kind: 'action_plan',
@@ -129,6 +143,18 @@ describe('context-aware routing', () => {
       actions: [
         { capability: 'youtube.playSearch', parameters: { query: 'Locked Out of Heaven' } }
       ]
+    })
+  })
+
+  it('routes the requested YouTube tutorial phrase and playback follow-ups', () => {
+    expect(routeCommand('Play Minecraft tutorials on YouTube.')).toMatchObject({
+      actions: [{ capability: 'youtube.playSearch', parameters: { query: 'Minecraft tutorials' } }]
+    })
+    expect(routeCommand('pause it', { lastMediaApplication: 'youtube' })).toMatchObject({
+      actions: [{ capability: 'youtube.playPause', parameters: {} }]
+    })
+    expect(routeCommand('resume it', { lastMediaApplication: 'youtube' })).toMatchObject({
+      actions: [{ capability: 'youtube.playPause', parameters: {} }]
     })
   })
 

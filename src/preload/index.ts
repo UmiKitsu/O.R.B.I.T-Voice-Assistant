@@ -4,6 +4,8 @@ import type {
   ActionResult,
   AssistantProgress,
   AssistantResponse,
+  BrowserConnectionStatus,
+  BrowserPairingSession,
   MicrophoneTestResult,
   OllamaHealth,
   OrbitSettings,
@@ -270,6 +272,14 @@ const orbit = Object.freeze({
     ipcRenderer.invoke(IPC_CHANNELS.spotifyConnect),
   disconnectSpotify: (): Promise<ActionResult<SpotifyConnectionStatus>> =>
     ipcRenderer.invoke(IPC_CHANNELS.spotifyDisconnect),
+  getBrowserStatus: (): Promise<ActionResult<BrowserConnectionStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.browserStatus),
+  beginBrowserPairing: (): Promise<ActionResult<BrowserPairingSession>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.browserPairingBegin),
+  disconnectBrowser: (): Promise<ActionResult<BrowserConnectionStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.browserDisconnect),
+  getBrowserExtensionPath: (): Promise<ActionResult<{ path: string }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.browserExtensionPath),
   startWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordStart),
   stopWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordStop),
   pauseWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordPause),

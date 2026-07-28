@@ -87,6 +87,29 @@ describe('Phase 11 capabilities', () => {
     )
   })
 
+  it('opens YouTube results but reports unverified playback while disconnected', async () => {
+    await expect(
+      execute('youtube.playSearch', { query: 'Bohemian Rhapsody' })
+    ).resolves.toMatchObject({
+      status: 'executed',
+      result: {
+        ok: false,
+        code: 'BROWSER_EXTENSION_DISCONNECTED',
+        recoverable: true
+      }
+    })
+    expect(openExternalUrl).toHaveBeenCalledWith(
+      'https://www.youtube.com/results?search_query=Bohemian%20Rhapsody'
+    )
+  })
+
+  it('does not silently fall back for controlled-tab-only actions', async () => {
+    await expect(execute('browser.newTab')).resolves.toMatchObject({
+      status: 'executed',
+      result: { ok: false, code: 'BROWSER_CONTROL_DISABLED', recoverable: true }
+    })
+  })
+
   it.each([
     ['media.playPause', 'playPause'],
     ['media.next', 'next'],
