@@ -3,6 +3,7 @@ export type OrbitStatus =
   | 'ready'
   | 'listening'
   | 'transcribing'
+  | 'preparing-voice'
   | 'preparing-ai'
   | 'thinking'
   | 'synthesizing'
@@ -119,6 +120,14 @@ export type WakeWordTestResult = {
   signalQuality: WakeSignalQuality
   heardText?: string
 }
+
+export type MicrophonePipelineState =
+  | 'off'
+  | 'starting'
+  | 'active'
+  | 'paused'
+  | 'recovering'
+  | 'error'
 
 export type WakeWordState =
   'off' | 'starting' | 'armed' | 'detected' | 'capturing' | 'transcribing' | 'paused' | 'error'

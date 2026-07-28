@@ -146,28 +146,38 @@ h1 {
 }
 
 .status-ready,
-.wake-word-armed {
+.wake-word-armed,
+.microphone-pipeline-active {
   color: #9ee6be;
   border-color: rgba(66, 194, 122, 0.25);
   background: rgba(33, 142, 81, 0.09);
 }
 
 .status-ready .status-dot,
-.wake-word-armed span {
+.wake-word-armed span,
+.microphone-pipeline-active span {
   background: #4ed387;
   box-shadow: 0 0 0 4px rgba(78, 211, 135, 0.12);
   animation: listening-pulse 1.8s ease-in-out infinite;
 }
 
+.status-preparing-voice,
+.status-preparing-ai,
 .status-thinking,
-.status-speaking {
+.status-speaking,
+.microphone-pipeline-starting,
+.microphone-pipeline-recovering {
   color: #bcd2ff;
   border-color: rgba(112, 162, 255, 0.3);
   background: rgba(51, 111, 226, 0.12);
 }
 
+.status-preparing-voice .status-dot,
+.status-preparing-ai .status-dot,
 .status-thinking .status-dot,
-.status-speaking .status-dot {
+.status-speaking .status-dot,
+.microphone-pipeline-starting span,
+.microphone-pipeline-recovering span {
   background: #70a2ff;
   box-shadow: 0 0 0 4px rgba(112, 162, 255, 0.12);
 }
@@ -201,7 +211,8 @@ h1 {
 }
 
 .status-error,
-.wake-word-error {
+.wake-word-error,
+.microphone-pipeline-error {
   color: #ff9c9c;
   border-color: rgba(255, 92, 92, 0.28);
   background: rgba(156, 49, 66, 0.12);

@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import type { OllamaHealth } from '../../shared/types'
-import { checkConnection } from './ollamaService'
+import type { AssistantProgress, OllamaHealth } from '../../shared/types'
+import { checkConnection, warmConnection, type OllamaProgressCallback } from './ollamaService'
 
 const STARTUP_TIMEOUT_MS = 15_000
 const POLL_INTERVAL_MS = 500
+const PREPARATION_RESULT_CACHE_MS = 30_000
 
 type ConnectionChecker = () => Promise<OllamaHealth>
 type OllamaLauncher = (executablePath: string) => Promise<void>
@@ -17,6 +18,21 @@ export type OllamaStartupDependencies = {
   delay?: (milliseconds: number) => Promise<void>
   now?: () => number
 }
+
+export type OllamaPreparationDependencies = {
+  ensure?: () => Promise<boolean>
+  check?: ConnectionChecker
+  warm?: (signal?: AbortSignal, onProgress?: OllamaProgressCallback) => Promise<OllamaHealth>
+}
+
+type SharedOllamaPreparation = {
+  promise: Promise<OllamaHealth>
+  subscribers: Set<OllamaProgressCallback>
+  latestProgress?: AssistantProgress
+}
+
+let sharedPreparation: SharedOllamaPreparation | null = null
+let lastSuccessfulPreparation: { health: OllamaHealth; expiresAt: number } | null = null
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -131,4 +147,101 @@ export async function ensureOllamaRunning(
   }
 
   return false
+}
+
+function publishPreparationProgress(progress: AssistantProgress): void {
+  const current = sharedPreparation
+  if (!current) return
+  current.latestProgress = progress
+  for (const subscriber of current.subscribers) {
+    try {
+      subscriber(progress)
+    } catch {
+      // A closed renderer must not interrupt the shared startup operation.
+    }
+  }
+}
+
+export function prepareOllama(
+  onProgress?: OllamaProgressCallback,
+  dependencies: OllamaPreparationDependencies = {}
+): Promise<OllamaHealth> {
+  if (
+    !sharedPreparation &&
+    lastSuccessfulPreparation &&
+    lastSuccessfulPreparation.expiresAt > Date.now()
+  ) {
+    onProgress?.({
+      phase: 'checking',
+      message: 'The local Ollama service is already prepared.',
+      elapsedMs: 0,
+      ...(lastSuccessfulPreparation.health.activeModel
+        ? { model: lastSuccessfulPreparation.health.activeModel }
+        : {})
+    })
+    return Promise.resolve(lastSuccessfulPreparation.health)
+  }
+
+  if (!sharedPreparation) {
+    const subscribers = new Set<OllamaProgressCallback>()
+    const ensure = dependencies.ensure ?? (() => ensureOllamaRunning())
+    const check = dependencies.check ?? checkConnection
+    const warm = dependencies.warm ?? warmConnection
+
+    const preparation: SharedOllamaPreparation = {
+      subscribers,
+      promise: Promise.resolve({
+        connected: false,
+        modelInstalled: false,
+        models: [],
+        configuredModel: '',
+        fallbackActive: false,
+        warm: false
+      })
+    }
+    sharedPreparation = preparation
+    publishPreparationProgress({
+      phase: 'checking',
+      message: 'Starting or checking the local Ollama service.',
+      elapsedMs: 0
+    })
+
+    preparation.promise = (async () => {
+      try {
+        const running = await ensure()
+        if (!running) return check()
+        return warm(undefined, publishPreparationProgress)
+      } catch {
+        return check()
+      }
+    })()
+      .then((health) => {
+        if (health.connected && health.modelInstalled) {
+          lastSuccessfulPreparation = {
+            health,
+            expiresAt: Date.now() + PREPARATION_RESULT_CACHE_MS
+          }
+        }
+        return health
+      })
+      .finally(() => {
+        if (sharedPreparation === preparation) sharedPreparation = null
+      })
+  }
+
+  const preparation = sharedPreparation
+  if (!preparation) return prepareOllama(onProgress, dependencies)
+  if (onProgress) {
+    preparation.subscribers.add(onProgress)
+    if (preparation.latestProgress) onProgress(preparation.latestProgress)
+  }
+
+  return preparation.promise.finally(() => {
+    if (onProgress) preparation.subscribers.delete(onProgress)
+  })
+}
+
+export function resetOllamaPreparationForTests(): void {
+  sharedPreparation = null
+  lastSuccessfulPreparation = null
 }

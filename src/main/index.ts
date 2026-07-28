@@ -9,7 +9,7 @@ import { registerSecurityHandlers } from './ipc/securityHandlers'
 import { registerSpeechHandlers } from './ipc/speechHandlers'
 import { registerSpotifyHandlers } from './ipc/spotifyHandlers'
 import { flushLogs, initializeLogger, logOperationalEvent } from './services/loggerService'
-import { ensureOllamaRunning } from './services/ollamaStartupService'
+import { prepareOllama } from './services/ollamaStartupService'
 import { initializeSettingsService } from './services/settingsService'
 import { initializeSpotifyAuthService } from './services/spotifyAuthService'
 import { initializeSecurityPinService } from './security/securityPinService'
@@ -68,7 +68,6 @@ app.whenReady().then(async () => {
   await initializeSettingsService()
   initializeSpotifyAuthService(app.getPath('userData'))
   await initializeSecurityPinService()
-  await ensureOllamaRunning()
   logOperationalEvent({ event: 'app.started' })
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.umikitsune.orbit')
@@ -81,6 +80,7 @@ app.whenReady().then(async () => {
   })
 
   createWindow()
+  void prepareOllama().catch(() => undefined)
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

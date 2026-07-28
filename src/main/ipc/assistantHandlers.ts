@@ -26,7 +26,8 @@ import {
   createCapabilityRegistry,
   createCapabilityRuntime
 } from '../capabilities/capabilityRuntime'
-import { checkConnection, warmConnection } from '../services/ollamaService'
+import { checkConnection } from '../services/ollamaService'
+import { prepareOllama } from '../services/ollamaStartupService'
 import { logOperationalEvent } from '../services/loggerService'
 import { getSettings } from '../services/settingsService'
 
@@ -115,7 +116,7 @@ export function registerAssistantHandlers(): void {
     IPC_CHANNELS.ollamaHealth,
     async (event: IpcMainInvokeEvent): Promise<ActionResult<OllamaHealth>> => {
       return healthResult(
-        await warmConnection(undefined, (progress) => emitAssistantProgress(event, progress))
+        await prepareOllama((progress) => emitAssistantProgress(event, progress))
       )
     }
   )

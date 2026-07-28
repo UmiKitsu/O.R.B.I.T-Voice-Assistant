@@ -18,6 +18,10 @@ import { useMicrophoneTest } from './hooks/useMicrophoneTest'
 import { useSpeech } from './hooks/useSpeech'
 import { useWakeWord } from './hooks/useWakeWord'
 import { TRANSCRIPT_READY_HOLD_MS, WAKE_ACKNOWLEDGEMENT_MS } from './voiceCueTiming'
+import {
+  deriveVoiceStartupStatus,
+  type VoiceStartupReadiness
+} from './voiceStartupState'
 
 const SPOKEN_PIN_DIGITS: Readonly<Record<string, string>> = {
   zero: '0',
@@ -84,13 +88,44 @@ function App(): React.JSX.Element {
   const transcriptClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSpokenError = useRef<{ message: string; at: number } | null>(null)
   const wakeWordTestWasEnabled = useRef(false)
+  const startupGeneration = useRef(0)
+  const startupActive = useRef(false)
+  const startupReadiness = useRef<VoiceStartupReadiness>({
+    microphone: 'idle',
+    ollama: 'idle'
+  })
   const {
     microphoneName: wakeMicrophoneName,
     inputLevel: wakeInputLevel,
+    pipelineState: microphonePipelineState,
+    pipelineError: microphonePipelineError,
+    prepare: prepareWakeWord,
     stop: stopWakeWord,
     pause: pauseWakeWord,
     resume: resumeWakeWord
   } = useWakeWord()
+
+  const updateStartupReadiness = useCallback(
+    (
+      generation: number,
+      patch: Partial<VoiceStartupReadiness>
+    ): VoiceStartupReadiness | null => {
+      if (
+        generation !== startupGeneration.current ||
+        !startupActive.current ||
+        !isEnabled.current
+      ) {
+        return null
+      }
+
+      const next = { ...startupReadiness.current, ...patch }
+      startupReadiness.current = next
+      setStatus(deriveVoiceStartupStatus(next))
+      return next
+    },
+    []
+  )
+
   const handleMicrophoneTestResult = useCallback(
     (result: ActionResult<import('../../shared/types').MicrophoneTestResult>): void => {
       if (result.ok && result.data) {
@@ -101,7 +136,13 @@ function App(): React.JSX.Element {
       } else {
         setAssistantError(result.message)
       }
-      setStatus(isEnabled.current ? 'ready' : 'disabled')
+      setStatus(
+        !isEnabled.current
+          ? 'disabled'
+          : startupActive.current
+            ? deriveVoiceStartupStatus(startupReadiness.current)
+            : 'ready'
+      )
     },
     []
   )
@@ -128,6 +169,17 @@ function App(): React.JSX.Element {
     lastSpokenError.current = { message: assistantError, at: now }
     speak(assistantError)
   }, [assistantError, speak])
+
+  useEffect(() => {
+    if (!isEnabled.current || microphonePipelineState !== 'error') return
+    startupActive.current = false
+    startupGeneration.current += 1
+    setWakeWordState('error')
+    setAssistantError(
+      microphonePipelineError ?? 'The microphone pipeline stopped responding. Disable and enable Orbit to retry.'
+    )
+    setStatus('error')
+  }, [microphonePipelineError, microphonePipelineState])
 
   const clearWakeAcknowledgement = useCallback((): void => {
     if (wakeAcknowledgementTimer.current) clearTimeout(wakeAcknowledgementTimer.current)
@@ -193,6 +245,10 @@ function App(): React.JSX.Element {
     return window.orbit.onAssistantProgress((progress) => {
       setAssistantProgress(progress)
       if (!isEnabled.current) return
+      if (startupActive.current) {
+        setStatus(deriveVoiceStartupStatus(startupReadiness.current))
+        return
+      }
       setStatus(
         progress.phase === 'checking' || progress.phase === 'loading' ? 'preparing-ai' : 'thinking'
       )
@@ -203,40 +259,89 @@ function App(): React.JSX.Element {
   }
 
   const enableOrbit = async (): Promise<void> => {
+    const generation = startupGeneration.current + 1
+    startupGeneration.current = generation
+    startupActive.current = true
+    startupReadiness.current = { microphone: 'pending', ollama: 'pending' }
     isEnabled.current = true
     setAssistantError(null)
+    setAssistantProgress(null)
+    setConnectionResult(null)
     setWakeWordState('starting')
-    setStatus('ready')
+    setStatus(deriveVoiceStartupStatus(startupReadiness.current))
 
-    const result = await resumeWakeWord()
-    if (!result.ok && isEnabled.current) {
+    const microphonePreparation = prepareWakeWord().then((result) => {
+      updateStartupReadiness(generation, {
+        microphone: result.ok ? 'prepared' : 'error'
+      })
+      return result
+    })
+    const ollamaPreparation: Promise<ActionResult<OllamaHealth>> = window.orbit
+      .checkOllama()
+      .catch(() => ({
+        ok: false,
+        code: 'IPC_CONNECTION_FAILED',
+        message: 'Orbit could not warm the local AI service.',
+        recoverable: true
+      }))
+      .then((result) => {
+        if (generation === startupGeneration.current && isEnabled.current) {
+          setConnectionResult(result)
+        }
+        updateStartupReadiness(generation, { ollama: result.ok ? 'ready' : 'error' })
+        return result
+      })
+
+    const [microphoneResult, ollamaResult] = await Promise.all([
+      microphonePreparation,
+      ollamaPreparation
+    ])
+    if (
+      generation !== startupGeneration.current ||
+      !startupActive.current ||
+      !isEnabled.current
+    ) {
+      return
+    }
+
+    if (!microphoneResult.ok || !ollamaResult.ok) {
+      startupActive.current = false
+      setWakeWordState(microphoneResult.ok ? 'paused' : 'error')
+      setAssistantError(!microphoneResult.ok ? microphoneResult.message : ollamaResult.message)
+      setStatus('error')
+      await pauseWakeWord()
+      return
+    }
+
+    updateStartupReadiness(generation, { microphone: 'pending' })
+    const resumeResult = await resumeWakeWord()
+    if (
+      generation !== startupGeneration.current ||
+      !startupActive.current ||
+      !isEnabled.current
+    ) {
+      return
+    }
+    if (!resumeResult.ok) {
+      updateStartupReadiness(generation, { microphone: 'error' })
+      startupActive.current = false
       setWakeWordState('error')
-      setAssistantError(result.message)
+      setAssistantError(resumeResult.message)
       setStatus('error')
       return
     }
 
-    setStatus('preparing-ai')
-    void window.orbit
-      .checkOllama()
-      .then((health) => {
-        if (!isEnabled.current) return
-        setConnectionResult(health)
-        if (!health.ok) setAssistantError(health.message)
-      })
-      .catch(() => {
-        if (isEnabled.current) setAssistantError('Orbit could not warm the local AI service.')
-      })
-      .finally(() => {
-        if (isEnabled.current && !requestInFlight.current) {
-          setAssistantProgress(null)
-          setStatus('ready')
-        }
-      })
+    updateStartupReadiness(generation, { microphone: 'ready' })
+    startupActive.current = false
+    setAssistantProgress(null)
+    setStatus('ready')
   }
 
   const disableOrbit = async (): Promise<void> => {
     isEnabled.current = false
+    startupActive.current = false
+    startupGeneration.current += 1
+    startupReadiness.current = { microphone: 'idle', ollama: 'idle' }
     requestGeneration.current += 1
     stopSpeaking()
     setAssistantError(null)
@@ -260,6 +365,7 @@ function App(): React.JSX.Element {
     if (
       !normalizedMessage ||
       !isEnabled.current ||
+      startupActive.current ||
       status === 'thinking' ||
       requestInFlight.current
     ) {
@@ -383,6 +489,7 @@ function App(): React.JSX.Element {
   }
 
   const testConnection = async (): Promise<void> => {
+    if (startupActive.current) return
     setIsTestingConnection(true)
     setConnectionResult(null)
     setAssistantProgress(null)
@@ -404,6 +511,7 @@ function App(): React.JSX.Element {
   }
 
   const startMicrophoneTest = async (): Promise<void> => {
+    if (startupActive.current) return
     stopSpeaking()
     clearVoiceTranscript()
     microphoneTest.clearResult()
@@ -430,9 +538,15 @@ function App(): React.JSX.Element {
 
   const restoreAfterWakeWordTest = useCallback(async (): Promise<void> => {
     if (wakeWordTestWasEnabled.current) {
-      setWakeWordState('armed')
-      setStatus('ready')
-      await resumeWakeWord()
+      const result = await resumeWakeWord()
+      if (result.ok) {
+        setWakeWordState('armed')
+        setStatus('ready')
+      } else {
+        setWakeWordState('error')
+        setAssistantError(result.message)
+        setStatus('error')
+      }
     } else {
       await stopWakeWord()
       setWakeWordState('off')
@@ -441,7 +555,13 @@ function App(): React.JSX.Element {
   }, [resumeWakeWord, stopWakeWord])
 
   const startWakeWordTest = async (): Promise<void> => {
-    if (wakeWordTestPhase !== 'idle' || microphoneTest.phase !== 'idle') return
+    if (
+      startupActive.current ||
+      wakeWordTestPhase !== 'idle' ||
+      microphoneTest.phase !== 'idle'
+    ) {
+      return
+    }
     stopSpeaking()
     setAssistantError(null)
     setWakeWordTestResult(null)
@@ -475,6 +595,7 @@ function App(): React.JSX.Element {
     return window.orbit.onWakeWordEvent((event: WakeWordEvent) => {
       if (event.type === 'state') {
         setWakeWordState(event.state)
+        if (startupActive.current) return
         if (event.state === 'detected') {
           clearVoiceTranscript()
           setWakeDetectionCount((count) => count + 1)
@@ -501,6 +622,11 @@ function App(): React.JSX.Element {
       }
 
       if (event.type === 'error') {
+        if (startupActive.current) {
+          startupActive.current = false
+          startupGeneration.current += 1
+          startupReadiness.current = { ...startupReadiness.current, microphone: 'error' }
+        }
         if (wakeWordTestPhase === 'listening') {
           setWakeWordTestPhase('idle')
           setWakeWordTestResult(null)
@@ -513,6 +639,8 @@ function App(): React.JSX.Element {
         if (isEnabled.current) setStatus(event.fatal ? 'error' : 'ready')
         return
       }
+
+      if (startupActive.current) return
 
       const pendingAuthorization = pendingConfirmationRef.current
       if (pendingAuthorization?.authorization === 'pin') {
@@ -562,7 +690,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     let active = true
-    if (!isEnabled.current || wakeWordState === 'error') {
+    if (!isEnabled.current || wakeWordState === 'error' || startupActive.current) {
       return () => {
         active = false
       }
@@ -626,7 +754,9 @@ function App(): React.JSX.Element {
       ? 'synthesizing'
       : status === 'ready' && speaking
         ? 'speaking'
-        : status
+        : status === 'ready' && microphonePipelineState !== 'active'
+          ? 'preparing-voice'
+          : status
   const statusLabel = displayedStatus
     .split('-')
     .map((word) => word[0].toUpperCase() + word.slice(1))
@@ -635,6 +765,7 @@ function App(): React.JSX.Element {
     disabled: 'Enable Orbit to begin local voice listening.',
     ready: 'Say “ORBIT” followed by your command.',
     listening: 'Listening for your command…',
+    'preparing-voice': 'Preparing the microphone and waiting for live audio samples…',
     'preparing-ai': 'Loading the local AI model...',
     transcribing: 'Transcribing your command locally…',
     thinking: 'Preparing a response…',
@@ -666,7 +797,7 @@ function App(): React.JSX.Element {
   const microphoneActive =
     microphoneTest.phase !== 'idle' ||
     wakeWordTestPhase === 'listening' ||
-    (status !== 'disabled' && wakeWordState !== 'off')
+    microphonePipelineState === 'active'
   const wakeDetected = wakeDetectionCount > 0 || wakeWordTestResult?.detected === true
   const wakeStageComplete = wakeDetected || microphoneTest.phase !== 'idle' || voiceTranscriptIsTest
   const commandCaptured = voiceDiagnostics !== null || wakeWordState === 'transcribing'
@@ -696,12 +827,15 @@ function App(): React.JSX.Element {
               Status: {statusLabel}
             </div>
             <div
-              className={`wake-word-pill wake-word-${wakeWordState}`}
+              className={`wake-word-pill microphone-pipeline-${microphonePipelineState}`}
               role="status"
               aria-live="polite"
             >
               <span aria-hidden="true" />
-              Voice: {wakeWordState === 'armed' ? 'armed (waiting for ORBIT)' : wakeWordState}
+              Voice:{' '}
+              {microphonePipelineState === 'active' && wakeWordState === 'armed'
+                ? 'active (waiting for ORBIT)'
+                : microphonePipelineState}
             </div>
           </div>
         </header>

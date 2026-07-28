@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { OllamaHealth } from '../../shared/types'
-import { ensureOllamaRunning } from './ollamaStartupService'
+import {
+  ensureOllamaRunning,
+  prepareOllama,
+  resetOllamaPreparationForTests
+} from './ollamaStartupService'
 
 const connected: OllamaHealth = {
   connected: true,
@@ -19,6 +23,15 @@ const disconnected: OllamaHealth = {
   fallbackActive: false,
   warm: false
 }
+
+const warmed: OllamaHealth = {
+  ...connected,
+  warm: true
+}
+
+afterEach(() => {
+  resetOllamaPreparationForTests()
+})
 
 describe('ensureOllamaRunning', () => {
   it('does not launch Ollama when the service is already available', async () => {
@@ -65,5 +78,73 @@ describe('ensureOllamaRunning', () => {
         resolveExecutable: vi.fn().mockResolvedValue(null)
       })
     ).resolves.toBe(false)
+  })
+})
+
+describe('prepareOllama', () => {
+  it('shares one startup and warm-up operation across concurrent callers', async () => {
+    let finishEnsure: ((value: boolean) => void) | undefined
+    const ensure = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishEnsure = resolve
+        })
+    )
+    const warm = vi.fn(async (_signal, onProgress) => {
+      onProgress?.({
+        phase: 'loading',
+        message: 'Loading qwen3:8b locally.',
+        elapsedMs: 10,
+        model: 'qwen3:8b'
+      })
+      return warmed
+    })
+    const firstProgress = vi.fn()
+    const secondProgress = vi.fn()
+    const dependencies = {
+      ensure,
+      check: vi.fn().mockResolvedValue(disconnected),
+      warm
+    }
+
+    const first = prepareOllama(firstProgress, dependencies)
+    const second = prepareOllama(secondProgress, dependencies)
+
+    expect(ensure).toHaveBeenCalledTimes(1)
+    finishEnsure?.(true)
+
+    await expect(Promise.all([first, second])).resolves.toEqual([warmed, warmed])
+    await expect(prepareOllama(undefined, dependencies)).resolves.toEqual(warmed)
+    expect(ensure).toHaveBeenCalledTimes(1)
+    expect(warm).toHaveBeenCalledTimes(1)
+    expect(firstProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: 'checking' })
+    )
+    expect(secondProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: 'checking' })
+    )
+    expect(firstProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: 'loading', model: 'qwen3:8b' })
+    )
+    expect(secondProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ phase: 'loading', model: 'qwen3:8b' })
+    )
+  })
+
+  it('uses one availability check when startup cannot connect', async () => {
+    const ensure = vi.fn().mockResolvedValue(false)
+    const check = vi.fn().mockResolvedValue(disconnected)
+    const warm = vi.fn()
+
+    await expect(
+      Promise.all([
+        prepareOllama(undefined, { ensure, check, warm }),
+        prepareOllama(undefined, { ensure, check, warm })
+      ])
+    ).resolves.toEqual([disconnected, disconnected])
+
+    expect(ensure).toHaveBeenCalledTimes(1)
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(warm).not.toHaveBeenCalled()
   })
 })
