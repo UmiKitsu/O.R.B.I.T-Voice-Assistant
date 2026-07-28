@@ -87,6 +87,7 @@ vi.mock('./wakeWordWorker?nodeWorker', () => ({
 
 import {
   cancelWakeWordTest,
+  pauseWakeWord,
   startWakeWord,
   startWakeWordTest,
   stopAllWakeWordSessions
@@ -335,6 +336,39 @@ describe('armed hybrid recognition', () => {
     )
   })
 
+  it('keeps an already captured command transcribing when microphone listening is paused', async () => {
+    const webContents = sender(56)
+    let transcriptionSignal: AbortSignal | undefined
+    let resolveDiagnosis: ((value: unknown) => void) | undefined
+    mocks.diagnoseVoiceRecording.mockImplementation((_audio: Uint8Array, signal: AbortSignal) => {
+      transcriptionSignal = signal
+      return new Promise((resolve) => {
+        resolveDiagnosis = resolve
+      })
+    })
+    await startWakeWord(webContents as never)
+
+    mocks.workers[0].emit('message', {
+      type: 'command',
+      samples: new Float32Array(3_200).fill(0.05)
+    })
+    await flushAsyncWork()
+
+    expect(pauseWakeWord(webContents.id)).toMatchObject({ ok: true })
+    expect(transcriptionSignal?.aborted).toBe(false)
+
+    resolveDiagnosis?.(successfulCommandDiagnosis())
+    await flushAsyncWork()
+
+    expect(webContents.send).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        type: 'transcription',
+        transcript: expect.objectContaining({ normalizedText: 'open Spotify' })
+      })
+    )
+  })
+
   it('reports unexpected transcription failures instead of remaining paused forever', async () => {
     const webContents = sender(54)
     mocks.diagnoseVoiceRecording.mockRejectedValue(new Error('native transcription failure'))
@@ -359,12 +393,10 @@ describe('armed hybrid recognition', () => {
   it('times out a hung command transcription and aborts its native work', async () => {
     const webContents = sender(55)
     let transcriptionSignal: AbortSignal | undefined
-    mocks.diagnoseVoiceRecording.mockImplementation(
-      (_audio: Uint8Array, signal: AbortSignal) => {
-        transcriptionSignal = signal
-        return new Promise(() => undefined)
-      }
-    )
+    mocks.diagnoseVoiceRecording.mockImplementation((_audio: Uint8Array, signal: AbortSignal) => {
+      transcriptionSignal = signal
+      return new Promise(() => undefined)
+    })
     await startWakeWord(webContents as never)
 
     mocks.workers[0].emit('message', {

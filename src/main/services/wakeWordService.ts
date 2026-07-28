@@ -491,8 +491,9 @@ function changeWakeWordState(senderId: number, type: 'pause' | 'resume'): Action
   }
   if (type === 'pause') {
     cancelWakeWordTest(senderId)
-    session.transcription?.abort()
-    session.transcription = undefined
+    // Pausing the microphone must not cancel a command that has already been captured.
+    // Renderer state changes can request a pause while Whisper is still transcribing; aborting
+    // here leaves the UI on "Transcribing" with no completion event.
     session.fallback?.controller.abort()
     session.fallback = undefined
   }

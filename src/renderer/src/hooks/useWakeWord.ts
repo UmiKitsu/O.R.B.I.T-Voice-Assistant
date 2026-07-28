@@ -42,14 +42,32 @@ function microphoneFailure(error: unknown): ActionResult {
   }
 }
 
+function supersededTransition(message: string): ActionResult {
+  return { ok: true, message }
+}
+
 export function useWakeWord(): WakeWordController {
   const streamRef = useRef<MediaStream | null>(null)
   const contextRef = useRef<AudioContext | null>(null)
   const workletRef = useRef<AudioWorkletNode | null>(null)
   const startPromiseRef = useRef<Promise<ActionResult> | null>(null)
+  const transitionTailRef = useRef<Promise<void>>(Promise.resolve())
+  const desiredListeningRef = useRef(false)
   const lifecycleGenerationRef = useRef(0)
   const [microphoneName, setMicrophoneName] = useState('Default microphone')
   const [inputLevel, setInputLevel] = useState(0)
+
+  const enqueueTransition = useCallback(
+    (operation: () => Promise<ActionResult>): Promise<ActionResult> => {
+      const result = transitionTailRef.current.then(operation, operation)
+      transitionTailRef.current = result.then(
+        () => undefined,
+        () => undefined
+      )
+      return result
+    },
+    []
+  )
 
   const releaseAudio = useCallback(async (): Promise<void> => {
     setInputLevel(0)
@@ -60,6 +78,12 @@ export function useWakeWord(): WakeWordController {
     const context = contextRef.current
     contextRef.current = null
     if (context && context.state !== 'closed') await context.close().catch(() => undefined)
+  }, [])
+
+  const suspendAudio = useCallback(async (): Promise<void> => {
+    const context = contextRef.current
+    if (context?.state === 'running') await context.suspend().catch(() => undefined)
+    setInputLevel(0)
   }, [])
 
   const start = useCallback(async (): Promise<ActionResult> => {
@@ -112,7 +136,7 @@ export function useWakeWord(): WakeWordController {
         const silentOutput = context.createGain()
         silentOutput.gain.value = 0
         worklet.port.onmessage = (event: MessageEvent<unknown>) => {
-          if (!(event.data instanceof Float32Array)) return
+          if (!(event.data instanceof Float32Array) || !desiredListeningRef.current) return
           let energy = 0
           for (const sample of event.data) energy += sample * sample
           const rms = Math.sqrt(energy / event.data.length)
@@ -152,25 +176,62 @@ export function useWakeWord(): WakeWordController {
   }, [releaseAudio])
 
   const stop = useCallback(async (): Promise<ActionResult> => {
+    desiredListeningRef.current = false
     lifecycleGenerationRef.current += 1
-    await releaseAudio()
-    return window.orbit.stopWakeWord()
-  }, [releaseAudio])
+    return enqueueTransition(async () => {
+      await releaseAudio()
+      return window.orbit.stopWakeWord()
+    })
+  }, [enqueueTransition, releaseAudio])
 
   const pause = useCallback(async (): Promise<ActionResult> => {
-    const result = await window.orbit.pauseWakeWord()
-    const context = contextRef.current
-    if (context?.state === 'running') await context.suspend().catch(() => undefined)
-    return result
-  }, [])
+    desiredListeningRef.current = false
+    return enqueueTransition(async () => {
+      if (desiredListeningRef.current) {
+        return supersededTransition('Voice listening remains active.')
+      }
+
+      const result = await window.orbit.pauseWakeWord()
+      if (!desiredListeningRef.current) await suspendAudio()
+      return result
+    })
+  }, [enqueueTransition, suspendAudio])
 
   const resume = useCallback(async (): Promise<ActionResult> => {
-    const context = contextRef.current
-    if (!context || !streamRef.current) return start()
-    const result = await window.orbit.resumeWakeWord()
-    if (result.ok && context.state === 'suspended') await context.resume().catch(() => undefined)
-    return result
-  }, [start])
+    desiredListeningRef.current = true
+    return enqueueTransition(async () => {
+      if (!desiredListeningRef.current) {
+        return supersededTransition('Voice listening remains paused.')
+      }
+
+      const context = contextRef.current
+      const stream = streamRef.current
+      const hasLiveTrack =
+        stream?.getAudioTracks().some((track) => track.readyState === 'live') === true
+      let result: ActionResult
+
+      if (!context || !stream || !hasLiveTrack || context.state === 'closed') {
+        if (context || stream) await releaseAudio()
+        result = await start()
+      } else {
+        result = await window.orbit.resumeWakeWord()
+        if (result.ok && desiredListeningRef.current && context.state === 'suspended') {
+          try {
+            await context.resume()
+          } catch {
+            await releaseAudio()
+            result = await start()
+          }
+        }
+      }
+
+      if (!desiredListeningRef.current) {
+        await window.orbit.pauseWakeWord()
+        await suspendAudio()
+      }
+      return result
+    })
+  }, [enqueueTransition, releaseAudio, start, suspendAudio])
 
   return { microphoneName, inputLevel, stop, pause, resume }
 }

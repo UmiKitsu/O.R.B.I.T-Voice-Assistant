@@ -495,6 +495,8 @@ function App(): React.JSX.Element {
     }
 
     const wakeWordOwnsAudio =
+      status === 'listening' ||
+      status === 'transcribing' ||
       wakeWordState === 'detected' ||
       wakeWordState === 'capturing' ||
       wakeWordState === 'transcribing'
