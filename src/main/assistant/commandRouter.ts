@@ -282,14 +282,14 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
       'Play or pause media'
     ],
     [
-      /^(?:next|next track|next song|skip|skip it|skip this|skip this song|skip this track)(?: on spotify)?$/,
+      /^(?:(?:play|go to) (?:the )?)?(?:next(?: song| track)?|skip(?: it| this(?: song| track)?| (?:the )?(?:song|track))?)(?: on spotify)?$/,
       'media.next',
-      'Play the next track'
+      'Send the next-track command'
     ],
     [
-      /^(?:previous|previous track|previous song|last track|go back)(?: on spotify)?$/,
+      /^(?:previous(?: song| track)?|last(?: song| track)|go back(?: one (?:song|track))?|back one (?:song|track)|(?:play|go back to) (?:the )?(?:previous|last) (?:song|track))(?: on spotify)?$/,
       'media.previous',
-      'Play the previous track'
+      'Send the previous-track command'
     ],
     [/^(?:volume up|turn (?:the )?volume up)$/, 'audio.volumeUp', 'Raise the volume'],
     [/^(?:volume down|turn (?:the )?volume down)$/, 'audio.volumeDown', 'Lower the volume'],

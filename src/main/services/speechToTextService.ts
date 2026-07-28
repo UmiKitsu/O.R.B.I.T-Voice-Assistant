@@ -23,7 +23,7 @@ const SHORT_WAKE_CANDIDATE_MAX_MS = 5_000
 const SHORT_WAKE_AUDIO_CONTEXT = 256
 const STANDARD_COMMAND_AUDIO_CONTEXT = 768
 const WHISPER_COMMAND_PROMPT =
-  'Orbit Orbit. Open, launch, focus, play, pause, next, previous, volume up, volume down, mute, unmute, search, maximize, minimize, restore, stop speaking, disable Orbit. Buksan, i-play, patugtugin, hanapin. YouTube, Google, Chrome, Spotify, Calculator, File Explorer, Visual Studio Code.'
+  'Orbit Orbit. Open, launch, focus, play, pause, skip, skip it, next, next song, next track, previous, previous song, previous track, go back, volume up, volume down, mute, unmute, search, maximize, minimize, restore, stop speaking, disable Orbit. Buksan, i-play, patugtugin, hanapin. YouTube, Google, Chrome, Spotify, Calculator, File Explorer, Visual Studio Code.'
 
 export type TranscriptionProfile = 'standard' | 'wake-candidate'
 

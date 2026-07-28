@@ -20,8 +20,8 @@ const virtualKeys: Record<MediaKeyAction, number> = {
 
 const messages: Record<MediaControlAction, string> = {
   playPause: 'Sent the play or pause media key.',
-  next: 'Sent the next-track media key.',
-  previous: 'Sent the previous-track media key.',
+  next: 'Sent the next-track command.',
+  previous: 'Sent the previous-track command.',
   volumeUp: 'Sent the volume-up key.',
   volumeDown: 'Sent the volume-down key.',
   mute: 'Audio muted.',
