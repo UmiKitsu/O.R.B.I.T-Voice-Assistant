@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ForegroundTarget } from '../security/protectedTargets'
 import {
+  playSpotifyDesktopArtist,
   playSpotifyDesktopTopResult,
   playSpotifyResolvedTrackUri,
   playSpotifyTopResult,
@@ -31,7 +32,7 @@ const controller: SpotifyPlaybackController = {
   focusSpotifySearch: vi.fn(() => true),
   selectAllText: vi.fn(() => true),
   typeUnicodeText: vi.fn(() => true),
-  chooseSpotifyTopResult: vi.fn(() => true),
+  pressTab: vi.fn(() => true),
   pressEnter: vi.fn(() => true)
 }
 
@@ -63,7 +64,7 @@ describe('Spotify playback service', () => {
     vi.mocked(controller.focusSpotifySearch).mockReturnValue(true)
     vi.mocked(controller.selectAllText).mockReturnValue(true)
     vi.mocked(controller.typeUnicodeText).mockReturnValue(true)
-    vi.mocked(controller.chooseSpotifyTopResult).mockReturnValue(true)
+    vi.mocked(controller.pressTab).mockReturnValue(true)
     vi.mocked(controller.pressEnter).mockReturnValue(true)
   })
 
@@ -98,6 +99,34 @@ describe('Spotify playback service', () => {
     expect(controller.show).toHaveBeenCalledWith(42, 'restore')
     expect(controller.activate).toHaveBeenCalledWith(42)
     expect(controller.getProcessAgeMs).toHaveBeenCalledTimes(7)
+  })
+
+  it('uses the same cold-start readiness gate before artist playback', async () => {
+    const timing = clock()
+    const launcher = vi.fn(async () => undefined)
+    vi.mocked(controller.findWindow).mockReturnValueOnce(null).mockReturnValue(42)
+    vi.mocked(controller.getProcessAgeMs).mockReturnValueOnce(7_999).mockReturnValue(8_000)
+    vi.mocked(controller.getForegroundTarget).mockReturnValue({
+      ...safeSpotifyTarget,
+      title: 'Locked Out of Heaven - Bruno Mars'
+    })
+
+    await expect(
+      playSpotifyDesktopArtist('Bruno Mars', new AbortController().signal, {
+        controller,
+        launcher,
+        delay: timing.delay,
+        now: timing.now
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { method: 'desktop-artist', verification: 'playing' }
+    })
+
+    expect(launcher).toHaveBeenCalledOnce()
+    expect(controller.getProcessAgeMs).toHaveBeenCalledTimes(5)
+    expect(controller.pressTab).toHaveBeenCalledTimes(2)
+    expect(controller.pressEnter).toHaveBeenCalledTimes(2)
   })
 
   it('reacquires Spotify when the startup window handle is replaced', async () => {
@@ -138,9 +167,7 @@ describe('Spotify playback service', () => {
       now: () => 0
     })
 
-    expect(controller.selectAllText).toHaveBeenCalledBefore(
-      vi.mocked(controller.typeUnicodeText)
-    )
+    expect(controller.selectAllText).toHaveBeenCalledBefore(vi.mocked(controller.typeUnicodeText))
     expect(controller.typeUnicodeText).toHaveBeenCalledWith('Locked Out of Heaven')
   })
 
@@ -169,32 +196,51 @@ describe('Spotify playback service', () => {
     })
 
     expect(timing.delays).toEqual([250, 250, 250, 500, 1_500, 150, 1_500])
-    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledOnce()
+    expect(controller.pressTab).toHaveBeenCalledOnce()
     expect(controller.pressEnter).toHaveBeenCalledOnce()
   })
 
-  it('paces past the artist profile and activates the first track result', async () => {
+  it('opens the artist page, focuses Artist Play, activates it, and verifies playback', async () => {
     let current = 0
+    let activeTarget = safeSpotifyTarget
+    let enterCount = 0
+    const launcher = vi.fn(async () => undefined)
     const events: string[] = []
     const pacedDelay = vi.fn(async (milliseconds: number) => {
       events.push(`delay:${milliseconds}`)
       current += milliseconds
     })
-    vi.mocked(controller.chooseSpotifyTopResult).mockImplementation(() => {
-      events.push('navigate')
+    vi.mocked(controller.getForegroundTarget).mockImplementation(() => activeTarget)
+    vi.mocked(controller.pressTab).mockImplementation(() => {
+      events.push('tab')
       return true
     })
     vi.mocked(controller.pressEnter).mockImplementation(() => {
       events.push('enter')
+      enterCount += 1
+      if (enterCount === 2) {
+        activeTarget = { ...safeSpotifyTarget, title: 'Locked Out of Heaven - Bruno Mars' }
+      }
       return true
     })
 
-    await playSpotifyDesktopTopResult(
-      'Bruno Mars',
-      new AbortController().signal,
-      { controller, delay: pacedDelay, now: () => current },
-      'artist'
-    )
+    await expect(
+      playSpotifyDesktopArtist('Bruno Mars', new AbortController().signal, {
+        controller,
+        launcher,
+        delay: pacedDelay,
+        now: () => current
+      })
+    ).resolves.toEqual({
+      ok: true,
+      message: 'Playing music by Bruno Mars on Spotify.',
+      data: {
+        application: 'spotify',
+        query: 'Bruno Mars',
+        method: 'desktop-artist',
+        verification: 'playing'
+      }
+    })
 
     expect(events).toEqual([
       'delay:250',
@@ -202,40 +248,42 @@ describe('Spotify playback service', () => {
       'delay:250',
       'delay:500',
       'delay:1500',
-      'navigate',
-      'delay:150',
-      'navigate',
+      'tab',
       'delay:150',
       'enter',
-      'delay:1500'
+      'delay:2500',
+      'tab',
+      'delay:250',
+      'enter'
     ])
-    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledTimes(2)
-    expect(controller.pressEnter).toHaveBeenCalledOnce()
+    expect(launcher).not.toHaveBeenCalled()
+    expect(controller.pressTab).toHaveBeenCalledTimes(2)
+    expect(controller.pressEnter).toHaveBeenCalledTimes(2)
   })
 
-  it('does not treat an artist page title as verified playback', async () => {
+  it('reports Artist Play activation without claiming playback for a generic artist page title', async () => {
     const timing = clock()
-    vi.mocked(controller.getForegroundTarget)
-      .mockReturnValueOnce(safeSpotifyTarget)
-      .mockReturnValueOnce(safeSpotifyTarget)
-      .mockReturnValueOnce(safeSpotifyTarget)
-      .mockReturnValueOnce(safeSpotifyTarget)
-      .mockReturnValueOnce(safeSpotifyTarget)
-      .mockReturnValueOnce({
-        ...safeSpotifyTarget,
-        title: 'Bruno Mars | Spotify'
-      })
+    vi.mocked(controller.getForegroundTarget).mockReturnValue({
+      ...safeSpotifyTarget,
+      title: 'Bruno Mars | Spotify'
+    })
 
     await expect(
-      playSpotifyDesktopTopResult(
-        'Bruno Mars',
-        new AbortController().signal,
-        { controller, delay: timing.delay, now: timing.now },
-        'artist'
-      )
-    ).resolves.toMatchObject({
+      playSpotifyDesktopArtist('Bruno Mars', new AbortController().signal, {
+        controller,
+        delay: timing.delay,
+        now: timing.now
+      })
+    ).resolves.toEqual({
       ok: true,
-      message: 'Started the first Spotify track result for Bruno Mars in the Spotify app.'
+      message:
+        'Activated Artist Play for Bruno Mars in Spotify, but Orbit could not confirm playback.',
+      data: {
+        application: 'spotify',
+        query: 'Bruno Mars',
+        method: 'desktop-artist',
+        verification: 'activated'
+      }
     })
   })
 
@@ -243,19 +291,18 @@ describe('Spotify playback service', () => {
     const timing = clock()
 
     await expect(
-      playSpotifyDesktopTopResult(
-        'Bruno Mars',
-        new AbortController().signal,
-        { controller, delay: timing.delay, now: timing.now },
-        'track'
-      )
+      playSpotifyDesktopTopResult('Bruno Mars', new AbortController().signal, {
+        controller,
+        delay: timing.delay,
+        now: timing.now
+      })
     ).resolves.toEqual({
       ok: true,
       message: 'Started the first Spotify track result for Bruno Mars in the Spotify app.',
       data: { application: 'spotify', query: 'Bruno Mars', method: 'desktop' }
     })
 
-    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledOnce()
+    expect(controller.pressTab).toHaveBeenCalledOnce()
   })
 
   it('cancels during readiness polling without sending input', async () => {
@@ -317,15 +364,14 @@ describe('Spotify playback service', () => {
       })
 
     await expect(
-      playSpotifyDesktopTopResult(
-        'Bruno Mars',
-        new AbortController().signal,
-        { controller, delay: timing.delay, now: timing.now },
-        'artist'
-      )
+      playSpotifyDesktopArtist('Bruno Mars', new AbortController().signal, {
+        controller,
+        delay: timing.delay,
+        now: timing.now
+      })
     ).resolves.toMatchObject({ ok: false, code: 'SPOTIFY_TARGET_CHANGED' })
 
-    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledOnce()
+    expect(controller.pressTab).toHaveBeenCalledOnce()
     expect(controller.pressEnter).not.toHaveBeenCalled()
   })
 
@@ -338,15 +384,14 @@ describe('Spotify playback service', () => {
     })
 
     await expect(
-      playSpotifyDesktopTopResult(
-        'Bruno Mars',
-        abortController.signal,
-        { controller, delay: timing.delay, now: () => 0 },
-        'artist'
-      )
+      playSpotifyDesktopArtist('Bruno Mars', abortController.signal, {
+        controller,
+        delay: timing.delay,
+        now: () => 0
+      })
     ).resolves.toMatchObject({ ok: false, code: 'ACTION_CANCELLED' })
 
-    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledOnce()
+    expect(controller.pressTab).toHaveBeenCalledOnce()
     expect(controller.pressEnter).not.toHaveBeenCalled()
   })
 
@@ -615,10 +660,46 @@ describe('Spotify playback service', () => {
     expect(resolveTrack).not.toHaveBeenCalled()
   })
 
-  it('opens YouTube when Spotify desktop control fails and fallback is enabled', async () => {
+  it('routes artist intent directly to desktop Artist Play without URI resolution or YouTube fallback', async () => {
+    const timing = clock()
+    const resolveTrack = vi.fn()
+    const opener = vi.fn(async () => undefined)
+    vi.mocked(controller.getForegroundTarget).mockReturnValue({
+      ...safeSpotifyTarget,
+      title: 'Bruno Mars | Spotify'
+    })
+
+    await expect(
+      playSpotifyTopResult(
+        'Bruno Mars',
+        new AbortController().signal,
+        {
+          controller,
+          delay: timing.delay,
+          now: timing.now,
+          resolveTrack,
+          openExternalUrl: opener,
+          settings: () => ({
+            spotifyClientId: '1234567890abcdef1234567890abcdef',
+            spotifyPlaybackMode: 'desktop',
+            musicFallbackEnabled: true
+          })
+        },
+        'artist'
+      )
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { method: 'desktop-artist', verification: 'activated' }
+    })
+
+    expect(resolveTrack).not.toHaveBeenCalled()
+    expect(opener).not.toHaveBeenCalled()
+  })
+
+  it('opens YouTube when Spotify desktop track control fails and fallback is enabled', async () => {
     const timing = clock()
     const opener = vi.fn(async () => undefined)
-    vi.mocked(controller.chooseSpotifyTopResult).mockReturnValue(false)
+    vi.mocked(controller.pressTab).mockReturnValue(false)
 
     await expect(
       playSpotifyTopResult('Bruno Mars', new AbortController().signal, {

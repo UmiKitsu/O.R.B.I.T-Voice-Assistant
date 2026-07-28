@@ -22,14 +22,19 @@ const controller: SpotifyPlaybackController = {
   focusSpotifySearch: vi.fn(() => true),
   selectAllText: vi.fn(() => true),
   typeUnicodeText: vi.fn(() => true),
-  chooseSpotifyTopResult: vi.fn(() => true),
+  pressTab: vi.fn(() => true),
   pressEnter: vi.fn(() => true)
 }
+
+let currentTime = 0
 
 function execute(parameters: unknown): Promise<PolicyResult> {
   return createCapabilityRuntime({
     spotifyController: controller,
-    spotifyDelay: vi.fn(async () => undefined)
+    spotifyDelay: vi.fn(async (milliseconds: number) => {
+      currentTime += milliseconds
+    }),
+    spotifyNow: () => currentTime
   }).evaluateAndExecute({
     capability: 'spotify.playSearch',
     parameters,
@@ -40,6 +45,7 @@ function execute(parameters: unknown): Promise<PolicyResult> {
 describe('Spotify capability', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    currentTime = 0
     vi.mocked(controller.findWindow).mockReturnValue(7)
     vi.mocked(controller.getForegroundTarget).mockReturnValue(target)
     vi.mocked(controller.getProcessAgeMs).mockReturnValue(20_000)
@@ -48,7 +54,7 @@ describe('Spotify capability', () => {
     vi.mocked(controller.focusSpotifySearch).mockReturnValue(true)
     vi.mocked(controller.selectAllText).mockReturnValue(true)
     vi.mocked(controller.typeUnicodeText).mockReturnValue(true)
-    vi.mocked(controller.chooseSpotifyTopResult).mockReturnValue(true)
+    vi.mocked(controller.pressTab).mockReturnValue(true)
     vi.mocked(controller.pressEnter).mockReturnValue(true)
   })
 
@@ -57,15 +63,19 @@ describe('Spotify capability', () => {
       status: 'executed',
       result: { ok: true, data: { application: 'spotify', query: 'Bruno Mars' } }
     })
-    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledOnce()
+    expect(controller.pressTab).toHaveBeenCalledOnce()
   })
 
-  it('accepts artist intent and advances to the first track option', async () => {
+  it('accepts artist intent and validates the dedicated Artist Play result', async () => {
     await expect(execute({ query: 'Bruno Mars', intent: 'artist' })).resolves.toMatchObject({
       status: 'executed',
-      result: { ok: true }
+      result: {
+        ok: true,
+        data: { method: 'desktop-artist', verification: 'activated' }
+      }
     })
-    expect(controller.chooseSpotifyTopResult).toHaveBeenCalledTimes(2)
+    expect(controller.pressTab).toHaveBeenCalledTimes(2)
+    expect(controller.pressEnter).toHaveBeenCalledTimes(2)
   })
 
   it.each([

@@ -26,7 +26,7 @@ const controller: WindowController = {
   pressEnter: vi.fn(() => true),
   focusSpotifySearch: vi.fn(() => true),
   selectAllText: vi.fn(() => true),
-  chooseSpotifyTopResult: vi.fn(() => true)
+  pressTab: vi.fn(() => true)
 }
 
 function runtime(): PolicyEngine {

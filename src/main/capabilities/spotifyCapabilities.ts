@@ -41,6 +41,14 @@ const dataSchema = z.union([
     .object({
       application: z.literal('spotify'),
       query: z.string(),
+      method: z.literal('desktop-artist'),
+      verification: z.enum(['playing', 'activated'])
+    })
+    .strict(),
+  z
+    .object({
+      application: z.literal('spotify'),
+      query: z.string(),
       title: z.string(),
       artist: z.string(),
       method: z.literal('web-api')

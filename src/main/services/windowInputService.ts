@@ -22,7 +22,7 @@ export type WindowController = {
   pressEnter(): boolean
   focusSpotifySearch(): boolean
   selectAllText(): boolean
-  chooseSpotifyTopResult(): boolean
+  pressTab(): boolean
 }
 
 type NativeFunctions = {
@@ -411,7 +411,7 @@ export const windowsController: WindowController = {
     return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length
   },
 
-  chooseSpotifyTopResult() {
+  pressTab() {
     const native = loadNativeFunctions()
     const inputs = [inputEvent(0x09, false, false), inputEvent(0x09, true, false)]
     return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length
