@@ -12,6 +12,7 @@ import {
   describeRegisteredCapabilities,
   parseAndValidateAssistantOutput
 } from './actionPlanner'
+import { ORBIT_BRIEF_RESPONSE_STYLE, ORBIT_CONVERSATION_PERSONALITY } from './personality'
 
 function registerTestCapability(
   registry: CapabilityRegistry,
@@ -32,11 +33,17 @@ function registerTestCapability(
 }
 
 describe('structured action planning', () => {
-  it('includes the exact JSON output shapes in the planning prompt', () => {
+  it('uses the centralized personality while retaining the exact JSON protocol', () => {
     const prompt = createPlanningSystemMessage(new CapabilityRegistry()).content
 
+    expect(prompt).toContain(ORBIT_CONVERSATION_PERSONALITY)
+    expect(prompt).toContain(ORBIT_BRIEF_RESPONSE_STYLE)
+    expect(prompt).toContain('Apply the personality instructions only to conversational responses.')
+    expect(prompt).toContain('Keep action-plan summaries plain, precise, and operational.')
     expect(prompt).toContain('{"kind":"conversation","response":')
     expect(prompt).toContain('{"kind":"action_plan","summary":"What will be attempted","actions":')
+    expect(prompt).toContain('{"kind":"browser_task","goal":"The user\'s exact browsing goal"}')
+    expect(prompt).toContain('Return exactly one JSON object')
   })
 
   it('strictly validates the top-level output shape and action count', () => {

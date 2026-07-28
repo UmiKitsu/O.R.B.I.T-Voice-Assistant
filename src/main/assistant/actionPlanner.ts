@@ -3,6 +3,7 @@ import type { ActionResult, AssistantProgress, ChatMessage } from '../../shared/
 import type { CapabilityRegistry } from '../capabilities/capabilityRegistry'
 import { structuredChat } from '../services/ollamaService'
 import { assistantOutputSchema, type AssistantOutput } from './actionPlanSchemas'
+import { ORBIT_BRIEF_RESPONSE_STYLE, ORBIT_CONVERSATION_PERSONALITY } from './personality'
 
 export const INVALID_ACTION_REQUEST_MESSAGE = 'I could not safely understand that action request.'
 
@@ -36,7 +37,11 @@ export function createPlanningSystemMessage(registry: CapabilityRegistry): ChatM
 
   return {
     role: 'system',
-    content: `You are Orbit, a local Windows voice assistant.
+    content: `${ORBIT_CONVERSATION_PERSONALITY}
+
+${ORBIT_BRIEF_RESPONSE_STYLE}
+
+Apply the personality instructions only to conversational responses. Keep action-plan summaries plain, precise, and operational.
 
 Use exactly one of these three output shapes and do not add other top-level keys:
 {"kind":"conversation","response":"A clear, brief response"}
@@ -49,9 +54,8 @@ Use kind "conversation" when no computer action is needed.
 Use kind "action_plan" when the requested actions can be represented directly by registered capabilities.
 Use kind "browser_task" only for a multi-step task that requires reading a granted web page and then clicking, typing safe text, selecting an option, or requesting confirmation for a consequential submit. Never use it for passwords, credentials, payment details, uploads, downloads, permission prompts, protected Chrome pages, extension management, developer tools, or arbitrary scripts.
 Use only the listed capability names and match their parameter schemas exactly.
-Never report an action as successful; the application executes plans and reports results.
+Never report an action as successful; the application executes plans and reports verified results.
 Do not output shell commands, scripts, code, registry commands, executable paths, or unlisted capabilities.
-Keep conversational responses clear and reasonably brief.
 
 Registered capabilities:
 ${JSON.stringify(capabilities)}`
