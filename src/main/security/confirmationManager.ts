@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { ActionAuthorization } from '../../shared/types'
 
 export type PendingConfirmation = {
   requestId: string
@@ -6,6 +7,8 @@ export type PendingConfirmation = {
   parameterFingerprint: string
   summary: string
   expiresAt: number
+  authorization: ActionAuthorization
+  pinConfigured: boolean
 }
 
 type CreateConfirmationRequest = {
@@ -13,22 +16,18 @@ type CreateConfirmationRequest = {
   parameters: unknown
   summary: string
   timeoutMs: number
+  authorization: ActionAuthorization
+  pinConfigured: boolean
 }
 
 function canonicalize(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value)
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalize).join(',')}]`
-  }
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`
 
   const object = value as Record<string, unknown>
   const entries = Object.keys(object)
     .sort()
     .map((key) => `${JSON.stringify(key)}:${canonicalize(object[key])}`)
-
   return `{${entries.join(',')}}`
 }
 
@@ -44,26 +43,28 @@ export class ConfirmationManager {
 
   create(request: CreateConfirmationRequest): PendingConfirmation {
     this.removeExpired()
-
     const confirmation: PendingConfirmation = {
       requestId: randomUUID(),
       capability: request.capability,
       parameterFingerprint: fingerprintParameters(request.parameters),
       summary: request.summary,
-      expiresAt: this.now() + request.timeoutMs
+      expiresAt: this.now() + request.timeoutMs,
+      authorization: request.authorization,
+      pinConfigured: request.pinConfigured
     }
-
     this.pending.set(confirmation.requestId, confirmation)
     return confirmation
   }
 
-  confirm(requestId: string): boolean {
+  get(requestId: string): PendingConfirmation | undefined {
     this.removeExpired()
+    return this.pending.get(requestId)
+  }
 
-    if (!this.pending.has(requestId)) {
-      return false
-    }
-
+  confirm(requestId: string, authorization?: ActionAuthorization): boolean {
+    this.removeExpired()
+    const pending = this.pending.get(requestId)
+    if (!pending || (authorization !== undefined && pending.authorization !== authorization)) return false
     this.approved.add(requestId)
     return true
   }
@@ -75,7 +76,6 @@ export class ConfirmationManager {
 
   consume(requestId: string, capability: string, parameters: unknown): boolean {
     this.removeExpired()
-
     const confirmation = this.pending.get(requestId)
     if (
       !confirmation ||
@@ -93,7 +93,6 @@ export class ConfirmationManager {
 
   private removeExpired(): void {
     const currentTime = this.now()
-
     for (const [requestId, confirmation] of this.pending) {
       if (confirmation.expiresAt <= currentTime) {
         this.pending.delete(requestId)

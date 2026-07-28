@@ -1,12 +1,5 @@
 export const blockedCapabilities = new Set([
-  'filesystem.create',
-  'filesystem.write',
   'filesystem.append',
-  'filesystem.copy',
-  'filesystem.move',
-  'filesystem.rename',
-  'filesystem.delete',
-  'filesystem.createDirectory',
   'filesystem.deleteDirectory',
   'filesystem.changePermissions',
 
@@ -23,7 +16,6 @@ export const blockedCapabilities = new Set([
   'script.execute',
   'code.evaluate',
 
-  'software.install',
   'software.uninstall',
 
   'registry.write',

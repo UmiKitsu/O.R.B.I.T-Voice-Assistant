@@ -7,6 +7,7 @@ import type {
   MicrophoneTestResult,
   OllamaHealth,
   OrbitSettings,
+  SecurityPinStatus,
   SpeechSynthesisEvent,
   VoiceDiagnostics,
   WakeWordEvent
@@ -249,6 +250,19 @@ const orbit = Object.freeze({
     ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
   updateSettings: (patch: Partial<OrbitSettings>): Promise<ActionResult<OrbitSettings>> =>
     ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, patch),
+  getPinStatus: (): Promise<ActionResult<SecurityPinStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.securityPinStatus),
+  createPin: (
+    pin: string,
+    confirmation: string
+  ): Promise<ActionResult<SecurityPinStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.securityPinCreate, { pin, confirmation }),
+  changePin: (
+    currentPin: string,
+    nextPin: string,
+    confirmation: string
+  ): Promise<ActionResult<SecurityPinStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.securityPinChange, { currentPin, nextPin, confirmation }),
   startWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordStart),
   stopWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordStop),
   pauseWakeWord: (): Promise<ActionResult> => ipcRenderer.invoke(IPC_CHANNELS.wakeWordPause),
@@ -270,10 +284,15 @@ const orbit = Object.freeze({
     ipcRenderer.on(IPC_CHANNELS.wakeWordEvent, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.wakeWordEvent, handler)
   },
-  confirmAction: (requestId: string, approved: boolean): Promise<ActionResult<AssistantResponse>> =>
+  confirmAction: (
+    requestId: string,
+    approved: boolean,
+    pin?: string
+  ): Promise<ActionResult<AssistantResponse>> =>
     ipcRenderer.invoke(IPC_CHANNELS.actionConfirm, {
       requestId,
-      approved
+      approved,
+      ...(pin === undefined ? {} : { pin })
     })
 })
 

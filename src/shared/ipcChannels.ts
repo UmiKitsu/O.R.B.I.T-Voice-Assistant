@@ -18,6 +18,9 @@ export const IPC_CHANNELS = {
   ollamaHealth: 'orbit:ollama:health',
   settingsGet: 'orbit:settings:get',
   settingsUpdate: 'orbit:settings:update',
+  securityPinStatus: 'orbit:security-pin:status',
+  securityPinCreate: 'orbit:security-pin:create',
+  securityPinChange: 'orbit:security-pin:change',
   actionExecute: 'orbit:action:execute',
   actionConfirm: 'orbit:action:confirm'
 } as const

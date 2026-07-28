@@ -7,6 +7,8 @@ import type {
 } from '../services/mediaControlService'
 import type { SpotifyPlaybackController } from '../services/spotifyService'
 import type { WindowController } from '../services/windowInputService'
+import type { TrashController } from '../services/filesystemService'
+import type { InstallerLauncher } from '../services/softwareInstallService'
 import { ConfirmationManager } from '../security/confirmationManager'
 import { PolicyEngine } from '../security/policyEngine'
 import { getSettings } from '../services/settingsService'
@@ -15,6 +17,8 @@ import { registerAssistantCapabilities } from './assistantCapabilities'
 import { registerBrowserCapabilities } from './browserCapabilities'
 import { CapabilityRegistry } from './capabilityRegistry'
 import { registerMediaCapabilities } from './mediaCapabilities'
+import { registerFilesystemCapabilities } from './filesystemCapabilities'
+import { registerSoftwareCapabilities } from './softwareCapabilities'
 import { registerSpotifyCapabilities } from './spotifyCapabilities'
 import { registerSystemCapabilities } from './systemCapabilities'
 import { registerWindowInputCapabilities } from './windowInputCapabilityDefinitions'
@@ -30,6 +34,8 @@ export type CapabilityRuntimeDependencies = {
   spotifyController?: SpotifyPlaybackController
   spotifyDelay?: (milliseconds: number) => Promise<void>
   spotifyNow?: () => number
+  trashController?: TrashController
+  installerLauncher?: InstallerLauncher
 }
 
 export function createCapabilityRegistry(
@@ -53,6 +59,8 @@ export function createCapabilityRegistry(
   })
   registerAssistantCapabilities(registry)
   registerWindowInputCapabilities(registry, dependencies.windowController)
+  registerFilesystemCapabilities(registry, dependencies.trashController)
+  registerSoftwareCapabilities(registry, dependencies.installerLauncher)
 
   return registry
 }

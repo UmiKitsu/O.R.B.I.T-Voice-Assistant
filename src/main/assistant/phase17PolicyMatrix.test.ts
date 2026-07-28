@@ -11,16 +11,52 @@ import { blockedCapabilities } from '../security/blockedCapabilities'
 import { ConfirmationManager } from '../security/confirmationManager'
 import { PolicyEngine } from '../security/policyEngine'
 
-const requiredRejections = [
-  ['Delete my Downloads folder.', 'filesystem.delete'],
-  ['Move this file to Desktop.', 'filesystem.move'],
-  ['Rename this file.', 'filesystem.rename'],
-  ['Download that installer.', 'browser.download'],
-  ['Upload this image.', 'browser.upload'],
-  ['Extract this ZIP file.', 'archive.extract'],
-  ['Open PowerShell and run this command.', 'powershell.execute'],
-  ['Install Spotify.', 'software.install'],
-  ['Save this document.', 'filesystem.write']
+const permanentlyBlocked = [
+  'browser.download',
+  'browser.upload',
+  'archive.extract',
+  'powershell.execute',
+  'software.uninstall',
+  'security.bypassUac'
+] as const
+
+const pinProtected = [
+  [
+    'Delete C:\\Users\\Test\\Downloads\\old.txt.',
+    'filesystem.delete',
+    { path: 'C:\\Users\\Test\\Downloads\\old.txt' }
+  ],
+  [
+    'Move C:\\Users\\Test\\old.txt to C:\\Users\\Test\\Desktop\\old.txt.',
+    'filesystem.move',
+    {
+      source: 'C:\\Users\\Test\\old.txt',
+      destination: 'C:\\Users\\Test\\Desktop\\old.txt'
+    }
+  ],
+  [
+    'Copy C:\\Users\\Test\\old.txt to C:\\Users\\Test\\Desktop\\copy.txt.',
+    'filesystem.copy',
+    {
+      source: 'C:\\Users\\Test\\old.txt',
+      destination: 'C:\\Users\\Test\\Desktop\\copy.txt'
+    }
+  ],
+  [
+    'Rename C:\\Users\\Test\\old.txt to new.txt.',
+    'filesystem.rename',
+    { source: 'C:\\Users\\Test\\old.txt', newName: 'new.txt' }
+  ],
+  [
+    'Create folder C:\\Users\\Test\\Desktop\\New Folder.',
+    'filesystem.createDirectory',
+    { path: 'C:\\Users\\Test\\Desktop\\New Folder' }
+  ],
+  [
+    'Install C:\\Users\\Test\\Downloads\\setup.exe.',
+    'software.install',
+    { installerPath: 'C:\\Users\\Test\\Downloads\\setup.exe' }
+  ]
 ] as const
 
 const requiredConfirmations = [
@@ -52,7 +88,6 @@ function registerConfirmationCapability(
   }))
   const definition: CapabilityDefinition<Record<string, never>, ActionResult> = {
     name,
-    // The centralized policy must override an accidentally permissive definition.
     risk: 'automatic',
     timeoutMs: 1_000,
     execute
@@ -61,14 +96,22 @@ function registerConfirmationCapability(
   return execute
 }
 
-describe('Phase 17 required policy matrix', () => {
-  it.each(requiredRejections)('always rejects: %s', async (message, capability) => {
-    const plan = routeDeterministicCommand(message)
-    expect(plan?.actions).toEqual([{ capability, parameters: {} }])
+describe('Protected capability policy matrix', () => {
+  it.each(permanentlyBlocked)('keeps %s permanently blocked', (capability) => {
     expect(blockedCapabilities.has(capability)).toBe(true)
+  })
+
+  it.each(pinProtected)('routes %s as an exact PIN-protected action', async (message, capability, parameters) => {
+    const plan = routeDeterministicCommand(message)
+    expect(plan?.actions).toEqual([{ capability, parameters }])
+
+    const registered = createCapabilityRegistry().get(capability)
+    expect(registered?.risk).toBe('pin-required')
+    expect(registered?.parameterSchema.safeParse(parameters).success).toBe(true)
+
     await expect(executeDeterministicAction(message)).resolves.toMatchObject({
       ok: false,
-      code: 'ACTION_BLOCKED'
+      code: 'ACTION_CONFIRMATION_REQUIRED'
     })
   })
 
@@ -79,7 +122,10 @@ describe('Phase 17 required policy matrix', () => {
 
     await expect(
       engine.evaluateAndExecute({ capability, parameters: {}, summary: `Confirm ${capability}` })
-    ).resolves.toMatchObject({ status: 'confirmation-required' })
+    ).resolves.toMatchObject({
+      status: 'confirmation-required',
+      confirmation: { authorization: 'confirmation' }
+    })
     expect(execute).not.toHaveBeenCalled()
   })
 

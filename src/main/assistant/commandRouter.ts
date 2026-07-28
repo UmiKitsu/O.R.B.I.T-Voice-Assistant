@@ -19,20 +19,53 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
     .trim()
   const lower = normalized.toLocaleLowerCase()
 
-  const blockedIntents: ReadonlyArray<[RegExp, string, string]> = [
-    [/^delete\s+.+$/, 'filesystem.delete', 'Delete files or folders'],
-    [/^move\s+.+$/, 'filesystem.move', 'Move files or folders'],
-    [/^rename\s+.+$/, 'filesystem.rename', 'Rename files or folders'],
-    [/^download\s+.+$/, 'browser.download', 'Download a file'],
-    [/^upload\s+.+$/, 'browser.upload', 'Upload a file'],
-    [/^extract\s+.+$/, 'archive.extract', 'Extract an archive'],
-    [/^open powershell(?:\s+and\s+.+)?$/, 'powershell.execute', 'Run PowerShell'],
-    [/^install\s+.+$/, 'software.install', 'Install software'],
-    [/^save\s+.+$/, 'filesystem.write', 'Save or modify a file']
-  ]
+  if (/^open powershell(?:\s+and\s+.+)?$/.test(lower)) {
+    return actionPlan('Run PowerShell', 'powershell.execute')
+  }
 
-  for (const [pattern, capability, summary] of blockedIntents) {
-    if (pattern.test(lower)) return actionPlan(summary, capability)
+  const deleteRequest = normalized.match(/^delete\s+(.+)$/i)
+  if (deleteRequest) {
+    return actionPlan('Move an item to the Recycle Bin', 'filesystem.delete', {
+      path: deleteRequest[1].trim()
+    })
+  }
+
+  const moveRequest = normalized.match(/^move\s+(.+?)\s+to\s+(.+)$/i)
+  if (moveRequest) {
+    return actionPlan('Move a file or folder', 'filesystem.move', {
+      source: moveRequest[1].trim(),
+      destination: moveRequest[2].trim()
+    })
+  }
+
+  const copyRequest = normalized.match(/^copy\s+(.+?)\s+to\s+(.+)$/i)
+  if (copyRequest) {
+    return actionPlan('Copy a file', 'filesystem.copy', {
+      source: copyRequest[1].trim(),
+      destination: copyRequest[2].trim()
+    })
+  }
+
+  const renameRequest = normalized.match(/^rename\s+(.+?)\s+to\s+(.+)$/i)
+  if (renameRequest) {
+    return actionPlan('Rename a file or folder', 'filesystem.rename', {
+      source: renameRequest[1].trim(),
+      newName: renameRequest[2].trim()
+    })
+  }
+
+  const createFolderRequest = normalized.match(/^create (?:a )?(?:new )?folder\s+(.+)$/i)
+  if (createFolderRequest) {
+    return actionPlan('Create a folder', 'filesystem.createDirectory', {
+      path: createFolderRequest[1].trim()
+    })
+  }
+
+  const installRequest = normalized.match(/^install\s+(.+)$/i)
+  if (installRequest) {
+    return actionPlan('Start a local software installer', 'software.install', {
+      installerPath: installRequest[1].trim()
+    })
   }
 
   if (/^stop speaking$/.test(lower)) {

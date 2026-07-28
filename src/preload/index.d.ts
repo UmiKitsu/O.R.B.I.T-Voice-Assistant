@@ -5,6 +5,7 @@ import type {
   MicrophoneTestResult,
   OllamaHealth,
   OrbitSettings,
+  SecurityPinStatus,
   SpeechSynthesisEvent,
   WakeWordEvent
 } from '../shared/types'
@@ -19,6 +20,13 @@ type OrbitApi = {
   onSpeechSynthesisEvent: (listener: (event: SpeechSynthesisEvent) => void) => () => void
   getSettings: () => Promise<ActionResult<OrbitSettings>>
   updateSettings: (patch: Partial<OrbitSettings>) => Promise<ActionResult<OrbitSettings>>
+  getPinStatus: () => Promise<ActionResult<SecurityPinStatus>>
+  createPin: (pin: string, confirmation: string) => Promise<ActionResult<SecurityPinStatus>>
+  changePin: (
+    currentPin: string,
+    nextPin: string,
+    confirmation: string
+  ) => Promise<ActionResult<SecurityPinStatus>>
   startWakeWord: () => Promise<ActionResult>
   stopWakeWord: () => Promise<ActionResult>
   pauseWakeWord: () => Promise<ActionResult>
@@ -29,7 +37,11 @@ type OrbitApi = {
   transcribeMicrophoneTest: (audio: Uint8Array) => Promise<ActionResult<MicrophoneTestResult>>
   cancelMicrophoneTest: () => Promise<ActionResult>
   onWakeWordEvent: (listener: (event: WakeWordEvent) => void) => () => void
-  confirmAction: (requestId: string, approved: boolean) => Promise<ActionResult<AssistantResponse>>
+  confirmAction: (
+    requestId: string,
+    approved: boolean,
+    pin?: string
+  ) => Promise<ActionResult<AssistantResponse>>
 }
 
 declare global {

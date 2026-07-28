@@ -1,4 +1,9 @@
-import type { ActionResult, AssistantEffect, AssistantResponse } from '../../shared/types'
+import type {
+  ActionAuthorization,
+  ActionResult,
+  AssistantEffect,
+  AssistantResponse
+} from '../../shared/types'
 import type { PolicyEngine } from '../security/policyEngine'
 import type { ActionPlan } from './actionPlanSchemas'
 
@@ -6,6 +11,7 @@ type PendingPlan = {
   plan: ActionPlan
   actionIndex: number
   requestId: string
+  authorization: ActionAuthorization
 }
 
 function asActionResult(value: unknown): ActionResult<unknown> | null {
@@ -31,20 +37,21 @@ export class ConfirmationFlow {
   async respond(
     senderId: number,
     requestId: string,
-    approved: boolean
+    approved: boolean,
+    pin?: string
   ): Promise<ActionResult<AssistantResponse>> {
     const pending = this.pendingBySender.get(senderId)
     if (!pending || pending.requestId !== requestId) {
       return {
         ok: false,
         code: 'CONFIRMATION_NOT_FOUND',
-        message: 'That confirmation is missing, expired, cancelled, or belongs to another request.',
+        message: 'That authorization is missing, expired, cancelled, or belongs to another request.',
         recoverable: true
       }
     }
 
-    this.pendingBySender.delete(senderId)
     if (!approved) {
+      this.pendingBySender.delete(senderId)
       this.policyEngine.cancelConfirmation(requestId)
       return {
         ok: true,
@@ -53,7 +60,18 @@ export class ConfirmationFlow {
       }
     }
 
-    if (!this.policyEngine.approveConfirmation(requestId)) {
+    if (pending.authorization === 'pin') {
+      const verification = await this.policyEngine.approvePinAuthorization(requestId, pin ?? '')
+      if (!verification.ok) {
+        return {
+          ok: false,
+          code: verification.code,
+          message: verification.message,
+          recoverable: true
+        }
+      }
+    } else if (!this.policyEngine.approveConfirmation(requestId)) {
+      this.pendingBySender.delete(senderId)
       return {
         ok: false,
         code: 'CONFIRMATION_EXPIRED',
@@ -62,6 +80,7 @@ export class ConfirmationFlow {
       }
     }
 
+    this.pendingBySender.delete(senderId)
     return this.executeFrom(pending.plan, senderId, pending.actionIndex, requestId)
   }
 
@@ -94,17 +113,24 @@ export class ConfirmationFlow {
         this.pendingBySender.set(senderId, {
           plan,
           actionIndex,
-          requestId: policyResult.confirmation.requestId
+          requestId: policyResult.confirmation.requestId,
+          authorization: policyResult.confirmation.authorization
         })
+        const response =
+          policyResult.confirmation.authorization === 'pin'
+            ? `${policyResult.confirmation.summary} This protected action requires your four-digit security PIN.`
+            : policyResult.confirmation.summary
         return {
           ok: true,
-          message: policyResult.confirmation.summary,
+          message: response,
           data: {
-            response: policyResult.confirmation.summary,
+            response,
             confirmation: {
               requestId: policyResult.confirmation.requestId,
               summary: policyResult.confirmation.summary,
-              expiresAt: policyResult.confirmation.expiresAt
+              expiresAt: policyResult.confirmation.expiresAt,
+              authorization: policyResult.confirmation.authorization,
+              pinConfigured: policyResult.confirmation.pinConfigured
             }
           }
         }
@@ -156,13 +182,25 @@ export class ConfirmationFlow {
 
 export function parseConfirmationResponse(
   value: unknown
-): { requestId: string; approved: boolean } | null {
-  if (typeof value !== 'object' || value === null || Object.keys(value).length !== 2) return null
+): { requestId: string; approved: boolean; pin?: string } | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const candidate = value as Record<string, unknown>
-  return typeof candidate.requestId === 'string' &&
-    candidate.requestId.length > 0 &&
-    candidate.requestId.length <= 100 &&
-    typeof candidate.approved === 'boolean'
-    ? { requestId: candidate.requestId, approved: candidate.approved }
-    : null
+  const allowedKeys = new Set(['requestId', 'approved', 'pin'])
+  if (Object.keys(candidate).some((key) => !allowedKeys.has(key))) return null
+  if (
+    typeof candidate.requestId !== 'string' ||
+    candidate.requestId.length === 0 ||
+    candidate.requestId.length > 100 ||
+    typeof candidate.approved !== 'boolean' ||
+    (candidate.pin !== undefined &&
+      (typeof candidate.pin !== 'string' || !/^\d{4}$/.test(candidate.pin)))
+  ) {
+    return null
+  }
+
+  return {
+    requestId: candidate.requestId,
+    approved: candidate.approved,
+    ...(typeof candidate.pin === 'string' ? { pin: candidate.pin } : {})
+  }
 }

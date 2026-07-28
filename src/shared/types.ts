@@ -192,10 +192,20 @@ export type OrbitSettings = {
 }
 
 export type AssistantEffect = 'stop-speaking' | 'disable'
+export type ActionAuthorization = 'confirmation' | 'pin'
+
+export type SecurityPinStatus = {
+  hasPin: boolean
+  temporarilyLocked: boolean
+  retryAt?: number
+}
+
 export type ConfirmationPrompt = {
   requestId: string
   summary: string
   expiresAt: number
+  authorization: ActionAuthorization
+  pinConfigured: boolean
 }
 
 export type AssistantResponse = {

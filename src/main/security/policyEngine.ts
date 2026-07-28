@@ -1,9 +1,15 @@
 import type { ZodError } from 'zod'
+import type { ActionAuthorization } from '../../shared/types'
 import type { CapabilityRegistry } from '../capabilities/capabilityRegistry'
 import { logOperationalEvent } from '../services/loggerService'
 import { blockedCapabilities } from './blockedCapabilities'
 import { ConfirmationManager, type PendingConfirmation } from './confirmationManager'
 import { confirmationRequiredCapabilities } from './confirmationRequiredCapabilities'
+import {
+  getSecurityPinStatus,
+  verifySecurityPin,
+  type PinVerificationResult
+} from './securityPinService'
 
 export type PolicyRequest = {
   capability: string
@@ -31,30 +37,40 @@ class CapabilityTimeoutError extends Error {}
 
 type ConfirmationTimeout = number | (() => number)
 
+type PinAuthorizer = {
+  hasPin(): boolean
+  verify(pin: string): Promise<PinVerificationResult>
+}
+
+const defaultPinAuthorizer: PinAuthorizer = {
+  hasPin: () => getSecurityPinStatus().hasPin,
+  verify: verifySecurityPin
+}
+
 export class PolicyEngine {
   constructor(
     private readonly registry: CapabilityRegistry,
     private readonly confirmations: ConfirmationManager,
-    private readonly confirmationTimeout: ConfirmationTimeout = 20_000
+    private readonly confirmationTimeout: ConfirmationTimeout = 20_000,
+    private readonly pinAuthorizer: PinAuthorizer = defaultPinAuthorizer
   ) {}
 
   async evaluateAndExecute(request: PolicyRequest): Promise<PolicyResult> {
-    // Only the capability name and outcomes are audited. Parameters and summaries may be private.
+    // Only capability names and outcomes are audited. Parameters and summaries may be private.
     logOperationalEvent({ event: 'capability.requested', capability: request.capability })
 
-    // This order is security-sensitive. A model-provided request cannot alter it.
     if (blockedCapabilities.has(request.capability)) {
       this.logPolicyDecision(request.capability, 'blocked')
       return {
         status: 'blocked',
-        message: 'That action is blocked because it would violate Orbit safety policy.'
+        message: 'That action remains blocked because it could bypass Orbit security controls.'
       }
     }
 
     const capability = this.registry.get(request.capability)
     if (!capability) {
       this.logPolicyDecision(request.capability, 'blocked')
-      return { status: 'not-registered', message: 'That action is not supported.' }
+      return { status: 'not-registered', message: 'That action is not supported yet.' }
     }
 
     const parsedParameters = capability.parameterSchema.safeParse(request.parameters)
@@ -67,20 +83,18 @@ export class PolicyEngine {
       }
     }
 
-    const parameters = parsedParameters.data
-    const requiresConfirmation =
-      capability.risk === 'confirmation-required' ||
-      confirmationRequiredCapabilities.has(capability.name)
-
     if (capability.risk === 'blocked') {
       this.logPolicyDecision(request.capability, 'blocked')
       return {
         status: 'blocked',
-        message: 'That action is blocked because it would violate Orbit safety policy.'
+        message: 'That action remains blocked because it could bypass Orbit security controls.'
       }
     }
 
-    if (requiresConfirmation && !request.confirmationRequestId) {
+    const parameters = parsedParameters.data
+    const authorization = this.requiredAuthorization(capability.name, capability.risk)
+
+    if (authorization && !request.confirmationRequestId) {
       this.logPolicyDecision(request.capability, 'allowed')
       return {
         status: 'confirmation-required',
@@ -88,19 +102,24 @@ export class PolicyEngine {
           capability: capability.name,
           parameters,
           summary: capability.confirmationSummary?.(parameters) ?? request.summary,
-          timeoutMs: this.getConfirmationTimeoutMs()
+          timeoutMs:
+            authorization === 'pin'
+              ? Math.max(this.getConfirmationTimeoutMs(), 120_000)
+              : this.getConfirmationTimeoutMs(),
+          authorization,
+          pinConfigured: authorization === 'pin' ? this.pinAuthorizer.hasPin() : true
         })
       }
     }
 
     if (
-      requiresConfirmation &&
+      authorization &&
       !this.confirmations.consume(request.confirmationRequestId ?? '', capability.name, parameters)
     ) {
       this.logPolicyDecision(request.capability, 'blocked')
       return {
         status: 'confirmation-invalid',
-        message: 'The confirmation is missing, expired, cancelled, already used, or does not match.'
+        message: 'The authorization is missing, expired, cancelled, already used, or does not match.'
       }
     }
 
@@ -135,7 +154,6 @@ export class PolicyEngine {
       if (error instanceof CapabilityTimeoutError) {
         return { status: 'timed-out', message: 'The action timed out.' }
       }
-
       return {
         status: 'execution-failed',
         message: error instanceof Error ? error.message : 'The action failed.'
@@ -146,11 +164,44 @@ export class PolicyEngine {
   }
 
   approveConfirmation(requestId: string): boolean {
-    return this.confirmations.confirm(requestId)
+    return this.confirmations.confirm(requestId, 'confirmation')
+  }
+
+  async approvePinAuthorization(requestId: string, pin: string): Promise<PinVerificationResult> {
+    const pending = this.confirmations.get(requestId)
+    if (!pending || pending.authorization !== 'pin') {
+      return {
+        ok: false,
+        code: 'PIN_UNAVAILABLE',
+        message: 'That protected action is missing, expired, or does not require a PIN.'
+      }
+    }
+
+    const verification = await this.pinAuthorizer.verify(pin)
+    if (!verification.ok) return verification
+    if (!this.confirmations.confirm(requestId, 'pin')) {
+      return {
+        ok: false,
+        code: 'PIN_UNAVAILABLE',
+        message: 'That protected action expired. Request it again.'
+      }
+    }
+    return { ok: true }
   }
 
   cancelConfirmation(requestId: string): boolean {
     return this.confirmations.cancel(requestId)
+  }
+
+  private requiredAuthorization(
+    capabilityName: string,
+    risk: 'automatic' | 'confirmation-required' | 'pin-required' | 'blocked'
+  ): ActionAuthorization | null {
+    if (risk === 'pin-required') return 'pin'
+    if (risk === 'confirmation-required' || confirmationRequiredCapabilities.has(capabilityName)) {
+      return 'confirmation'
+    }
+    return null
   }
 
   private getConfirmationTimeoutMs(): number {

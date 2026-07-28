@@ -6,12 +6,11 @@ import { ConfirmationManager } from './confirmationManager'
 import { PolicyEngine } from './policyEngine'
 
 const permanentlyBlocked = [
-  'filesystem.delete',
-  'filesystem.move',
   'browser.download',
   'shell.execute',
   'powershell.execute',
-  'software.install'
+  'security.bypassUac',
+  'software.uninstall'
 ]
 
 const confirmationRequired = [
@@ -76,6 +75,53 @@ describe('PolicyEngine', () => {
       engine.evaluateAndExecute({
         ...request,
         confirmationRequestId: firstResult.confirmation.requestId
+      })
+    ).resolves.toMatchObject({ status: 'executed' })
+    expect(execute).toHaveBeenCalledOnce()
+  })
+
+  it('requires the configured PIN for a pin-protected capability', async () => {
+    const registry = new CapabilityRegistry()
+    const confirmations = new ConfirmationManager()
+    const execute = vi.fn(async () => ({ completed: true }))
+    const verify = vi.fn(async (pin: string) =>
+      pin === '1234'
+        ? ({ ok: true as const })
+        : ({
+            ok: false as const,
+            code: 'PIN_INVALID' as const,
+            message: 'The security PIN was incorrect.'
+          })
+    )
+    registerCapability(registry, 'filesystem.delete', 'pin-required', execute)
+    const engine = new PolicyEngine(registry, confirmations, 20_000, {
+      hasPin: () => true,
+      verify
+    })
+    const request = {
+      capability: 'filesystem.delete',
+      parameters: { target: 'C:\\Users\\Test\\old.txt' },
+      summary: 'Delete old.txt'
+    }
+
+    const pending = await engine.evaluateAndExecute(request)
+    expect(pending).toMatchObject({
+      status: 'confirmation-required',
+      confirmation: { authorization: 'pin', pinConfigured: true }
+    })
+    if (pending.status !== 'confirmation-required') throw new Error('Expected PIN authorization.')
+
+    await expect(engine.approvePinAuthorization(pending.confirmation.requestId, '0000')).resolves.toMatchObject({
+      ok: false,
+      code: 'PIN_INVALID'
+    })
+    expect(execute).not.toHaveBeenCalled()
+
+    await expect(engine.approvePinAuthorization(pending.confirmation.requestId, '1234')).resolves.toEqual({ ok: true })
+    await expect(
+      engine.evaluateAndExecute({
+        ...request,
+        confirmationRequestId: pending.confirmation.requestId
       })
     ).resolves.toMatchObject({ status: 'executed' })
     expect(execute).toHaveBeenCalledOnce()

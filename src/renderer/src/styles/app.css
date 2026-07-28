@@ -350,6 +350,89 @@ h1 {
   background: #0d1422;
 }
 
+.security-pin-settings {
+  margin: -8px 30px 28px;
+  padding: 14px 16px 16px;
+  border: 1px solid rgba(143, 172, 228, 0.13);
+  border-radius: 12px;
+  color: #aebbd2;
+}
+
+.security-pin-settings legend {
+  padding: 0 6px;
+  color: #8292ad;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.security-pin-settings > p {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pin-configured-row,
+.pin-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pin-configured-row span {
+  color: #9ee6be;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pin-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.pin-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pin-form input {
+  padding: 8px 10px;
+  border: 1px solid rgba(143, 172, 228, 0.18);
+  border-radius: 8px;
+  color: #edf3ff;
+  background: #0d1422;
+  font-size: 16px;
+  letter-spacing: 0.45rem;
+}
+
+.pin-configured-row button,
+.pin-actions button {
+  padding: 8px 12px;
+  border: 1px solid rgba(143, 172, 228, 0.18);
+  border-radius: 8px;
+  color: #d8e4f8;
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+}
+
+.pin-actions {
+  justify-content: flex-end;
+  align-self: end;
+}
+
+.pin-success {
+  color: #9ee6be;
+}
+
+.pin-error {
+  color: #f2a7af;
+}
+
 .connection-result {
   margin: -16px 30px 24px;
   font-size: 13px;
@@ -514,9 +597,14 @@ h1 {
     padding: 18px 20px 22px;
   }
 
-  .speech-settings {
+  .speech-settings,
+  .security-pin-settings {
     grid-template-columns: 1fr;
     margin: -6px 20px 22px;
+  }
+
+  .pin-form {
+    grid-template-columns: 1fr;
   }
 }
 @media (prefers-reduced-motion: reduce) {

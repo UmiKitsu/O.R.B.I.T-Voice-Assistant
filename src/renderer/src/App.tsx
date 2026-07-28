@@ -5,6 +5,7 @@ import type {
   ConfirmationPrompt,
   OllamaHealth,
   OrbitStatus,
+  SecurityPinStatus,
   VoiceDiagnostics,
   VoiceTranscript,
   WakeWordEvent,
@@ -12,10 +13,43 @@ import type {
   WakeWordTestResult
 } from '../../shared/types'
 import { ConfirmationDialog } from './ConfirmationDialog'
+import { SecurityPinSettings } from './SecurityPinSettings'
 import { useMicrophoneTest } from './hooks/useMicrophoneTest'
 import { useSpeech } from './hooks/useSpeech'
 import { useWakeWord } from './hooks/useWakeWord'
 import { TRANSCRIPT_READY_HOLD_MS, WAKE_ACKNOWLEDGEMENT_MS } from './voiceCueTiming'
+
+const SPOKEN_PIN_DIGITS: Readonly<Record<string, string>> = {
+  zero: '0',
+  oh: '0',
+  one: '1',
+  two: '2',
+  to: '2',
+  three: '3',
+  four: '4',
+  for: '4',
+  five: '5',
+  six: '6',
+  seven: '7',
+  eight: '8',
+  ate: '8',
+  nine: '9'
+}
+
+function parseSpokenPin(value: string): string | null {
+  const normalized = value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const direct = normalized.match(/(?:^|\s)(\d{4})(?:\s|$)/)
+  if (direct) return direct[1]
+
+  const digits = normalized
+    .split(/\s+/)
+    .flatMap((token) => {
+      if (/^\d$/.test(token)) return [token]
+      const spoken = SPOKEN_PIN_DIGITS[token]
+      return spoken ? [spoken] : []
+    })
+  return digits.length === 4 ? digits.join('') : null
+}
 
 function App(): React.JSX.Element {
   const [status, setStatus] = useState<OrbitStatus>('disabled')
@@ -25,6 +59,7 @@ function App(): React.JSX.Element {
   const [assistantProgress, setAssistantProgress] = useState<AssistantProgress | null>(null)
   const [wakeWordState, setWakeWordState] = useState<WakeWordState>('off')
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationPrompt | null>(null)
+  const [pinStatus, setPinStatus] = useState<SecurityPinStatus | null>(null)
   const [voiceTranscript, setVoiceTranscript] = useState<VoiceTranscript | null>(null)
   const [wakeAcknowledged, setWakeAcknowledged] = useState(false)
   const [voiceDiagnostics, setVoiceDiagnostics] = useState<VoiceDiagnostics | null>(null)
@@ -41,6 +76,10 @@ function App(): React.JSX.Element {
   const requestGeneration = useRef(0)
   const requestInFlight = useRef(false)
   const wakeCommandHandler = useRef<((message: string) => Promise<void>) | null>(null)
+  const authorizationResponseHandler = useRef<
+    ((approved: boolean, pin?: string) => Promise<void>) | null
+  >(null)
+  const pendingConfirmationRef = useRef<ConfirmationPrompt | null>(null)
   const wakeAcknowledgementTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const transcriptClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wakeWordTestWasEnabled = useRef(false)
@@ -110,6 +149,11 @@ function App(): React.JSX.Element {
     },
     []
   )
+
+  useEffect(() => {
+    pendingConfirmationRef.current = pendingConfirmation
+  }, [pendingConfirmation])
+
   useEffect(() => {
     let active = true
     void window.orbit
@@ -121,6 +165,12 @@ function App(): React.JSX.Element {
         setKokoroVoice(result.data.kokoroVoice)
         setRecognitionLanguage(result.data.recognitionLanguage)
         setWakeRecognitionMode(result.data.wakeRecognitionMode)
+      })
+      .catch(() => undefined)
+    void window.orbit
+      .getPinStatus()
+      .then((result) => {
+        if (active && result.ok && result.data) setPinStatus(result.data)
       })
       .catch(() => undefined)
 
@@ -279,27 +329,39 @@ function App(): React.JSX.Element {
     wakeCommandHandler.current = submitMessage
   })
 
-  const respondToConfirmation = async (approved: boolean): Promise<void> => {
-    const confirmation = pendingConfirmation
+  const respondToConfirmation = async (approved: boolean, pin?: string): Promise<void> => {
+    const confirmation = pendingConfirmationRef.current
     if (!confirmation) return
     setStatus('executing')
     setAssistantError(null)
+    let keepPending = false
     try {
-      const result = await window.orbit.confirmAction(confirmation.requestId, approved)
-      setPendingConfirmation(null)
+      const result = await window.orbit.confirmAction(confirmation.requestId, approved, pin)
+      keepPending =
+        !result.ok &&
+        confirmation.authorization === 'pin' &&
+        ['PIN_INVALID', 'PIN_LOCKED', 'PIN_NOT_CONFIGURED'].includes(result.code)
+
+      if (!keepPending) setPendingConfirmation(null)
       if (result.ok) {
         const response = result.data?.response
         if (response) speak(response)
       } else {
         setAssistantError(result.message)
+        const latestPinStatus = await window.orbit.getPinStatus().catch(() => null)
+        if (latestPinStatus?.ok && latestPinStatus.data) setPinStatus(latestPinStatus.data)
       }
     } catch {
       setPendingConfirmation(null)
-      setAssistantError('Orbit could not complete the confirmation request.')
+      setAssistantError('Orbit could not complete the authorization request.')
     } finally {
-      if (isEnabled.current) setStatus('ready')
+      if (isEnabled.current) setStatus(keepPending ? 'awaiting-confirmation' : 'ready')
     }
   }
+
+  useEffect(() => {
+    authorizationResponseHandler.current = respondToConfirmation
+  })
 
   const cancelResponse = async (): Promise<void> => {
     requestGeneration.current += 1
@@ -442,6 +504,21 @@ function App(): React.JSX.Element {
         return
       }
 
+      const pendingAuthorization = pendingConfirmationRef.current
+      if (pendingAuthorization?.authorization === 'pin') {
+        clearWakeAcknowledgement()
+        clearVoiceTranscript()
+        setWakeWordState('paused')
+        const spokenPin = parseSpokenPin(event.transcript.normalizedText)
+        if (!spokenPin) {
+          setAssistantError('Say exactly four digits, or enter the PIN in the protected-action box.')
+          setStatus('awaiting-confirmation')
+          return
+        }
+        void authorizationResponseHandler.current?.(true, spokenPin)
+        return
+      }
+
       setVoiceTranscript(event.transcript)
       setVoiceDiagnostics(event.diagnostics)
       setVoiceTranscriptIsTest(false)
@@ -500,8 +577,12 @@ function App(): React.JSX.Element {
       wakeWordState === 'detected' ||
       wakeWordState === 'capturing' ||
       wakeWordState === 'transcribing'
+    const awaitingSpokenPin =
+      status === 'awaiting-confirmation' &&
+      pendingConfirmation?.authorization === 'pin' &&
+      pinStatus?.hasPin === true
     if (!wakeWordOwnsAudio) {
-      if (status === 'ready' && !speaking && !synthesizing) {
+      if ((status === 'ready' || awaitingSpokenPin) && !speaking && !synthesizing) {
         void resumeWakeWord().then((result) => {
           if (active && !result.ok && isEnabled.current) {
             setWakeWordState('error')
@@ -521,6 +602,8 @@ function App(): React.JSX.Element {
     microphoneTest.phase,
     pauseWakeWord,
     resumeWakeWord,
+    pendingConfirmation,
+    pinStatus?.hasPin,
     speaking,
     status,
     synthesizing,
@@ -546,8 +629,13 @@ function App(): React.JSX.Element {
     transcribing: 'Transcribing your command locally…',
     thinking: 'Preparing a response…',
     synthesizing: 'Generating the Kokoro voice locally...',
-    'awaiting-confirmation': 'Your confirmation is required.',
-    executing: 'Executing the confirmed action…',
+    'awaiting-confirmation':
+      pendingConfirmation?.authorization === 'pin'
+        ? pinStatus?.hasPin
+          ? 'Enter the hidden PIN below, or say “ORBIT” followed by the four digits.'
+          : 'Create a four-digit security PIN below to continue.'
+        : 'Your confirmation is required.',
+    executing: 'Executing the authorized action…',
     speaking: 'Speaking the response…',
     error: 'Voice listening needs your attention.'
   }
@@ -762,9 +850,11 @@ function App(): React.JSX.Element {
 
           {pendingConfirmation ? (
             <ConfirmationDialog
+              key={pendingConfirmation.requestId}
               confirmation={pendingConfirmation}
               disabled={status === 'executing'}
-              onRespond={respondToConfirmation}
+              pinConfigured={pinStatus?.hasPin ?? pendingConfirmation.pinConfigured}
+              onRespond={(approved, pin) => void respondToConfirmation(approved, pin)}
             />
           ) : null}
         </section>
@@ -902,6 +992,16 @@ function App(): React.JSX.Element {
             />
           </label>
         </fieldset>
+
+        <SecurityPinSettings
+          status={pinStatus}
+          onStatusChange={(nextStatus) => {
+            setPinStatus(nextStatus)
+            setPendingConfirmation((current) =>
+              current ? { ...current, pinConfigured: nextStatus.hasPin } : current
+            )
+          }}
+        />
 
         {connectionResult ? (
           <div

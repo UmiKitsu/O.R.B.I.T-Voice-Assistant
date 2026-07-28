@@ -27,8 +27,8 @@ Build a Windows desktop assistant that can:
 2. Convert speech to text locally.
 3. Interpret the user's request using deterministic routing and/or `qwen3:8b`.
 4. Perform a broad range of safe computer actions.
-5. Block file creation, deletion, movement, renaming, modification, downloading, uploading, installation, and arbitrary code execution.
-6. Ask for confirmation before high-impact non-file actions.
+5. Allow broad registered computer actions, including selected file operations and starting local installers, with exact four-digit PIN authorization for dangerous actions.
+6. Ask for normal confirmation before high-impact reversible actions and require the security PIN before protected file or installer actions.
 7. Answer general questions through Ollama.
 8. Speak responses through local text-to-speech.
 9. Preserve the current conversation context.
@@ -528,38 +528,50 @@ Confirmation requirements:
 - Cancel when the user says no, stop, cancel, or never mind.
 - Re-check the policy immediately before execution.
 
-### 11.3 Permanently blocked capabilities
+### 11.3 PIN-required capabilities
 
-These remain blocked even after confirmation:
+Dangerous but intentional actions use the `pin-required` risk level. The currently implemented protected capabilities are:
+
+```ts
+type PinRequiredCapability =
+  | 'filesystem.create'
+  | 'filesystem.write'
+  | 'filesystem.copy'
+  | 'filesystem.move'
+  | 'filesystem.rename'
+  | 'filesystem.delete'
+  | 'filesystem.createDirectory'
+  | 'software.install'
+```
+
+PIN authorization requirements:
+
+- Use exactly four numeric digits.
+- Never store the PIN as plain text.
+- Derive a verifier with a random salt and `scrypt`.
+- Protect the stored verifier with Electron `safeStorage` when OS encryption is available.
+- Never return the PIN, salt, or verifier through IPC.
+- Never log, display, repeat, synthesize, or add the PIN to conversation history.
+- Bind approval to one request ID, one capability, and one exact parameter fingerprint.
+- Consume authorization once and reject replay.
+- Keep a wrong-PIN request pending so the user may retry until expiry or lockout.
+- Temporarily lock verification after repeated wrong attempts.
+- Require the current PIN before changing it.
+- If no PIN exists, require PIN setup before authorization and then require the new PIN for the pending action.
+- Spoken PIN entry is accepted only while a PIN challenge is active and bypasses normal AI routing and transcript display.
+
+### 11.4 Permanently blocked capabilities
+
+A PIN must never authorize behavior that bypasses the capability system or compromises the machine:
 
 ```ts
 const permanentlyBlockedCapabilities = new Set([
-  'filesystem.create',
-  'filesystem.write',
-  'filesystem.append',
-  'filesystem.copy',
-  'filesystem.move',
-  'filesystem.rename',
-  'filesystem.delete',
-  'filesystem.createDirectory',
-  'filesystem.deleteDirectory',
-  'filesystem.changePermissions',
-
-  'browser.download',
-  'browser.upload',
-
-  'archive.create',
-  'archive.extract',
-
   'shell.execute',
   'powershell.execute',
   'cmd.execute',
   'terminal.typeCommand',
   'script.execute',
   'code.evaluate',
-
-  'software.install',
-  'software.uninstall',
 
   'registry.write',
   'drive.format',
@@ -571,70 +583,40 @@ const permanentlyBlockedCapabilities = new Set([
 ])
 ```
 
-Never implement a hidden bypass for these restrictions.
+Capabilities that are not implemented with a typed schema and tested executor, including generic browser upload/download, archive automation, permission changes, and software uninstall, must remain unregistered or blocked until their full protected implementation exists. Never create a hidden bypass.
 
 ---
 
-## 12. File-protection policy
+## 12. Protected file and installer policy
 
-The user's requested rule is:
+Orbit may intentionally change ordinary user files only through registered `pin-required` capabilities. Generic keyboard or mouse automation must not imitate destructive File Explorer shortcuts as a bypass.
 
-> Orbit may perform broad computer actions, except creating, adding, deleting, moving, renaming, downloading, uploading, or modifying files and folders.
+Current behavior:
 
-Interpret this carefully.
+- `filesystem.delete` sends an existing file or folder to the Windows Recycle Bin rather than permanently deleting it.
+- `filesystem.move` moves an item only when the destination does not already exist.
+- `filesystem.rename` accepts an existing absolute path and a validated new base name.
+- `filesystem.copy` currently copies files and refuses to overwrite an existing destination.
+- `filesystem.createDirectory` creates one requested directory.
+- `filesystem.create` creates a UTF-8 text file without overwriting.
+- `filesystem.write` overwrites a UTF-8 text file only after exact PIN authorization.
+- `software.install` starts only a local `.exe` or `.msi` with no model-generated command-line arguments. The user must review the installer and personally handle Windows UAC.
 
-Orbit must not intentionally:
+All protected file capabilities must:
 
-- Create files
-- Create folders
-- Save documents
-- Overwrite files
-- Append to files
-- Delete files or folders
-- Move files or folders
-- Copy files or folders
-- Rename files or folders
-- Change file permissions
-- Download files
-- Upload files
-- Extract archives
-- Export files
-- Install or uninstall software
-- Modify the Registry
-- Format or partition drives
+- Require complete absolute paths.
+- Validate parameters before requesting the PIN.
+- Show the exact path and action in the authorization dialog.
+- Reject destination overwrite unless a capability explicitly and visibly supports it.
+- Reject drive roots and critical Windows, Program Files, and ProgramData paths.
+- Return an exact success or failure result.
+- Never claim completion merely because a process was started.
 
-Opening normal applications can still cause those applications or Windows to update caches, logs, and settings internally. The application should explain this limitation honestly:
+The security PIN is authorization, not a general unrestricted mode. It does not permit arbitrary shell commands, UAC bypass, credential access, security disabling, Registry writes, drive formatting, or model-generated code execution.
 
-> Orbit will not intentionally change user files. Windows and opened applications may still create normal caches, logs, and settings as part of running.
+### File Explorer and generic-input restrictions
 
-### Read-only file access
-
-`file.openReadOnly` may be supported only when:
-
-- The user explicitly requests opening an existing file.
-- The path is supplied by a trusted file picker or validated source.
-- Orbit does not edit or save it.
-- The target application can reasonably be used in read-only mode.
-- Save, Save As, Export, and destructive shortcuts remain blocked during automation.
-
-### File Explorer restrictions
-
-When File Explorer is focused, automation must block:
-
-- Delete
-- Shift + Delete
-- F2 rename
-- Ctrl + X
-- Ctrl + C followed by paste into File Explorer
-- Ctrl + V
-- Drag-and-drop file movement
-- New folder
-- File creation
-- Rename commands
-- Move or Copy dialogs
-- Properties changes that modify permissions
-
-Navigation and opening files read-only are allowed.
+When File Explorer or a save dialog is focused, generic keyboard and mouse automation must still block destructive shortcuts and dialogs such as Delete, Shift+Delete, F2, Ctrl+X, Ctrl+V, Save, Save As, drag-and-drop movement, and permission editing. The assistant must use an exact typed file capability instead.
 
 ---
 
@@ -699,15 +681,16 @@ Win + R followed by automatic command entry
 
 Do not hardcode only a tiny application list.
 
-Use a safe discovery strategy:
+Use the implemented discovery strategy:
 
-1. Check configured application aliases.
-2. Check known Start Menu shortcuts.
-3. Check registered application locations through read-only discovery.
-4. Resolve a confident match.
-5. Present choices when several matches are plausible.
-6. Launch only a resolved executable or registered application target.
-7. Never accept a model-generated arbitrary executable path without validation.
+1. Check built-in application mappings and configured application aliases.
+2. Recursively index `.lnk` and `.url` shortcuts from the current-user and all-users Start Menu folders.
+3. Index current-user and public Desktop shortcuts.
+4. Normalize display names and common suffixes such as `Player`, `Launcher`, and `App`, so requests such as “Roblox” can match “Roblox Player”.
+5. Prefer exact aliases, then high-confidence partial matches.
+6. Launch only the resolved built-in executable, known executable, or discovered shortcut with `shell: false`.
+7. Cache shortcut discovery briefly and allow explicit cache invalidation.
+8. Never accept a model-generated arbitrary executable path as an application launch target.
 
 Support aliases such as:
 
@@ -741,8 +724,7 @@ URL policy:
 - Allow `https:` and optionally `http:`.
 - Normalize user-provided domains.
 - Reject `javascript:`, `data:`, `file:`, and unknown schemes.
-- Do not automatically download.
-- Do not automatically upload.
+- Do not automatically download or upload until a dedicated PIN-required capability with destination/source validation, size limits, and tests is implemented.
 - Do not automatically submit passwords or payment details.
 - Require confirmation before sending messages, posting content, or submitting important forms.
 
@@ -762,7 +744,7 @@ Initial implementation order:
 6. Route the command.
 7. Delete temporary recordings according to application privacy settings.
 
-The final file-protection policy applies to user files. Application-owned temporary audio required for speech processing is permitted, but it must:
+The protected file policy applies to user-requested actions. Application-owned temporary audio required for speech processing is permitted without a PIN, but it must:
 
 - Use the operating system's application-data or temporary directory.
 - Never write into the user's project or document folders without consent.
@@ -802,7 +784,7 @@ Examples:
 “Opening Spotify.”
 “Volume set to 30 percent.”
 “I could not find that application.”
-“That action is blocked because it would modify files.”
+“That protected action requires your four-digit security PIN.”
 ```
 
 ---
@@ -849,47 +831,30 @@ The user must always be able to:
 
 Store local settings in the application's proper user-data directory, not in arbitrary user folders.
 
-Suggested settings:
+Current settings shape:
 
 ```ts
 type OrbitSettings = {
   ollamaBaseUrl: string
   ollamaModel: string
   thinkMode: boolean
-  speechEnabled: boolean
-  selectedVoice?: string
+  speechEngine: 'kokoro'
+  kokoroVoice: KokoroVoice
   speechRate: number
   speechVolume: number
-  selectedMicrophone?: string
-  wakeWordEnabled: boolean
   launchAtStartup: boolean
   minimizeToTray: boolean
   saveConversationHistory: boolean
   confirmationTimeoutSeconds: number
   applicationAliases: Record<string, string[]>
-}
-```
-
-Defaults:
-
-```json
-{
-  "ollamaBaseUrl": "http://localhost:11434",
-  "ollamaModel": "qwen3:8b",
-  "thinkMode": false,
-  "speechEnabled": true,
-  "speechRate": 1,
-  "speechVolume": 1,
-  "wakeWordEnabled": false,
-  "launchAtStartup": false,
-  "minimizeToTray": false,
-  "saveConversationHistory": false,
-  "confirmationTimeoutSeconds": 20,
-  "applicationAliases": {}
+  recognitionLanguage: 'auto' | 'en'
+  wakeRecognitionMode: 'hybrid' | 'keyword-only'
 }
 ```
 
 Validate all loaded settings before use.
+
+The security PIN must not be stored in `OrbitSettings` or accepted by the generic settings IPC endpoint. Store only a salted `scrypt` verifier in the app user-data directory, encrypted with Electron `safeStorage` when available. Expose only `hasPin`, temporary-lock status, and an optional retry time to the renderer.
 
 ---
 
@@ -946,7 +911,8 @@ Good error messages:
 - “No microphone was detected.”
 - “I could not understand the recording.”
 - “That action is not supported yet.”
-- “That action is blocked because it would modify files.”
+- “That protected action requires your four-digit security PIN.”
+- “That path is protected because it belongs to Windows or another critical system location.”
 - “The request was cancelled.”
 - “The action timed out.”
 
@@ -999,6 +965,7 @@ src/
 │   │   ├── actionHandlers.ts
 │   │   ├── audioHandlers.ts
 │   │   ├── settingsHandlers.ts
+│   │   ├── securityHandlers.ts
 │   │   └── systemHandlers.ts
 │   ├── assistant/
 │   │   ├── commandRouter.ts
@@ -1011,6 +978,8 @@ src/
 │   │   ├── applicationCapabilities.ts
 │   │   ├── browserCapabilities.ts
 │   │   ├── mediaCapabilities.ts
+│   │   ├── filesystemCapabilities.ts
+│   │   ├── softwareCapabilities.ts
 │   │   ├── systemCapabilities.ts
 │   │   ├── windowCapabilities.ts
 │   │   └── inputCapabilities.ts
@@ -1018,6 +987,7 @@ src/
 │   │   ├── policyEngine.ts
 │   │   ├── blockedCapabilities.ts
 │   │   ├── confirmationManager.ts
+│   │   ├── securityPinService.ts
 │   │   ├── protectedTargets.ts
 │   │   └── parameterValidators.ts
 │   ├── services/
@@ -1025,6 +995,8 @@ src/
 │   │   ├── speechToTextService.ts
 │   │   ├── textToSpeechService.ts
 │   │   ├── applicationDiscoveryService.ts
+│   │   ├── filesystemService.ts
+│   │   ├── softwareInstallService.ts
 │   │   ├── windowService.ts
 │   │   ├── browserService.ts
 │   │   ├── mediaService.ts
@@ -1046,6 +1018,7 @@ src/
 │       │   ├── StatusIndicator.tsx
 │       │   ├── ConversationPanel.tsx
 │       │   ├── ConfirmationDialog.tsx
+│       │   ├── SecurityPinSettings.tsx
 │       │   ├── ErrorBanner.tsx
 │       │   └── SettingsPanel.tsx
 │       ├── hooks/
@@ -1109,7 +1082,10 @@ Prioritize tests for:
 - Capability schema validation
 - Policy decisions
 - Blocked capabilities
-- Confirmation expiry
+- Confirmation and PIN authorization expiry
+- PIN creation, verification, change, retry, and lockout behavior
+- PIN request binding and replay prevention
+- PIN secrecy across IPC, logs, transcripts, conversation memory, and speech output
 - URL validation
 - Protected keyboard shortcuts
 - Protected applications and dialogs
@@ -1119,21 +1095,31 @@ Prioritize tests for:
 
 ### Policy tests
 
-These must always be rejected:
+These must always be rejected even with a PIN:
 
 ```text
-Delete my Downloads folder.
-Move this file to Desktop.
-Rename this document.
-Download that installer.
-Upload this image.
-Open PowerShell and run this command.
-Install Spotify.
-Extract this ZIP file.
-Save this document.
+Run arbitrary PowerShell, Command Prompt, terminal, script, or model-generated code.
+Bypass UAC.
+Disable security protection.
+Read passwords, browser cookies, or credentials.
+Write to the Registry.
+Format or partition a drive.
+Modify a drive root or a protected Windows system directory.
 ```
 
-These should be allowed when implemented:
+These must produce an exact PIN challenge when their parameters are valid:
+
+```text
+Delete C:\\Users\\User\\Downloads\\old.txt.
+Move C:\\Users\\User\\old.txt to C:\\Users\\User\\Desktop\\old.txt.
+Copy C:\\Users\\User\\old.txt to C:\\Users\\User\\Desktop\\copy.txt.
+Rename C:\\Users\\User\\old.txt to new.txt.
+Create folder C:\\Users\\User\\Desktop\\New Folder.
+Create or overwrite a text file using an absolute path.
+Install C:\\Users\\User\\Downloads\\setup.exe.
+```
+
+These should be allowed automatically when implemented:
 
 ```text
 Open Spotify.
@@ -1168,6 +1154,10 @@ Test:
 - Valid action plan
 - Blocked action plan
 - Confirmation flow
+- Typed and spoken PIN authorization flow
+- Wrong-PIN retry and temporary lockout
+- PIN setup while an action is pending
+- Dynamic Start Menu and Desktop shortcut discovery
 - Failed application launch
 - Speech cancellation
 - Microphone permission denial
@@ -1206,9 +1196,9 @@ Test:
 ### Phase 4 — Capability and policy engine
 
 - Define schemas.
-- Add risk levels.
+- Add `automatic`, `confirmation-required`, `pin-required`, and `blocked` risk levels.
 - Add blocked capability set.
-- Add confirmation manager.
+- Add one-time confirmation and PIN authorization manager.
 - Add structured results.
 - Test policy decisions before adding broad automation.
 
@@ -1216,7 +1206,7 @@ Test:
 
 Implement first:
 
-- Open an application
+- Open an application through built-in, known-path, Start Menu, and Desktop shortcut discovery
 - Focus an application
 - Open a URL
 - Search the web
@@ -1254,7 +1244,7 @@ Implement first:
 - Blocked shortcuts
 - Confirmation for sending content
 
-### Phase 9 — Settings and persistence
+### Phase 9 — Settings, PIN security, and persistence
 
 - Ollama model settings
 - Voice settings
@@ -1263,8 +1253,22 @@ Implement first:
 - Confirmation timeout
 - Startup behavior
 - Privacy choices
+- Hidden four-digit PIN creation and change UI
+- Salted `scrypt` verifier storage protected by `safeStorage`
+- Wrong-attempt lockout
+- Typed and spoken PIN challenge handling
 
-### Phase 10 — Packaging
+### Phase 10 — Protected file and installer actions
+
+- Recycle-Bin deletion
+- File move, copy, and rename without silent overwrite
+- Folder creation
+- UTF-8 text-file creation and overwrite
+- Local `.exe` and `.msi` installer launch without arbitrary arguments
+- Protected-system-path rejection
+- Exact action summaries and one-time PIN authorization
+
+### Phase 11 — Packaging
 
 - Set product name and icon.
 - Configure Windows packaging.
@@ -1288,13 +1292,18 @@ The MVP is complete when:
 - Responses can be spoken locally.
 - A capability registry exists.
 - A centralized policy engine exists.
-- Blocked file and shell actions are tested.
+- Arbitrary shell, credential, UAC-bypass, security-disable, Registry-write, and drive-management actions remain blocked and tested.
+- A hidden four-digit security PIN can be created and changed only with the current PIN.
+- PIN-protected actions are bound to one exact pending request and support hidden typed or non-displayed spoken PIN entry.
+- Installed applications are discovered from Windows Start Menu and Desktop shortcuts instead of relying on a tiny hardcoded list.
+- PIN-protected deletion, move, copy, rename, folder creation, text-file creation/overwrite, and local installer launch are registered and tested.
 - At least these commands work:
   - Open Chrome or the default browser
   - Open YouTube
   - Open Spotify
   - Open Calculator
   - Open File Explorer
+  - Open Roblox or another installed application through shortcut discovery
   - Play or pause media
   - Volume up or down
   - Tell the time
@@ -1357,7 +1366,7 @@ When a request conflicts with the safety policy, preserve the safety policy and 
 
 Do not:
 
-- Remove the file-protection policy.
+- Remove protected-path checks, PIN request binding, one-time consumption, lockout, or secret-handling rules.
 - Add arbitrary shell execution.
 - Give the renderer direct Node.js access.
 - Turn off `contextIsolation`.
@@ -1370,7 +1379,12 @@ Do not:
 - Upload microphone recordings.
 - Hide the microphone state.
 - Execute model-generated code.
-- Add file deletion, moving, renaming, writing, or download automation.
+- Turn the PIN into a global unrestricted or long-lived unlocked mode.
+- Store, log, display, repeat, synthesize, or add the PIN to conversation history.
+- Verify the PIN in the renderer instead of the main process.
+- Add destructive file, download, upload, archive, uninstall, or permission-changing behavior without a typed `pin-required` capability, exact parameter validation, protected-target checks, and tests.
+- Permanently delete files when the capability promises Recycle Bin behavior.
+- Start installers with model-generated command-line arguments or bypass UAC.
 - Claim an action succeeded without checking.
 - Commit secrets or machine-specific private paths.
 - Delete `.git`.
@@ -1422,12 +1436,14 @@ Orbit: “Restarting will close your applications. Do you want to continue?”
 Only a confirmation tied to that pending request may execute the restart.
 ```
 
-### Blocked file action
+### PIN-protected file action
 
 ```text
-User: “Move this file to my Desktop.”
+User: “Move C:\\Users\\User\\old.txt to C:\\Users\\User\\Desktop\\old.txt.”
 
-Orbit: “I cannot move, create, delete, rename, or modify files.”
+Orbit: “Move C:\\Users\\User\\old.txt to C:\\Users\\User\\Desktop\\old.txt. This protected action requires your four-digit security PIN.”
+
+The renderer shows a hidden PIN input. A spoken PIN is accepted only during this challenge and is never shown or routed to Ollama.
 ```
 
 ### Blocked shell bypass
@@ -1446,6 +1462,6 @@ Orbit should be powerful without being unrestricted.
 
 The intended model is:
 
-> Broad computer assistance through typed, registered capabilities; strict blocking of file changes, arbitrary code execution, software installation, credential access, and unsafe bypasses.
+> Broad computer assistance through typed, registered capabilities; exact one-time PIN authorization for dangerous but intentional file and installer actions; permanent blocking of arbitrary code execution, credential access, UAC bypasses, security disabling, Registry writes, and destructive drive operations.
 
 Every future feature must preserve that principle.

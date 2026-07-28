@@ -5,16 +5,19 @@ import icon from '../../resources/icon.png?asset'
 import { registerAssistantHandlers } from './ipc/assistantHandlers'
 import { registerAudioHandlers } from './ipc/audioHandlers'
 import { registerSettingsHandlers } from './ipc/settingsHandlers'
+import { registerSecurityHandlers } from './ipc/securityHandlers'
 import { registerSpeechHandlers } from './ipc/speechHandlers'
 import { flushLogs, initializeLogger, logOperationalEvent } from './services/loggerService'
 import { ensureOllamaRunning } from './services/ollamaStartupService'
 import { initializeSettingsService } from './services/settingsService'
+import { initializeSecurityPinService } from './security/securityPinService'
 import { stopAllWakeWordSessions } from './services/wakeWordService'
 import { stopAllSpeechSynthesis } from './services/speechSynthesisService'
 
 registerAssistantHandlers()
 registerAudioHandlers()
 registerSettingsHandlers()
+registerSecurityHandlers()
 registerSpeechHandlers()
 
 function createWindow(): void {
@@ -60,6 +63,7 @@ function createWindow(): void {
 app.whenReady().then(async () => {
   initializeLogger(app.getPath('userData'))
   await initializeSettingsService()
+  await initializeSecurityPinService()
   await ensureOllamaRunning()
   logOperationalEvent({ event: 'app.started' })
   // Set app user model id for windows

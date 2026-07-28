@@ -125,7 +125,7 @@ describe('Phase 11 capabilities', () => {
     expect(sendMediaKey).not.toHaveBeenCalled()
   })
 
-  it('launches only applications resolved by the safe registry', async () => {
+  it('launches built-in and dynamically discovered applications only after resolution', async () => {
     await expect(
       execute('application.launch', { application: 'calculator' })
     ).resolves.toMatchObject({
@@ -137,7 +137,7 @@ describe('Phase 11 capabilities', () => {
     )
 
     await expect(
-      execute('application.launch', { application: 'PowerShell' })
+      execute('application.launch', { application: 'Definitely Not Installed Orbit Test App' })
     ).resolves.toMatchObject({
       status: 'executed',
       result: { ok: false, code: 'APPLICATION_NOT_FOUND' }

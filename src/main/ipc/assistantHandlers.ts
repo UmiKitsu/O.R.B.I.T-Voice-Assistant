@@ -300,7 +300,12 @@ export function registerAssistantHandlers(): void {
         }
       }
 
-      return confirmationFlow.respond(event.sender.id, response.requestId, response.approved)
+      return confirmationFlow.respond(
+        event.sender.id,
+        response.requestId,
+        response.approved,
+        response.pin
+      )
     }
   )
 
