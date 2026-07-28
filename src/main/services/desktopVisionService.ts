@@ -11,6 +11,7 @@ import { getSettings } from './settingsService'
 import {
   clearScreenAwarenessPhase,
   requireScreenAwareness,
+  refreshScreenAwarenessStatus,
   setScreenAwarenessPhase
 } from './screenAwarenessService'
 import { inspectActiveTarget, windowsController, type WindowController } from './windowInputService'
@@ -151,18 +152,25 @@ export async function inspectForegroundVisually(
   const enabled = requireScreenAwareness()
   if (!enabled.ok) return failure('SCREEN_AWARENESS_DISABLED', enabled.message)
   const settings = getSettings()
-  setScreenAwarenessPhase('analyzing', 'Capturing and analyzing the foreground window locally.')
+  setScreenAwarenessPhase('inspecting', 'Capturing the foreground window locally.')
   let capture: ForegroundWindowCapture | undefined
   try {
     const captured = await captureForegroundWindow(signal)
     if (!captured.ok || !captured.data) return captured as ActionResult<VisualInspection>
     capture = captured.data
+    setScreenAwarenessPhase('vision-loading', `Preparing ${settings.visionModel} locally.`)
     const prompt = `User goal: ${goal.slice(0, 1_000)}\nDescribe the foreground window and identify only visible controls relevant to the goal. Return exactly {"summary":"...","targets":[{"label":"...","role":"button|link|textbox|tab|menu-item|control","confidence":0.0,"bounds":{"x":0.0,"y":0.0,"width":0.0,"height":0.0}}]}. Bounds are normalized to the supplied image. Return at most ${MAX_TARGETS} targets and no action, command, script, or instruction fields.`
     const response = await structuredVisionChat(
       prompt,
       capture.imageBase64,
       settings.visionModel,
-      signal
+      signal,
+      (progress) => {
+        setScreenAwarenessPhase(
+          progress.phase === 'loading' ? 'vision-loading' : 'analyzing',
+          progress.message
+        )
+      }
     )
     if (!response.ok || !response.data) return response as ActionResult<VisualInspection>
     let parsed: unknown
@@ -216,6 +224,7 @@ export async function inspectForegroundVisually(
   } finally {
     capture?.png.fill(0)
     clearScreenAwarenessPhase()
+    void refreshScreenAwarenessStatus()
   }
 }
 

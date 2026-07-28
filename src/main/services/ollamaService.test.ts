@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import {
   resetOllamaServiceForTests,
   structuredChat,
-  structuredChatWithExactModel
+  structuredChatWithExactModel,
+  structuredVisionChat
 } from './ollamaService'
 
 const PRIMARY_MODEL = 'qwen3.5:9b-q4_K_M'
 const FALLBACK_MODEL = 'qwen3:8b'
+const VISION_MODEL = 'qwen3-vl:4b'
 
 function tagsResponse(models = [PRIMARY_MODEL, FALLBACK_MODEL]): Response {
   return Response.json({ models: models.map((name) => ({ name })) })
@@ -134,9 +136,9 @@ describe('structuredChat streaming', () => {
   it('uses an exact requested model without allowing configured-model substitution', async () => {
     const fetchMock = installFetch(validStream(), [PRIMARY_MODEL, FALLBACK_MODEL])
 
-    await expect(
-      structuredChatWithExactModel([], {}, FALLBACK_MODEL)
-    ).resolves.toMatchObject({ ok: true })
+    await expect(structuredChatWithExactModel([], {}, FALLBACK_MODEL)).resolves.toMatchObject({
+      ok: true
+    })
 
     const chatCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/api/chat'))
     expect(JSON.parse(String(chatCall?.[1]?.body))).toMatchObject({
@@ -149,9 +151,7 @@ describe('structuredChat streaming', () => {
   it('reports an unavailable exact model instead of substituting another model', async () => {
     const fetchMock = installFetch(validStream(), [PRIMARY_MODEL])
 
-    await expect(
-      structuredChatWithExactModel([], {}, FALLBACK_MODEL)
-    ).resolves.toMatchObject({
+    await expect(structuredChatWithExactModel([], {}, FALLBACK_MODEL)).resolves.toMatchObject({
       ok: false,
       code: 'OLLAMA_MODEL_MISSING'
     })
@@ -180,6 +180,83 @@ describe('structuredChat streaming', () => {
     await expect(pending).resolves.toMatchObject({
       ok: false,
       code: 'OLLAMA_IDLE_TIMEOUT'
+    })
+  })
+
+  it('keeps vision lazy with a separate three-minute lifetime and bounded request', async () => {
+    const progress = vi.fn()
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/tags')) {
+        return tagsResponse([PRIMARY_MODEL, FALLBACK_MODEL, VISION_MODEL])
+      }
+      if (url.endsWith('/api/chat')) {
+        return Response.json({
+          message: {
+            role: 'assistant',
+            content: '',
+            thinking: '{"summary":"Window","targets":[]}'
+          }
+        })
+      }
+      throw new Error(`Unexpected Ollama URL: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      structuredVisionChat('Find the play button', 'aGVsbG8=', VISION_MODEL, undefined, progress)
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { response: '{"summary":"Window","targets":[]}' }
+    })
+
+    const chatCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/api/chat'))
+    const body = JSON.parse(String(chatCall?.[1]?.body))
+    expect(body).toMatchObject({
+      model: VISION_MODEL,
+      think: false,
+      stream: false,
+      keep_alive: '3m',
+      format: 'json',
+      options: { num_ctx: 4096, num_predict: 256, temperature: 0.05 }
+    })
+    expect(body.messages).toHaveLength(2)
+    expect(body.messages[1].images).toEqual(['aGVsbG8='])
+    expect(progress.mock.calls.map(([value]) => value.phase)).toEqual([
+      'loading',
+      'generating',
+      'validating'
+    ])
+  })
+
+  it('reports a missing exact vision model without falling back to a text model', async () => {
+    const fetchMock = installFetch(validStream(), [PRIMARY_MODEL, FALLBACK_MODEL])
+
+    await expect(
+      structuredVisionChat('Inspect this window', 'aGVsbG8=', VISION_MODEL)
+    ).resolves.toMatchObject({
+      ok: false,
+      code: 'OLLAMA_MODEL_MISSING'
+    })
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/api/chat'))).toBe(false)
+  })
+
+  it('rejects malformed non-streaming vision output', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/api/tags')) return tagsResponse([VISION_MODEL])
+      if (url.endsWith('/api/chat')) {
+        return Response.json({ message: { role: 'assistant', content: 42 } })
+      }
+      throw new Error(`Unexpected Ollama URL: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      structuredVisionChat('Inspect this window', 'aGVsbG8=', VISION_MODEL)
+    ).resolves.toMatchObject({
+      ok: false,
+      code: 'OLLAMA_INVALID_RESPONSE'
     })
   })
 })

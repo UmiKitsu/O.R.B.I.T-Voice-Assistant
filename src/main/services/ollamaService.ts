@@ -13,7 +13,8 @@ const HARD_TIMEOUT_MS = 120_000
 const HEALTH_TIMEOUT_MS = 15_000
 const WARM_TIMEOUT_MS = 90_000
 const MODEL_CACHE_MS = 30_000
-const KEEP_ALIVE = '15m'
+const TEXT_KEEP_ALIVE = '15m'
+const VISION_KEEP_ALIVE = '3m'
 const FALLBACK_MODEL = 'qwen3:8b'
 const OLLAMA_CONTEXT_TOKENS = 8_192
 const OLLAMA_MAX_OUTPUT_TOKENS = 512
@@ -331,7 +332,7 @@ async function prewarmModel(
         model,
         prompt: '',
         stream: false,
-        keep_alive: KEEP_ALIVE,
+        keep_alive: TEXT_KEEP_ALIVE,
         options: { num_ctx: OLLAMA_CONTEXT_TOKENS, num_predict: 1 }
       })
     },
@@ -494,7 +495,7 @@ async function sendChatRequest(
         messages,
         think: false,
         stream: true,
-        keep_alive: KEEP_ALIVE,
+        keep_alive: TEXT_KEEP_ALIVE,
         options: {
           num_ctx: OLLAMA_CONTEXT_TOKENS,
           num_predict: OLLAMA_MAX_OUTPUT_TOKENS,
@@ -680,7 +681,7 @@ export async function structuredVisionChat(
         ],
         think: false,
         stream: false,
-        keep_alive: KEEP_ALIVE,
+        keep_alive: VISION_KEEP_ALIVE,
         format: 'json',
         options: { num_ctx: 4096, num_predict: 256, temperature: 0.05 }
       }),
@@ -695,14 +696,23 @@ export async function structuredVisionChat(
         recoverable: true
       }
     }
+    notify(onProgress, startedAt, 'generating', 'Analyzing the foreground window locally.', model)
     const value: unknown = await response.json()
-    if (
-      !isRecord(value) ||
-      !isRecord(value.message) ||
-      value.message.role !== 'assistant' ||
-      typeof value.message.content !== 'string' ||
-      value.message.content.length > 256_000
-    ) {
+    if (!isRecord(value) || !isRecord(value.message) || value.message.role !== 'assistant') {
+      return {
+        ok: false,
+        code: 'OLLAMA_INVALID_RESPONSE',
+        message: 'The local vision model returned an invalid response.',
+        recoverable: true
+      }
+    }
+    const responseText =
+      typeof value.message.content === 'string' && value.message.content.trim()
+        ? value.message.content.trim()
+        : typeof value.message.thinking === 'string'
+          ? value.message.thinking.trim()
+          : ''
+    if (!responseText || responseText.length > 256_000) {
       return {
         ok: false,
         code: 'OLLAMA_INVALID_RESPONSE',
@@ -714,7 +724,7 @@ export async function structuredVisionChat(
     return {
       ok: true,
       message: 'Orbit analyzed the foreground window locally.',
-      data: { response: value.message.content.trim() }
+      data: { response: responseText }
     }
   } catch (error: unknown) {
     if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {

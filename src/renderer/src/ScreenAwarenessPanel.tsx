@@ -84,7 +84,7 @@ export function ScreenAwarenessPanel({
               {status.visionReady
                 ? status.visionWarm
                   ? 'ready and warm'
-                  : 'installed'
+                  : 'installed and idle'
                 : 'not installed'}
             </dd>
           </div>

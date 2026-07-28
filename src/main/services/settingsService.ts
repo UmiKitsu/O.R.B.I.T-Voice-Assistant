@@ -76,7 +76,7 @@ export const DEFAULT_ORBIT_SETTINGS: Readonly<OrbitSettings> = Object.freeze({
   preferredMusicProvider: 'spotify',
   musicFallbackEnabled: true,
   browserControlEnabled: false,
-  screenAwarenessEnabled: false,
+  screenAwarenessEnabled: true,
   visionModel: 'qwen3-vl:4b'
 })
 
@@ -146,7 +146,7 @@ export function migrateLegacySettings(value: unknown): { value: unknown; changed
     changed = true
   }
   if (!('screenAwarenessEnabled' in migrated)) {
-    migrated.screenAwarenessEnabled = false
+    migrated.screenAwarenessEnabled = true
     changed = true
   }
   if (!('visionModel' in migrated)) {

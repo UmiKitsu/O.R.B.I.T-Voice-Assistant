@@ -1,5 +1,5 @@
 import type { ScreenAwarenessPhase, ScreenAwarenessStatus } from '../../shared/types'
-import { getExactModelHealth, warmExactModel } from './ollamaService'
+import { getExactModelHealth } from './ollamaService'
 import { getSettings } from './settingsService'
 
 export type ScreenAwarenessListener = (status: ScreenAwarenessStatus) => void
@@ -28,7 +28,9 @@ function createStatus(): ScreenAwarenessStatus {
 
   const defaultPhase: ScreenAwarenessPhase = visionSnapshot.visionReady ? 'ready' : 'degraded'
   const defaultMessage = visionSnapshot.visionReady
-    ? 'Screen awareness is ready for the active window.'
+    ? visionSnapshot.visionWarm
+      ? 'The local vision fallback is loaded and ready for the active window.'
+      : 'The local vision fallback is installed and idle. It will load only when needed.'
     : `Windows controls remain available. Install the vision fallback with: ollama pull ${settings.visionModel}`
   return {
     enabled: true,
@@ -85,8 +87,7 @@ export function requireScreenAwareness(): { ok: true } | { ok: false; message: s
 }
 
 export async function refreshScreenAwarenessStatus(
-  signal?: AbortSignal,
-  warm = true
+  signal?: AbortSignal
 ): Promise<ScreenAwarenessStatus> {
   const settings = getSettings()
   phaseOverride = undefined
@@ -95,10 +96,7 @@ export async function refreshScreenAwarenessStatus(
     return publish()
   }
 
-  setScreenAwarenessPhase('vision-loading', `Checking ${settings.visionModel} locally.`)
-  const health = warm
-    ? await warmExactModel(settings.visionModel, signal)
-    : await getExactModelHealth(settings.visionModel, signal)
+  const health = await getExactModelHealth(settings.visionModel, signal)
   visionSnapshot = {
     visionReady:
       health.connected && health.modelInstalled && health.activeModel === settings.visionModel,

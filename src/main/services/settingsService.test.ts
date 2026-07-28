@@ -126,12 +126,14 @@ describe('settings validation', () => {
       wakeRecognitionMode: _wakeRecognitionMode,
       speechEngine: _speechEngine,
       kokoroVoice: _kokoroVoice,
+      screenAwarenessEnabled: _screenAwarenessEnabled,
       ...legacy
     } = DEFAULT_ORBIT_SETTINGS
     void _recognitionLanguage
     void _wakeRecognitionMode
     void _speechEngine
     void _kokoroVoice
+    void _screenAwarenessEnabled
     const storage = memoryStorage({ ...legacy, speechVolume: 0.6 })
     setSettingsStorageForTests(storage)
 
@@ -144,7 +146,7 @@ describe('settings validation', () => {
       spotifyPlaybackMode: 'desktop',
       preferredMusicProvider: 'spotify',
       musicFallbackEnabled: true,
-      screenAwarenessEnabled: false,
+      screenAwarenessEnabled: true,
       visionModel: 'qwen3-vl:4b'
     })
     expect(storage.store).toEqual({ ...DEFAULT_ORBIT_SETTINGS, speechVolume: 0.6 })
