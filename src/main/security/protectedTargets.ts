@@ -16,6 +16,8 @@ export type ProtectedTargetReason =
   | 'registry-editor'
   | 'disk-management'
   | 'task-scheduler'
+  | 'security-settings'
+  | 'file-operation-dialog'
   | 'uac'
   | 'installer'
   | 'uninstaller'
@@ -63,6 +65,14 @@ const protectedPatterns: ReadonlyArray<{
     pattern: /\b(?:task scheduler|taskschd|mmc\.exe.*task scheduler)\b/i
   },
   {
+    reason: 'security-settings',
+    pattern: /\b(?:windows security|securityhealthhost|windows defender|firewall)\b/i
+  },
+  {
+    reason: 'file-operation-dialog',
+    pattern: /\b(?:explorer(?:\.exe)?|file explorer)\b.*\b(?:delete|replace|move|copy|rename)\b/i
+  },
+  {
     reason: 'uac',
     pattern: /\b(?:user account control|consent(?:\.exe)?|credentialui)\b/i
   },
@@ -104,6 +114,8 @@ const reasonLabels: Record<ProtectedTargetReason, string> = {
   'registry-editor': 'Registry Editor',
   'disk-management': 'Disk Management',
   'task-scheduler': 'Task Scheduler',
+  'security-settings': 'Windows security settings',
+  'file-operation-dialog': 'a File Explorer operation dialog',
   uac: 'User Account Control',
   installer: 'an installer',
   uninstaller: 'an uninstaller',

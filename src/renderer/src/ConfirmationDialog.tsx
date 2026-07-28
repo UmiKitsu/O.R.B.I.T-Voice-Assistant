@@ -31,10 +31,21 @@ export function ConfirmationDialog({
       aria-labelledby="confirmation-title"
       aria-describedby="confirmation-summary"
     >
-      <h3 id="confirmation-title">
-        {requiresPin ? 'Protected action' : 'Confirm action'}
-      </h3>
+      <h3 id="confirmation-title">{requiresPin ? 'Protected action' : 'Confirm action'}</h3>
       <p id="confirmation-summary">{confirmation.summary}</p>
+
+      {confirmation.visualTarget ? (
+        <figure className="visual-target-preview">
+          <img
+            src={confirmation.visualTarget.imageDataUrl}
+            alt={`Target preview: ${confirmation.visualTarget.label}`}
+          />
+          <figcaption>
+            {confirmation.visualTarget.label} · {confirmation.visualTarget.role} in{' '}
+            {confirmation.visualTarget.application}
+          </figcaption>
+        </figure>
+      ) : null}
 
       {requiresPin ? (
         pinConfigured ? (

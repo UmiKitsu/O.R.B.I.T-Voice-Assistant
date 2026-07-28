@@ -23,6 +23,8 @@ describe('protected target detection', () => {
     ['registry-editor', { title: 'Registry Editor' }],
     ['disk-management', { title: 'Disk Management' }],
     ['task-scheduler', { title: 'Task Scheduler' }],
+    ['security-settings', { title: 'Windows Security - Virus & threat protection' }],
+    ['file-operation-dialog', { processName: 'explorer.exe', title: 'Delete Folder' }],
     ['uac', { processName: 'consent.exe' }],
     ['installer', { title: 'Product Setup Wizard' }],
     ['uninstaller', { title: 'Uninstall Product' }]

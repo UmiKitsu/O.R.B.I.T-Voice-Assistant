@@ -3,6 +3,7 @@ export type OrbitStatus =
   | 'ready'
   | 'listening'
   | 'transcribing'
+  | 'observing'
   | 'preparing-voice'
   | 'preparing-ai'
   | 'thinking'
@@ -56,11 +57,7 @@ export type AssistantProgress = {
   model?: string
 }
 
-export type TranscriptionBackend =
-  | 'vulkan-small'
-  | 'vulkan-turbo'
-  | 'cpu-turbo'
-  | 'cpu-small'
+export type TranscriptionBackend = 'vulkan-small' | 'vulkan-turbo' | 'cpu-turbo' | 'cpu-small'
 
 export type Transcription = {
   text: string
@@ -127,12 +124,7 @@ export type WakeWordTestResult = {
 }
 
 export type MicrophonePipelineState =
-  | 'off'
-  | 'starting'
-  | 'active'
-  | 'paused'
-  | 'recovering'
-  | 'error'
+  'off' | 'starting' | 'active' | 'paused' | 'recovering' | 'error'
 
 export type WakeWordState =
   'off' | 'starting' | 'armed' | 'detected' | 'capturing' | 'transcribing' | 'paused' | 'error'
@@ -211,6 +203,68 @@ export type OrbitSettings = {
   preferredMusicProvider: MusicProvider
   musicFallbackEnabled: boolean
   browserControlEnabled: boolean
+  screenAwarenessEnabled: boolean
+  visionModel: string
+}
+
+export type ScreenAwarenessPhase =
+  'off' | 'ready' | 'inspecting' | 'vision-loading' | 'analyzing' | 'degraded' | 'error'
+
+export type ScreenAwarenessStatus = {
+  enabled: boolean
+  phase: ScreenAwarenessPhase
+  uiAutomationReady: boolean
+  visionReady: boolean
+  visionModel: string
+  visionWarm: boolean
+  processor?: 'gpu' | 'cpu' | 'mixed' | 'unknown'
+  message: string
+}
+
+export type DesktopElementBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export type DesktopElement = {
+  ref: string
+  role: string
+  name: string
+  enabled: boolean
+  offscreen: boolean
+  bounds: DesktopElementBounds
+  patterns: Array<'invoke' | 'toggle' | 'select' | 'value' | 'scroll'>
+}
+
+export type DesktopWindowSnapshot = {
+  windowTitle: string
+  processName: string
+  capturedAt: number
+  treeVersion: string
+  truncated: boolean
+  elements: DesktopElement[]
+}
+
+export type MediaPlaybackStatus =
+  'closed' | 'opened' | 'changing' | 'stopped' | 'playing' | 'paused'
+
+export type MediaSessionState = {
+  sourceApplication: string
+  playbackStatus: MediaPlaybackStatus
+  title?: string
+  artist?: string
+  albumTitle?: string
+  positionSeconds?: number
+  durationSeconds?: number
+}
+
+export type VisualTargetPreview = {
+  application: string
+  label: string
+  role: string
+  imageDataUrl: string
 }
 
 export type AssistantEffect = 'stop-speaking' | 'disable'
@@ -327,6 +381,7 @@ export type ConfirmationPrompt = {
   expiresAt: number
   authorization: ActionAuthorization
   pinConfigured: boolean
+  visualTarget?: VisualTargetPreview
 }
 
 export type AssistantResponse = {

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import type { ActionAuthorization } from '../../shared/types'
+import type { ActionAuthorization, VisualTargetPreview } from '../../shared/types'
 
 export type PendingConfirmation = {
   requestId: string
@@ -9,6 +9,7 @@ export type PendingConfirmation = {
   expiresAt: number
   authorization: ActionAuthorization
   pinConfigured: boolean
+  visualTarget?: VisualTargetPreview
 }
 
 type CreateConfirmationRequest = {
@@ -18,6 +19,7 @@ type CreateConfirmationRequest = {
   timeoutMs: number
   authorization: ActionAuthorization
   pinConfigured: boolean
+  visualTarget?: VisualTargetPreview
 }
 
 function canonicalize(value: unknown): string {
@@ -50,7 +52,8 @@ export class ConfirmationManager {
       summary: request.summary,
       expiresAt: this.now() + request.timeoutMs,
       authorization: request.authorization,
-      pinConfigured: request.pinConfigured
+      pinConfigured: request.pinConfigured,
+      ...(request.visualTarget ? { visualTarget: request.visualTarget } : {})
     }
     this.pending.set(confirmation.requestId, confirmation)
     return confirmation
@@ -64,7 +67,8 @@ export class ConfirmationManager {
   confirm(requestId: string, authorization?: ActionAuthorization): boolean {
     this.removeExpired()
     const pending = this.pending.get(requestId)
-    if (!pending || (authorization !== undefined && pending.authorization !== authorization)) return false
+    if (!pending || (authorization !== undefined && pending.authorization !== authorization))
+      return false
     this.approved.add(requestId)
     return true
   }

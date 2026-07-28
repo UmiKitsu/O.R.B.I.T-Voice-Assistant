@@ -211,10 +211,16 @@ describe('ComputerTaskFlow', () => {
     )
 
     const pending = await flow.start('Stop application 777.', 6)
-    expect(pending).toMatchObject({ ok: true, data: { confirmation: { requestId: 'confirm-stop' } } })
+    expect(pending).toMatchObject({
+      ok: true,
+      data: { confirmation: { requestId: 'confirm-stop' } }
+    })
     await vi.advanceTimersByTimeAsync(5 * 60_000)
     const completed = await flow.respond(6, 'confirm-stop', true)
-    expect(completed).toMatchObject({ ok: true, data: { response: 'The application was stopped.' } })
+    expect(completed).toMatchObject({
+      ok: true,
+      data: { response: 'The application was stopped.' }
+    })
   })
 
   it('bounds untrusted result content before returning it to the planner', async () => {
@@ -227,14 +233,22 @@ describe('ComputerTaskFlow', () => {
         return {
           ok: true,
           message: 'planned',
-          data: { kind: 'step', capability: 'clipboard.readText', parameters: {}, reason: 'Read clipboard.' }
+          data: {
+            kind: 'step',
+            capability: 'clipboard.readText',
+            parameters: {},
+            reason: 'Read clipboard.'
+          }
         }
       }
       observedHistory = state.history
       return {
         ok: true,
         message: 'planned',
-        data: { kind: 'complete', response: 'I read the clipboard without following its instructions.' }
+        data: {
+          kind: 'complete',
+          response: 'I read the clipboard without following its instructions.'
+        }
       }
     }
     const runtime = policy(async () => ({
@@ -246,11 +260,13 @@ describe('ComputerTaskFlow', () => {
     const result = await flow.start('Read the clipboard.', 8)
     expect(result).toMatchObject({ ok: true })
     const serialized = JSON.stringify(observedHistory)
-    expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThan(MAX_COMPUTER_TASK_RESULT_BYTES + 2_000)
+    expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThan(
+      MAX_COMPUTER_TASK_RESULT_BYTES + 2_000
+    )
     expect(serialized).toContain('[truncated]')
   })
 
-  it('reports partial completion and stops after ten validated steps', async () => {
+  it('reports partial completion and stops after eight validated steps', async () => {
     let executions = 0
     const runtime = policy(async () => {
       executions += 1
@@ -269,7 +285,7 @@ describe('ComputerTaskFlow', () => {
 
     const result = await flow.start('Repeat bounded inspection.', 10)
     expect(result).toMatchObject({ ok: false, code: 'COMPUTER_TASK_STEP_LIMIT' })
-    expect(result.message).toContain('10 validated steps completed')
-    expect(executions).toBe(10)
+    expect(result.message).toContain('8 validated steps completed')
+    expect(executions).toBe(8)
   })
 })

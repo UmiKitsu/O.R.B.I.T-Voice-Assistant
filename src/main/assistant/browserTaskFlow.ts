@@ -376,7 +376,10 @@ export class BrowserTaskFlow {
                 summary: policyResult.confirmation.summary,
                 expiresAt: policyResult.confirmation.expiresAt,
                 authorization: policyResult.confirmation.authorization,
-                pinConfigured: policyResult.confirmation.pinConfigured
+                pinConfigured: policyResult.confirmation.pinConfigured,
+                ...(policyResult.confirmation.visualTarget
+                  ? { visualTarget: policyResult.confirmation.visualTarget }
+                  : {})
               }
             }
           }

@@ -108,7 +108,10 @@ export class PolicyEngine {
               ? Math.max(this.getConfirmationTimeoutMs(), 120_000)
               : this.getConfirmationTimeoutMs(),
           authorization,
-          pinConfigured: authorization === 'pin' ? this.pinAuthorizer.hasPin() : true
+          pinConfigured: authorization === 'pin' ? this.pinAuthorizer.hasPin() : true,
+          ...(capability.confirmationVisualTarget
+            ? { visualTarget: capability.confirmationVisualTarget(parameters) }
+            : {})
         })
       }
     }
@@ -120,7 +123,8 @@ export class PolicyEngine {
       this.logPolicyDecision(request.capability, 'blocked')
       return {
         status: 'confirmation-invalid',
-        message: 'The authorization is missing, expired, cancelled, already used, or does not match.'
+        message:
+          'The authorization is missing, expired, cancelled, already used, or does not match.'
       }
     }
 

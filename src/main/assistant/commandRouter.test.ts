@@ -24,15 +24,35 @@ describe('routeDeterministicCommand', () => {
     ['Volume up.', 'Raise the volume', 'audio.volumeUp', {}],
     ['Volume down.', 'Lower the volume', 'audio.volumeDown', {}],
     ['Skip it.', 'Send the next-track command', 'media.next', {}],
-    ['Skip this song on Spotify.', 'Send the next-track command', 'media.next', {}],
+    [
+      'Skip this song on Spotify.',
+      'Play the next Spotify track and read its state',
+      'media.nextTrack',
+      { sourceApplication: 'spotify' }
+    ],
     ['Next song.', 'Send the next-track command', 'media.next', {}],
     ['Play the next track.', 'Send the next-track command', 'media.next', {}],
-    ['Go to the next song on Spotify.', 'Send the next-track command', 'media.next', {}],
-    ['Go back on Spotify.', 'Send the previous-track command', 'media.previous', {}],
+    [
+      'Go to the next song on Spotify.',
+      'Play the next Spotify track and read its state',
+      'media.nextTrack',
+      { sourceApplication: 'spotify' }
+    ],
+    [
+      'Go back on Spotify.',
+      'Play the previous Spotify track and read its state',
+      'media.previousTrack',
+      { sourceApplication: 'spotify' }
+    ],
     ['Previous song.', 'Send the previous-track command', 'media.previous', {}],
     ['Play the previous track.', 'Send the previous-track command', 'media.previous', {}],
     ['Go back one song.', 'Send the previous-track command', 'media.previous', {}],
-    ['Go back to the last track on Spotify.', 'Send the previous-track command', 'media.previous', {}],
+    [
+      'Go back to the last track on Spotify.',
+      'Play the previous Spotify track and read its state',
+      'media.previousTrack',
+      { sourceApplication: 'spotify' }
+    ],
     ['Open YouTube.', 'Open YouTube', 'browser.openUrl', { url: 'https://www.youtube.com' }],
     [
       'Open Calculator.',
@@ -74,7 +94,12 @@ describe('routeDeterministicCommand', () => {
     ['Open a new browser tab.', 'Open a new controlled browser tab', 'browser.newTab', {}],
     ['Close the browser tab.', 'Close the controlled browser tab', 'browser.closeTab', {}],
     ['Go back in the browser.', 'Go back in the controlled browser tab', 'browser.goBack', {}],
-    ['Scroll down.', 'Scroll the controlled browser tab', 'browser.scroll', { direction: 'down', amount: 700 }]
+    [
+      'Scroll down.',
+      'Scroll the controlled browser tab',
+      'browser.scroll',
+      { direction: 'down', amount: 700 }
+    ]
   ])('routes %s to a normal action plan', (message, summary, capability, parameters) => {
     expect(routeDeterministicCommand(message)).toEqual({
       kind: 'action_plan',
@@ -201,9 +226,7 @@ describe('context-aware routing', () => {
     expect(routeCommand('play Locked Out of Heaven on YouTube')).toEqual({
       kind: 'action_plan',
       summary: 'Open matching music on YouTube',
-      actions: [
-        { capability: 'youtube.playSearch', parameters: { query: 'Locked Out of Heaven' } }
-      ]
+      actions: [{ capability: 'youtube.playSearch', parameters: { query: 'Locked Out of Heaven' } }]
     })
   })
 
@@ -244,7 +267,7 @@ describe('context-aware routing', () => {
       actions: [{ capability: 'youtube.previous', parameters: {} }]
     })
     expect(routeCommand('skip it', { lastMediaApplication: 'spotify' })).toMatchObject({
-      actions: [{ capability: 'media.next', parameters: {} }]
+      actions: [{ capability: 'media.nextTrack', parameters: { sourceApplication: 'spotify' } }]
     })
     expect(
       routeCommand('skip it', {

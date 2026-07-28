@@ -44,7 +44,9 @@ function settings(browserControlEnabled: boolean): OrbitSettings {
     spotifyPlaybackMode: 'desktop',
     preferredMusicProvider: 'spotify',
     musicFallbackEnabled: true,
-    browserControlEnabled
+    browserControlEnabled,
+    screenAwarenessEnabled: false,
+    visionModel: 'qwen3-vl:4b'
   }
 }
 

@@ -325,6 +325,44 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
     )
   }
 
+  if (
+    /^(?:is spotify (?:playing|paused)|what(?:'s| is) playing on spotify|spotify playback status)$/.test(
+      lower
+    )
+  ) {
+    return actionPlan('Check Spotify playback state', 'media.getPlaybackState', {
+      sourceApplication: 'spotify'
+    })
+  }
+  if (/^(?:pause spotify|pause (?:the )?music on spotify)$/.test(lower)) {
+    return actionPlan('Pause Spotify and verify its state', 'media.pause', {
+      sourceApplication: 'spotify'
+    })
+  }
+  if (/^(?:resume spotify|resume (?:the )?music on spotify)$/.test(lower)) {
+    return actionPlan('Resume Spotify and verify its state', 'media.play', {
+      sourceApplication: 'spotify'
+    })
+  }
+  if (
+    /^(?:(?:play|go to) (?:the )?)?(?:next(?: song| track)?|skip(?: it| this(?: song| track)?| (?:the )?(?:song|track))?) on spotify$/.test(
+      lower
+    )
+  ) {
+    return actionPlan('Play the next Spotify track and read its state', 'media.nextTrack', {
+      sourceApplication: 'spotify'
+    })
+  }
+  if (
+    /^(?:previous(?: song| track)?|last(?: song| track)|go back(?: one (?:song|track))?|back one (?:song|track)|(?:play|go back to) (?:the )?(?:previous|last) (?:song|track)) on spotify$/.test(
+      lower
+    )
+  ) {
+    return actionPlan('Play the previous Spotify track and read its state', 'media.previousTrack', {
+      sourceApplication: 'spotify'
+    })
+  }
+
   const fixedActions: ReadonlyArray<[RegExp, string, string]> = [
     [
       /^(?:play|pause|play or pause|play pause)(?: the)?(?: music| media)?$/,
@@ -411,10 +449,7 @@ export function routeContextualCommand(
     .trim()
   const lower = normalized.toLocaleLowerCase()
 
-  if (
-    context.lastMediaApplication === 'youtube' &&
-    context.confirmedYouTubePlayback === true
-  ) {
+  if (context.lastMediaApplication === 'youtube' && context.confirmedYouTubePlayback === true) {
     if (/^(?:pause|pause it|pause the video)$/.test(lower)) {
       return actionPlan('Pause the YouTube video', 'youtube.pause')
     }
@@ -426,6 +461,38 @@ export function routeContextualCommand(
     }
     if (/^(?:previous|previous video|go back|go back to the previous video)$/.test(lower)) {
       return actionPlan('Play the previous YouTube video', 'youtube.previous')
+    }
+  }
+
+  if (context.lastMediaApplication === 'spotify') {
+    if (/^(?:is it playing|is spotify playing|what(?:'s| is) playing)$/.test(lower)) {
+      return actionPlan('Check Spotify playback state', 'media.getPlaybackState', {
+        sourceApplication: 'spotify'
+      })
+    }
+    if (/^(?:pause|pause it|pause spotify)$/.test(lower)) {
+      return actionPlan('Pause Spotify and verify its state', 'media.pause', {
+        sourceApplication: 'spotify'
+      })
+    }
+    if (/^(?:resume|resume it|play it|resume spotify)$/.test(lower)) {
+      return actionPlan('Resume Spotify and verify its state', 'media.play', {
+        sourceApplication: 'spotify'
+      })
+    }
+    if (/^(?:next|next song|next track|skip|skip it|skip this song|skip this track)$/.test(lower)) {
+      return actionPlan('Play the next Spotify track and read its state', 'media.nextTrack', {
+        sourceApplication: 'spotify'
+      })
+    }
+    if (/^(?:previous|previous song|previous track|last song|last track|go back)$/.test(lower)) {
+      return actionPlan(
+        'Play the previous Spotify track and read its state',
+        'media.previousTrack',
+        {
+          sourceApplication: 'spotify'
+        }
+      )
     }
   }
 
@@ -536,9 +603,7 @@ export function routeMediaDestinationResponse(message: string, query: string): A
   }
 
   if (
-    /^(?:(?:on|in) )?(?:the )?(?:youtube|browser|web|chrome|default browser)$/.test(
-      destination
-    )
+    /^(?:(?:on|in) )?(?:the )?(?:youtube|browser|web|chrome|default browser)$/.test(destination)
   ) {
     return actionPlan('Open matching music on YouTube', 'youtube.playSearch', { query })
   }

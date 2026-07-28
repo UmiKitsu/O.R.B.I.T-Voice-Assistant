@@ -57,13 +57,16 @@ describe('settings validation', () => {
     expect(orbitSettingsPatchSchema.safeParse({ spotifyPlaybackMode: 'legacy' }).success).toBe(
       false
     )
-    expect(
-      orbitSettingsPatchSchema.safeParse({ preferredMusicProvider: 'youtube' }).success
-    ).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ preferredMusicProvider: 'youtube' }).success).toBe(
+      true
+    )
     expect(
       orbitSettingsPatchSchema.safeParse({ preferredMusicProvider: 'soundcloud' }).success
     ).toBe(false)
     expect(orbitSettingsPatchSchema.safeParse({ musicFallbackEnabled: false }).success).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ screenAwarenessEnabled: true }).success).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ visionModel: 'qwen3-vl:4b' }).success).toBe(true)
+    expect(orbitSettingsPatchSchema.safeParse({ visionModel: '' }).success).toBe(false)
     expect(orbitSettingsPatchSchema.safeParse({ unexpected: true }).success).toBe(false)
     expect(
       orbitSettingsPatchSchema.safeParse({ ollamaBaseUrl: 'http://token@localhost:11434' }).success
@@ -140,7 +143,9 @@ describe('settings validation', () => {
       spotifyClientId: '',
       spotifyPlaybackMode: 'desktop',
       preferredMusicProvider: 'spotify',
-      musicFallbackEnabled: true
+      musicFallbackEnabled: true,
+      screenAwarenessEnabled: false,
+      visionModel: 'qwen3-vl:4b'
     })
     expect(storage.store).toEqual({ ...DEFAULT_ORBIT_SETTINGS, speechVolume: 0.6 })
   })

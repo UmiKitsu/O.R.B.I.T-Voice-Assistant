@@ -1,8 +1,4 @@
-import type {
-  AssistantSessionContext,
-  ChatMessage,
-  YouTubePlaybackState
-} from '../../shared/types'
+import type { AssistantSessionContext, ChatMessage, YouTubePlaybackState } from '../../shared/types'
 import { resolveApplication } from '../services/applicationDiscoveryService'
 import type { ActionPlan } from './actionPlanSchemas'
 
@@ -41,6 +37,15 @@ export function updateSessionContext(context: AssistantSessionContext, plan: Act
       if (typeof action.parameters.query === 'string') {
         context.lastYouTubeQuery = action.parameters.query
       }
+      continue
+    }
+
+    if (
+      action.capability.startsWith('media.') &&
+      action.parameters.sourceApplication === 'spotify'
+    ) {
+      context.lastApplication = 'spotify'
+      context.lastMediaApplication = 'spotify'
       continue
     }
 
@@ -100,7 +105,10 @@ export function recordSuccessfulExchange(
   session.messages = retainBoundedMessages([...session.messages, ...exchange])
 
   if (plan) updateSessionContext(session.context, plan)
-  if (plan?.actions.some((action) => action.capability.startsWith('youtube.')) && youtubePlaybackState) {
+  if (
+    plan?.actions.some((action) => action.capability.startsWith('youtube.')) &&
+    youtubePlaybackState
+  ) {
     session.context.controlledBrowserTabId = youtubePlaybackState.controlledTabId
     session.context.selectedYouTubeVideoId = youtubePlaybackState.videoId
     session.context.selectedYouTubeTitle = youtubePlaybackState.title

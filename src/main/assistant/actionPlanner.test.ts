@@ -43,6 +43,9 @@ describe('structured action planning', () => {
     expect(prompt).toContain('{"kind":"conversation","response":')
     expect(prompt).toContain('{"kind":"action_plan","summary":"What will be attempted","actions":')
     expect(prompt).toContain('{"kind":"browser_task","goal":"The user\'s exact browsing goal"}')
+    expect(prompt).toContain(
+      '{"kind":"desktop_task","goal":"The user\'s exact visible desktop-application goal"}'
+    )
     expect(prompt).toContain('Return exactly one JSON object')
   })
 
@@ -61,6 +64,12 @@ describe('structured action planning', () => {
         registry
       )
     ).toBeNull()
+    expect(
+      parseAndValidateAssistantOutput(
+        JSON.stringify({ kind: 'desktop_task', goal: 'Click Play in the visible app' }),
+        registry
+      )
+    ).toEqual({ kind: 'desktop_task', goal: 'Click Play in the visible app' })
     expect(parseAndValidateAssistantOutput('{not-json', registry)).toBeNull()
     expect(
       parseAndValidateAssistantOutput(

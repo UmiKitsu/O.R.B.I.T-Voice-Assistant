@@ -10,7 +10,7 @@ import type { PolicyEngine, PolicyResult } from '../security/policyEngine'
 import { structuredChat } from '../services/ollamaService'
 import { ORBIT_BRIEF_RESPONSE_STYLE, ORBIT_CONVERSATION_PERSONALITY } from './personality'
 
-export const MAX_COMPUTER_TASK_STEPS = 10
+export const MAX_COMPUTER_TASK_STEPS = 8
 export const MAX_COMPUTER_TASK_ACTIVE_MS = 120_000
 export const MAX_COMPUTER_TASK_RESULT_BYTES = 16_000
 
@@ -91,7 +91,10 @@ function taskFailure(
   state?: Pick<ComputerTaskState, 'stepsCompleted'>
 ): ActionResult<AssistantResponse> {
   const completed = state?.stepsCompleted ?? 0
-  const suffix = completed > 0 ? ` ${completed} validated step${completed === 1 ? '' : 's'} completed before stopping.` : ''
+  const suffix =
+    completed > 0
+      ? ` ${completed} validated step${completed === 1 ? '' : 's'} completed before stopping.`
+      : ''
   return { ok: false, code, message: `${message}${suffix}`, recoverable: true }
 }
 
@@ -111,7 +114,8 @@ function boundedUntrustedValue(value: unknown): unknown {
 
   const visit = (current: unknown, depth: number): unknown => {
     if (remaining <= 0) return '[truncated]'
-    if (current === null || typeof current === 'boolean' || typeof current === 'number') return current
+    if (current === null || typeof current === 'boolean' || typeof current === 'number')
+      return current
     if (typeof current === 'string') {
       const maximum = Math.min(2_000, remaining)
       const result = current.slice(0, maximum)
@@ -135,7 +139,9 @@ function boundedUntrustedValue(value: unknown): unknown {
   return visit(value, 0)
 }
 
-function latestBrowserSnapshot(history: readonly CompletedComputerStep[]): Record<string, unknown> | null {
+function latestBrowserSnapshot(
+  history: readonly CompletedComputerStep[]
+): Record<string, unknown> | null {
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const step = history[index]
     if (step?.capability !== 'browser.readVisiblePage') continue
@@ -150,7 +156,9 @@ export function createComputerTaskSystemMessage(registry: CapabilityRegistry): C
   const capabilities = registry
     .list()
     .filter((capability) => capability.risk !== 'blocked')
-    .filter((capability) => !['assistant.stopSpeaking', 'assistant.disable'].includes(capability.name))
+    .filter(
+      (capability) => !['assistant.stopSpeaking', 'assistant.disable'].includes(capability.name)
+    )
     .map((capability) => ({
       name: capability.name,
       risk: capability.risk,
@@ -174,6 +182,7 @@ Choose only one registered capability at a time and match its schema exactly. Us
 Never request passwords, credentials, private keys, payment details, uploads, downloads, arbitrary JavaScript, raw shell or terminal commands, scripts, registry changes, permission changes, elevation, security disabling, service/driver/firewall/boot changes, drive operations, archives, or uninstall.
 A confirmation or PIN is not a general unlocked mode. Orbit will authorize only the exact pending capability and exact parameter fingerprint.
 For browser tasks, read the visible controlled page before using element references. Use browser.submitConsequential only for the user's explicit consequential goal; Orbit generates the final confirmation text itself.
+For playback state and control, prefer media.getPlaybackState/media.play/media.pause/media.nextTrack/media.previousTrack so Windows can verify the session. For ordinary desktop controls, call desktop.inspectActiveWindow before using an element reference. Use the matching desktop.*Consequential capability for any consequential invoke, toggle, or selection. Use desktop.inspectVisually only when the accessibility snapshot does not expose the needed control, and use only the returned visualRef with desktop.visualClick. Every visual click requires confirmation.
 A completion response may claim success only when the completed validated-step history supports it. Otherwise report the limitation honestly.
 
 Registered capabilities and strict schemas:
@@ -338,23 +347,37 @@ export class ComputerTaskFlow {
         const planned = await this.planOneStep(state, budget.controller.signal)
         if (!planned.ok) return planned as ActionResult<AssistantResponse>
         const step = planned.data
-        if (!step) return taskFailure('COMPUTER_TASK_INVALID_STEP', 'The local model returned an empty computer-task step.', state)
+        if (!step)
+          return taskFailure(
+            'COMPUTER_TASK_INVALID_STEP',
+            'The local model returned an empty computer-task step.',
+            state
+          )
         if (step.kind === 'complete') {
           return { ok: true, message: step.response, data: { response: step.response } }
         }
 
         const registered = this.registry.get(step.capability)
         if (!registered || registered.risk === 'blocked') {
-          return taskFailure('COMPUTER_TASK_INVALID_STEP', 'The local model requested an unregistered computer capability.', state)
+          return taskFailure(
+            'COMPUTER_TASK_INVALID_STEP',
+            'The local model requested an unregistered computer capability.',
+            state
+          )
         }
 
         let parameters = step.parameters
         if (step.capability === 'browser.submitConsequential') {
-          const elementRef = typeof step.parameters.elementRef === 'string' ? step.parameters.elementRef : ''
+          const elementRef =
+            typeof step.parameters.elementRef === 'string' ? step.parameters.elementRef : ''
           const snapshot = latestBrowserSnapshot(state.history)
           const elements = Array.isArray(snapshot?.elements) ? snapshot.elements : []
           const target = elements.find((value) => {
-            return typeof value === 'object' && value !== null && (value as Record<string, unknown>).ref === elementRef
+            return (
+              typeof value === 'object' &&
+              value !== null &&
+              (value as Record<string, unknown>).ref === elementRef
+            )
           }) as Record<string, unknown> | undefined
           const origin = typeof snapshot?.origin === 'string' ? snapshot.origin : ''
           if (!target || !origin) {
@@ -375,7 +398,11 @@ export class ComputerTaskFlow {
         }
 
         if (!registered.parameterSchema.safeParse(parameters).success) {
-          return taskFailure('COMPUTER_TASK_INVALID_STEP', 'The local model requested invalid capability parameters.', state)
+          return taskFailure(
+            'COMPUTER_TASK_INVALID_STEP',
+            'The local model requested invalid capability parameters.',
+            state
+          )
         }
 
         const policyResult = await this.policyEngine.evaluateAndExecute({
@@ -409,7 +436,10 @@ export class ComputerTaskFlow {
                 summary: policyResult.confirmation.summary,
                 expiresAt: policyResult.confirmation.expiresAt,
                 authorization: policyResult.confirmation.authorization,
-                pinConfigured: policyResult.confirmation.pinConfigured
+                pinConfigured: policyResult.confirmation.pinConfigured,
+                ...(policyResult.confirmation.visualTarget
+                  ? { visualTarget: policyResult.confirmation.visualTarget }
+                  : {})
               }
             }
           }
@@ -421,7 +451,7 @@ export class ComputerTaskFlow {
 
       return taskFailure(
         'COMPUTER_TASK_STEP_LIMIT',
-        'The computer task stopped after the maximum of ten validated steps.',
+        'The computer task stopped after the maximum of eight validated steps.',
         state
       )
     } finally {
@@ -447,7 +477,11 @@ export class ComputerTaskFlow {
 
     const actionResult = asActionResult(policyResult.result)
     if (!actionResult) {
-      return taskFailure('COMPUTER_TASK_INVALID_ACTION_RESULT', 'The computer step returned an invalid typed result.', state)
+      return taskFailure(
+        'COMPUTER_TASK_INVALID_ACTION_RESULT',
+        'The computer step returned an invalid typed result.',
+        state
+      )
     }
     if (!actionResult.ok) {
       return taskFailure(actionResult.code, actionResult.message, state)
@@ -457,7 +491,9 @@ export class ComputerTaskFlow {
     state.history.push({
       capability,
       message: actionResult.message.slice(0, 500),
-      ...(actionResult.data === undefined ? {} : { result: boundedUntrustedValue(actionResult.data) })
+      ...(actionResult.data === undefined
+        ? {}
+        : { result: boundedUntrustedValue(actionResult.data) })
     })
     return null
   }

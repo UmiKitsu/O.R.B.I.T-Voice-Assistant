@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { z } from 'zod'
 import type { ActionResult } from '../../shared/types'
 
-export const WINDOWS_FIXED_OPERATION_OUTPUT_LIMIT = 64 * 1024
+export const WINDOWS_FIXED_OPERATION_OUTPUT_LIMIT = 192 * 1024
 export const WINDOWS_FIXED_OPERATION_ERROR_LIMIT = 8 * 1024
 
 export const windowsFixedOperationSchemas = {
@@ -15,6 +15,52 @@ export const windowsFixedOperationSchemas = {
     .object({ pid: z.number().int().positive(), orbitPid: z.number().int().positive() })
     .strict(),
   'display.setBrightness': z.object({ percent: z.number().int().min(0).max(100) }).strict(),
+  'desktop.inspectActiveWindow': z
+    .object({
+      windowHandle: z.number().int().positive(),
+      maxElements: z.number().int().min(1).max(150),
+      maxDepth: z.number().int().min(1).max(12)
+    })
+    .strict(),
+  'desktop.invoke': z
+    .object({
+      windowHandle: z.number().int().positive(),
+      runtimeId: z.array(z.number().int()).min(1).max(32)
+    })
+    .strict(),
+  'desktop.toggle': z
+    .object({
+      windowHandle: z.number().int().positive(),
+      runtimeId: z.array(z.number().int()).min(1).max(32)
+    })
+    .strict(),
+  'desktop.select': z
+    .object({
+      windowHandle: z.number().int().positive(),
+      runtimeId: z.array(z.number().int()).min(1).max(32)
+    })
+    .strict(),
+  'desktop.setText': z
+    .object({
+      windowHandle: z.number().int().positive(),
+      runtimeId: z.array(z.number().int()).min(1).max(32),
+      text: z.string().min(1).max(4_000)
+    })
+    .strict(),
+  'desktop.scroll': z
+    .object({
+      windowHandle: z.number().int().positive(),
+      runtimeId: z.array(z.number().int()).min(1).max(32),
+      direction: z.enum(['up', 'down']),
+      amount: z.enum(['small', 'medium', 'large'])
+    })
+    .strict(),
+  'media.getSessions': z.object({}).strict(),
+  'media.getPlaybackState': z.object({ sourceApplication: z.string().trim().max(120) }).strict(),
+  'media.play': z.object({ sourceApplication: z.string().trim().max(120) }).strict(),
+  'media.pause': z.object({ sourceApplication: z.string().trim().max(120) }).strict(),
+  'media.nextTrack': z.object({ sourceApplication: z.string().trim().max(120) }).strict(),
+  'media.previousTrack': z.object({ sourceApplication: z.string().trim().max(120) }).strict(),
   'system.lock': z.object({}).strict(),
   'system.signOut': z.object({}).strict(),
   'system.restart': z.object({}).strict(),
@@ -77,7 +123,10 @@ export async function runFixedWindowsOperation<TData>(
   }
   const parsedParameters = requestSchema.safeParse(parameters)
   if (!parsedParameters.success) {
-    return failure('WINDOWS_FIXED_OPERATION_INVALID_PARAMETERS', 'The fixed Windows operation parameters are invalid.')
+    return failure(
+      'WINDOWS_FIXED_OPERATION_INVALID_PARAMETERS',
+      'The fixed Windows operation parameters are invalid.'
+    )
   }
   if ((options.platform ?? process.platform) !== 'win32') {
     return failure('WINDOWS_ONLY_OPERATION', 'That operation is available only on Windows.')
@@ -86,7 +135,15 @@ export async function runFixedWindowsOperation<TData>(
 
   const executable = 'powershell.exe'
   const scriptPath = options.scriptPath ?? getWindowsFixedOperationScriptPath()
-  const args = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath]
+  const args = [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    scriptPath
+  ]
   const child = (options.spawner ?? defaultSpawner)(executable, args)
   const timeoutMs = Math.max(1_000, Math.min(options.timeoutMs ?? 15_000, 60_000))
 
@@ -198,7 +255,11 @@ export async function runFixedWindowsOperation<TData>(
         )
         return
       }
-      finish({ ok: true, message: 'The registered Windows operation completed.', data: parsedData.data })
+      finish({
+        ok: true,
+        message: 'The registered Windows operation completed.',
+        data: parsedData.data
+      })
     })
 
     const abort = (): void => {
@@ -209,7 +270,10 @@ export async function runFixedWindowsOperation<TData>(
     const timeout = setTimeout(() => {
       child.kill()
       finish(
-        failure('WINDOWS_FIXED_OPERATION_TIMEOUT', 'The registered Windows operation timed out.') as ActionResult<TData>
+        failure(
+          'WINDOWS_FIXED_OPERATION_TIMEOUT',
+          'The registered Windows operation timed out.'
+        ) as ActionResult<TData>
       )
     }, timeoutMs)
     timeout.unref?.()

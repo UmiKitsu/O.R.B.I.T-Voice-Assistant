@@ -16,9 +16,12 @@ import { getSettings } from '../services/settingsService'
 import { registerApplicationCapabilities } from './applicationCapabilities'
 import { registerAssistantCapabilities } from './assistantCapabilities'
 import { registerBrowserCapabilities } from './browserCapabilities'
+import { registerDesktopCapabilities } from './desktopCapabilities'
+import { registerDesktopVisionCapabilities } from './desktopVisionCapabilities'
 import { registerClipboardCapabilities } from './clipboardCapabilities'
 import { CapabilityRegistry } from './capabilityRegistry'
 import { registerMediaCapabilities } from './mediaCapabilities'
+import { registerMediaSessionCapabilities } from './mediaSessionCapabilities'
 import { registerFilesystemCapabilities } from './filesystemCapabilities'
 import { registerProcessCapabilities } from './processCapabilities'
 import { registerSoftwareCapabilities } from './softwareCapabilities'
@@ -50,12 +53,15 @@ export function createCapabilityRegistry(
   registerSystemCapabilities(registry, dependencies.now)
   registerBrowserCapabilities(registry, dependencies.openExternalUrl)
   registerClipboardCapabilities(registry)
+  registerDesktopCapabilities(registry)
+  registerDesktopVisionCapabilities(registry)
   registerMediaCapabilities(
     registry,
     dependencies.sendMediaKey,
     dependencies.setAudioMuted,
     dependencies.setAudioVolume
   )
+  registerMediaSessionCapabilities(registry)
   registerApplicationCapabilities(registry, dependencies.launchApplication)
   registerSpotifyCapabilities(registry, {
     controller: dependencies.spotifyController,

@@ -38,6 +38,12 @@ export const assistantOutputSchema = z.discriminatedUnion('kind', [
       kind: z.literal('computer_task'),
       goal: z.string().trim().min(1).max(1_000)
     })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('desktop_task'),
+      goal: z.string().trim().min(1).max(1_000)
+    })
     .strict()
 ])
 
@@ -45,3 +51,4 @@ export type AssistantOutput = z.infer<typeof assistantOutputSchema>
 export type ActionPlan = Extract<AssistantOutput, { kind: 'action_plan' }>
 export type BrowserTaskOutput = Extract<AssistantOutput, { kind: 'browser_task' }>
 export type ComputerTaskOutput = Extract<AssistantOutput, { kind: 'computer_task' }>
+export type DesktopTaskOutput = Extract<AssistantOutput, { kind: 'desktop_task' }>

@@ -11,6 +11,7 @@ import type {
   OllamaHealth,
   OrbitSettings,
   SecurityPinStatus,
+  ScreenAwarenessStatus,
   SpotifyConnectionStatus,
   SpeechSynthesisEvent,
   VoiceDiagnostics,
@@ -172,6 +173,46 @@ function isWakeWordEvent(value: unknown): value is WakeWordEvent {
   )
 }
 
+function isScreenAwarenessStatus(value: unknown): value is ScreenAwarenessStatus {
+  if (typeof value !== 'object' || value === null) return false
+  const status = value as Record<string, unknown>
+  const allowedKeys = new Set([
+    'enabled',
+    'phase',
+    'uiAutomationReady',
+    'visionReady',
+    'visionModel',
+    'visionWarm',
+    'processor',
+    'message'
+  ])
+  const phases = new Set([
+    'off',
+    'ready',
+    'inspecting',
+    'vision-loading',
+    'analyzing',
+    'degraded',
+    'error'
+  ])
+  const processors = new Set(['gpu', 'cpu', 'mixed', 'unknown'])
+  return (
+    !Object.keys(status).some((key) => !allowedKeys.has(key)) &&
+    typeof status.enabled === 'boolean' &&
+    typeof status.phase === 'string' &&
+    phases.has(status.phase) &&
+    typeof status.uiAutomationReady === 'boolean' &&
+    typeof status.visionReady === 'boolean' &&
+    typeof status.visionModel === 'string' &&
+    status.visionModel.length <= 200 &&
+    typeof status.visionWarm === 'boolean' &&
+    (status.processor === undefined ||
+      (typeof status.processor === 'string' && processors.has(status.processor))) &&
+    typeof status.message === 'string' &&
+    status.message.length <= 500
+  )
+}
+
 function isAssistantProgress(value: unknown): value is AssistantProgress {
   if (typeof value !== 'object' || value === null) return false
   const progress = value as Record<string, unknown>
@@ -254,12 +295,20 @@ const orbit = Object.freeze({
     ipcRenderer.invoke(IPC_CHANNELS.settingsGet),
   updateSettings: (patch: Partial<OrbitSettings>): Promise<ActionResult<OrbitSettings>> =>
     ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, patch),
+  getScreenAwarenessStatus: (): Promise<ActionResult<ScreenAwarenessStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.screenAwarenessStatus),
+  refreshScreenAwareness: (): Promise<ActionResult<ScreenAwarenessStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.screenAwarenessRefresh),
+  onScreenAwarenessStatus: (listener: (status: ScreenAwarenessStatus) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: unknown): void => {
+      if (isScreenAwarenessStatus(value)) listener(value)
+    }
+    ipcRenderer.on(IPC_CHANNELS.screenAwarenessEvent, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.screenAwarenessEvent, handler)
+  },
   getPinStatus: (): Promise<ActionResult<SecurityPinStatus>> =>
     ipcRenderer.invoke(IPC_CHANNELS.securityPinStatus),
-  createPin: (
-    pin: string,
-    confirmation: string
-  ): Promise<ActionResult<SecurityPinStatus>> =>
+  createPin: (pin: string, confirmation: string): Promise<ActionResult<SecurityPinStatus>> =>
     ipcRenderer.invoke(IPC_CHANNELS.securityPinCreate, { pin, confirmation }),
   changePin: (
     currentPin: string,

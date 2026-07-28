@@ -23,6 +23,7 @@ export type WindowController = {
   focusSpotifySearch(): boolean
   selectAllText(): boolean
   pressTab(): boolean
+  clickScreenPoint?(x: number, y: number): boolean
 }
 
 type NativeFunctions = {
@@ -46,7 +47,8 @@ type NativeFunctions = {
     repaint: boolean
   ) => boolean
   postMessage: (windowHandle: number, message: number, wParam: number, lParam: number) => boolean
-  sendInput: (count: number, inputs: KeyboardInputEvent[], inputSize: number) => number
+  sendInput: (count: number, inputs: NativeInputEvent[], inputSize: number) => number
+  getSystemMetrics: (index: number) => number
   openProcess: (access: number, inheritHandle: boolean, processId: number) => number
   queryProcessImageName: (
     process: number,
@@ -66,6 +68,20 @@ type NativeFunctions = {
   enumWindowsCallback: unknown
 }
 
+type MouseInputEvent = {
+  type: number
+  u: {
+    mi: {
+      dx: number
+      dy: number
+      mouseData: number
+      dwFlags: number
+      time: number
+      dwExtraInfo: number
+    }
+  }
+}
+
 type KeyboardInputEvent = {
   type: number
   u: {
@@ -78,6 +94,8 @@ type KeyboardInputEvent = {
     }
   }
 }
+
+type NativeInputEvent = KeyboardInputEvent | MouseInputEvent
 
 let nativeFunctions: NativeFunctions | undefined
 let enumeratedWindows: number[] | undefined
@@ -220,6 +238,9 @@ function loadNativeFunctions(): NativeFunctions {
     sendInput: user32.func(
       'unsigned int __stdcall SendInput(unsigned int count, ORBIT_WINDOW_INPUT *inputs, int inputSize)'
     ) as NativeFunctions['sendInput'],
+    getSystemMetrics: user32.func(
+      'int __stdcall GetSystemMetrics(int index)'
+    ) as NativeFunctions['getSystemMetrics'],
     inputSize: koffi.sizeof(input),
     enumWindowsCallback
   }
@@ -414,6 +435,41 @@ export const windowsController: WindowController = {
   pressTab() {
     const native = loadNativeFunctions()
     const inputs = [inputEvent(0x09, false, false), inputEvent(0x09, true, false)]
+    return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length
+  },
+
+  clickScreenPoint(x, y) {
+    const native = loadNativeFunctions()
+    const left = native.getSystemMetrics(76)
+    const top = native.getSystemMetrics(77)
+    const width = native.getSystemMetrics(78)
+    const height = native.getSystemMetrics(79)
+    if (
+      width <= 1 ||
+      height <= 1 ||
+      x < left ||
+      x >= left + width ||
+      y < top ||
+      y >= top + height
+    ) {
+      return false
+    }
+    const absoluteX = Math.round(((x - left) * 65_535) / (width - 1))
+    const absoluteY = Math.round(((y - top) * 65_535) / (height - 1))
+    const mouse = (flags: number): MouseInputEvent => ({
+      type: 0,
+      u: {
+        mi: {
+          dx: absoluteX,
+          dy: absoluteY,
+          mouseData: 0,
+          dwFlags: flags | 0x8000 | 0x4000,
+          time: 0,
+          dwExtraInfo: 0
+        }
+      }
+    })
+    const inputs: NativeInputEvent[] = [mouse(0x0001), mouse(0x0002), mouse(0x0004)]
     return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length
   }
 }

@@ -45,7 +45,8 @@ export class ConfirmationFlow {
       return {
         ok: false,
         code: 'CONFIRMATION_NOT_FOUND',
-        message: 'That authorization is missing, expired, cancelled, or belongs to another request.',
+        message:
+          'That authorization is missing, expired, cancelled, or belongs to another request.',
         recoverable: true
       }
     }
@@ -130,7 +131,10 @@ export class ConfirmationFlow {
               summary: policyResult.confirmation.summary,
               expiresAt: policyResult.confirmation.expiresAt,
               authorization: policyResult.confirmation.authorization,
-              pinConfigured: policyResult.confirmation.pinConfigured
+              pinConfigured: policyResult.confirmation.pinConfigured,
+              ...(policyResult.confirmation.visualTarget
+                ? { visualTarget: policyResult.confirmation.visualTarget }
+                : {})
             }
           }
         }

@@ -48,7 +48,9 @@ export const orbitSettingsSchema = z
     spotifyPlaybackMode: z.enum(['desktop', 'web-api']),
     preferredMusicProvider: z.enum(['spotify', 'youtube']),
     musicFallbackEnabled: z.boolean(),
-    browserControlEnabled: z.boolean()
+    browserControlEnabled: z.boolean(),
+    screenAwarenessEnabled: z.boolean(),
+    visionModel: z.string().trim().min(1).max(200)
   })
   .strict()
 
@@ -73,7 +75,9 @@ export const DEFAULT_ORBIT_SETTINGS: Readonly<OrbitSettings> = Object.freeze({
   spotifyPlaybackMode: 'desktop',
   preferredMusicProvider: 'spotify',
   musicFallbackEnabled: true,
-  browserControlEnabled: false
+  browserControlEnabled: false,
+  screenAwarenessEnabled: false,
+  visionModel: 'qwen3-vl:4b'
 })
 
 type SettingsStorage = {
@@ -139,6 +143,14 @@ export function migrateLegacySettings(value: unknown): { value: unknown; changed
   }
   if (!('browserControlEnabled' in migrated)) {
     migrated.browserControlEnabled = false
+    changed = true
+  }
+  if (!('screenAwarenessEnabled' in migrated)) {
+    migrated.screenAwarenessEnabled = false
+    changed = true
+  }
+  if (!('visionModel' in migrated)) {
+    migrated.visionModel = 'qwen3-vl:4b'
     changed = true
   }
   return { value: migrated, changed }

@@ -7,10 +7,12 @@ import { registerAudioHandlers } from './ipc/audioHandlers'
 import { registerBrowserHandlers } from './ipc/browserHandlers'
 import { registerSettingsHandlers } from './ipc/settingsHandlers'
 import { registerSecurityHandlers } from './ipc/securityHandlers'
+import { registerScreenAwarenessHandlers } from './ipc/screenAwarenessHandlers'
 import { registerSpeechHandlers } from './ipc/speechHandlers'
 import { registerSpotifyHandlers } from './ipc/spotifyHandlers'
 import { flushLogs, initializeLogger, logOperationalEvent } from './services/loggerService'
 import { prepareOllama } from './services/ollamaStartupService'
+import { refreshScreenAwarenessStatus } from './services/screenAwarenessService'
 import { initializeSettingsService } from './services/settingsService'
 import { initializeSpotifyAuthService } from './services/spotifyAuthService'
 import { initializeSecurityPinService } from './security/securityPinService'
@@ -26,6 +28,7 @@ registerAudioHandlers()
 registerBrowserHandlers()
 registerSettingsHandlers()
 registerSecurityHandlers()
+registerScreenAwarenessHandlers()
 registerSpeechHandlers()
 registerSpotifyHandlers()
 
@@ -87,7 +90,9 @@ app.whenReady().then(async () => {
   })
 
   createWindow()
-  void prepareOllama().catch(() => undefined)
+  void prepareOllama()
+    .then(() => refreshScreenAwarenessStatus())
+    .catch(() => undefined)
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
@@ -106,10 +111,12 @@ app.on('before-quit', (event) => {
   logOperationalEvent({ event: 'app.closed' })
   stopAllWakeWordSessions()
   stopAllSpeechSynthesis()
-  void stopBrowserBridgeService().finally(() => flushLogs()).finally(() => {
-    logsFlushedForQuit = true
-    app.quit()
-  })
+  void stopBrowserBridgeService()
+    .finally(() => flushLogs())
+    .finally(() => {
+      logsFlushedForQuit = true
+      app.quit()
+    })
 })
 
 app.on('window-all-closed', () => {

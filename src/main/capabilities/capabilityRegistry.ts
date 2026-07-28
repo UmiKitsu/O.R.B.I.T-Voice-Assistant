@@ -1,4 +1,5 @@
 import type { ZodType } from 'zod'
+import type { VisualTargetPreview } from '../../shared/types'
 import type { CapabilityDefinition, CapabilityRisk } from './capabilityTypes'
 
 export type RegisteredCapability = {
@@ -8,6 +9,7 @@ export type RegisteredCapability = {
   parameterSchema: ZodType
   resultSchema: ZodType
   confirmationSummary?: (parameters: unknown) => string
+  confirmationVisualTarget?: (parameters: unknown) => VisualTargetPreview | undefined
   execute: (parameters: unknown, signal: AbortSignal) => Promise<unknown>
 }
 
@@ -35,6 +37,10 @@ export class CapabilityRegistry {
       resultSchema,
       confirmationSummary: definition.confirmationSummary
         ? (parameters): string => definition.confirmationSummary?.(parameters as TParameters) ?? ''
+        : undefined,
+      confirmationVisualTarget: definition.confirmationVisualTarget
+        ? (parameters): VisualTargetPreview | undefined =>
+            definition.confirmationVisualTarget?.(parameters as TParameters)
         : undefined,
       execute: async (parameters, signal): Promise<unknown> =>
         resultSchema.parse(await definition.execute(parameters as TParameters, signal))

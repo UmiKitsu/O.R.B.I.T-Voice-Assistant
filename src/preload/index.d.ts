@@ -9,6 +9,7 @@ import type {
   OllamaHealth,
   OrbitSettings,
   SecurityPinStatus,
+  ScreenAwarenessStatus,
   SpotifyConnectionStatus,
   SpeechSynthesisEvent,
   WakeWordEvent
@@ -24,6 +25,9 @@ type OrbitApi = {
   onSpeechSynthesisEvent: (listener: (event: SpeechSynthesisEvent) => void) => () => void
   getSettings: () => Promise<ActionResult<OrbitSettings>>
   updateSettings: (patch: Partial<OrbitSettings>) => Promise<ActionResult<OrbitSettings>>
+  getScreenAwarenessStatus: () => Promise<ActionResult<ScreenAwarenessStatus>>
+  refreshScreenAwareness: () => Promise<ActionResult<ScreenAwarenessStatus>>
+  onScreenAwarenessStatus: (listener: (status: ScreenAwarenessStatus) => void) => () => void
   getPinStatus: () => Promise<ActionResult<SecurityPinStatus>>
   createPin: (pin: string, confirmation: string) => Promise<ActionResult<SecurityPinStatus>>
   changePin: (

@@ -126,9 +126,7 @@ export function registerAssistantHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.ollamaHealth,
     async (event: IpcMainInvokeEvent): Promise<ActionResult<OllamaHealth>> => {
-      return healthResult(
-        await prepareOllama((progress) => emitAssistantProgress(event, progress))
-      )
+      return healthResult(await prepareOllama((progress) => emitAssistantProgress(event, progress)))
     }
   )
 
@@ -315,7 +313,7 @@ export function registerAssistantHandlers(): void {
               }
             : output.kind === 'browser_task'
               ? await browserTaskFlow.start(output.goal, senderId, controller.signal)
-              : output.kind === 'computer_task'
+              : output.kind === 'computer_task' || output.kind === 'desktop_task'
                 ? await computerTaskFlow.start(output.goal, senderId, controller.signal)
                 : await confirmationFlow.execute(output, senderId)
 

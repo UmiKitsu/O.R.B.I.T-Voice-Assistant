@@ -6,6 +6,7 @@ import type {
   OllamaHealth,
   OrbitStatus,
   SecurityPinStatus,
+  ScreenAwarenessStatus,
   VoiceDiagnostics,
   VoiceTranscript,
   WakeWordEvent,
@@ -15,15 +16,13 @@ import type {
 import { BrowserConnectionPanel } from './BrowserConnectionPanel'
 import { ConfirmationDialog } from './ConfirmationDialog'
 import { SecurityPinSettings } from './SecurityPinSettings'
+import { ScreenAwarenessPanel } from './ScreenAwarenessPanel'
 import { useMicrophoneTest } from './hooks/useMicrophoneTest'
 import { useSpeech } from './hooks/useSpeech'
 import { useWakeWord } from './hooks/useWakeWord'
 import { decideMicrophoneTransition } from './microphoneTransitionDecision'
 import { TRANSCRIPT_READY_HOLD_MS, WAKE_ACKNOWLEDGEMENT_MS } from './voiceCueTiming'
-import {
-  deriveVoiceStartupStatus,
-  type VoiceStartupReadiness
-} from './voiceStartupState'
+import { deriveVoiceStartupStatus, type VoiceStartupReadiness } from './voiceStartupState'
 
 const SPOKEN_PIN_DIGITS: Readonly<Record<string, string>> = {
   zero: '0',
@@ -43,25 +42,22 @@ const SPOKEN_PIN_DIGITS: Readonly<Record<string, string>> = {
 }
 
 function parseSpokenPin(value: string): string | null {
-  const normalized = value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const normalized = value
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
   const direct = normalized.match(/(?:^|\s)(\d{4})(?:\s|$)/)
   if (direct) return direct[1]
 
-  const digits = normalized
-    .split(/\s+/)
-    .flatMap((token) => {
-      if (/^\d$/.test(token)) return [token]
-      const spoken = SPOKEN_PIN_DIGITS[token]
-      return spoken ? [spoken] : []
-    })
+  const digits = normalized.split(/\s+/).flatMap((token) => {
+    if (/^\d$/.test(token)) return [token]
+    const spoken = SPOKEN_PIN_DIGITS[token]
+    return spoken ? [spoken] : []
+  })
   return digits.length === 4 ? digits.join('') : null
 }
 
-type MicrophoneTransitionOwner =
-  | 'none'
-  | 'assistant-request'
-  | 'microphone-test'
-  | 'wake-word-test'
+type MicrophoneTransitionOwner = 'none' | 'assistant-request' | 'microphone-test' | 'wake-word-test'
 
 function App(): React.JSX.Element {
   const [status, setStatus] = useState<OrbitStatus>('disabled')
@@ -72,6 +68,9 @@ function App(): React.JSX.Element {
   const [wakeWordState, setWakeWordState] = useState<WakeWordState>('off')
   const [pendingConfirmation, setPendingConfirmation] = useState<ConfirmationPrompt | null>(null)
   const [pinStatus, setPinStatus] = useState<SecurityPinStatus | null>(null)
+  const [screenAwarenessStatus, setScreenAwarenessStatus] = useState<ScreenAwarenessStatus | null>(
+    null
+  )
   const [voiceTranscript, setVoiceTranscript] = useState<VoiceTranscript | null>(null)
   const [wakeAcknowledged, setWakeAcknowledged] = useState(false)
   const [voiceDiagnostics, setVoiceDiagnostics] = useState<VoiceDiagnostics | null>(null)
@@ -116,10 +115,7 @@ function App(): React.JSX.Element {
   } = useWakeWord()
 
   const updateStartupReadiness = useCallback(
-    (
-      generation: number,
-      patch: Partial<VoiceStartupReadiness>
-    ): VoiceStartupReadiness | null => {
+    (generation: number, patch: Partial<VoiceStartupReadiness>): VoiceStartupReadiness | null => {
       if (
         generation !== startupGeneration.current ||
         !startupActive.current ||
@@ -186,7 +182,8 @@ function App(): React.JSX.Element {
     startupGeneration.current += 1
     setWakeWordState('error')
     setAssistantError(
-      microphonePipelineError ?? 'The microphone pipeline stopped responding. Disable and enable Orbit to retry.'
+      microphonePipelineError ??
+        'The microphone pipeline stopped responding. Disable and enable Orbit to retry.'
     )
     setStatus('error')
   }, [microphonePipelineError, microphonePipelineState])
@@ -252,6 +249,16 @@ function App(): React.JSX.Element {
   }, [setKokoroVoice, setRate, setVolume])
 
   useEffect(() => {
+    void window.orbit
+      .getScreenAwarenessStatus()
+      .then((result) => {
+        if (result.ok && result.data) setScreenAwarenessStatus(result.data)
+      })
+      .catch(() => undefined)
+    return window.orbit.onScreenAwarenessStatus(setScreenAwarenessStatus)
+  }, [])
+
+  useEffect(() => {
     return window.orbit.onAssistantProgress((progress) => {
       setAssistantProgress(progress)
       if (!isEnabled.current) return
@@ -307,11 +314,7 @@ function App(): React.JSX.Element {
       microphonePreparation,
       ollamaPreparation
     ])
-    if (
-      generation !== startupGeneration.current ||
-      !startupActive.current ||
-      !isEnabled.current
-    ) {
+    if (generation !== startupGeneration.current || !startupActive.current || !isEnabled.current) {
       return
     }
 
@@ -328,11 +331,7 @@ function App(): React.JSX.Element {
 
     updateStartupReadiness(generation, { microphone: 'pending' })
     const resumeResult = await resumeWakeWord()
-    if (
-      generation !== startupGeneration.current ||
-      !startupActive.current ||
-      !isEnabled.current
-    ) {
+    if (generation !== startupGeneration.current || !startupActive.current || !isEnabled.current) {
       return
     }
     if (!resumeResult.ok) {
@@ -585,11 +584,7 @@ function App(): React.JSX.Element {
   }, [stopWakeWord])
 
   const startWakeWordTest = async (): Promise<void> => {
-    if (
-      startupActive.current ||
-      wakeWordTestPhase !== 'idle' ||
-      microphoneTest.phase !== 'idle'
-    ) {
+    if (startupActive.current || wakeWordTestPhase !== 'idle' || microphoneTest.phase !== 'idle') {
       return
     }
     setMicrophoneTransitionOwner('wake-word-test')
@@ -604,7 +599,8 @@ function App(): React.JSX.Element {
       if (microphonePipelineState === 'error') {
         setWakeWordTestPhase('idle')
         setAssistantError(
-          microphonePipelineError ?? 'Voice listening cannot start while the microphone is in an error state.'
+          microphonePipelineError ??
+            'Voice listening cannot start while the microphone is in an error state.'
         )
         await restoreAfterWakeWordTest()
         return
@@ -696,7 +692,9 @@ function App(): React.JSX.Element {
         setWakeWordState('paused')
         const spokenPin = parseSpokenPin(event.transcript.normalizedText)
         if (!spokenPin) {
-          setAssistantError('Say exactly four digits, or enter the PIN in the protected-action box.')
+          setAssistantError(
+            'Say exactly four digits, or enter the PIN in the protected-action box.'
+          )
           setStatus('awaiting-confirmation')
           return
         }
@@ -802,14 +800,21 @@ function App(): React.JSX.Element {
     wakeWordTestPhase
   ])
 
+  const screenInspectionActive =
+    screenAwarenessStatus?.enabled === true &&
+    (screenAwarenessStatus.phase === 'inspecting' ||
+      screenAwarenessStatus.phase === 'vision-loading' ||
+      screenAwarenessStatus.phase === 'analyzing')
   const displayedStatus =
-    status === 'ready' && synthesizing
-      ? 'synthesizing'
-      : status === 'ready' && speaking
-        ? 'speaking'
-        : status === 'ready' && microphonePipelineState !== 'active'
-          ? 'preparing-voice'
-          : status
+    status !== 'disabled' && screenInspectionActive
+      ? 'observing'
+      : status === 'ready' && synthesizing
+        ? 'synthesizing'
+        : status === 'ready' && speaking
+          ? 'speaking'
+          : status === 'ready' && microphonePipelineState !== 'active'
+            ? 'preparing-voice'
+            : status
   const statusLabel = displayedStatus
     .split('-')
     .map((word) => word[0].toUpperCase() + word.slice(1))
@@ -822,6 +827,7 @@ function App(): React.JSX.Element {
     'preparing-ai': 'Loading the local AI model...',
     transcribing: 'Transcribing your command locally…',
     thinking: 'Preparing a response…',
+    observing: screenAwarenessStatus?.message ?? 'Inspecting the active window locally…',
     synthesizing: 'Generating the Kokoro voice locally...',
     'awaiting-confirmation':
       pendingConfirmation?.authorization === 'pin'
@@ -879,6 +885,16 @@ function App(): React.JSX.Element {
               <span className="status-dot" aria-hidden="true" />
               Status: {statusLabel}
             </div>
+            {screenAwarenessStatus?.enabled ? (
+              <div
+                className={`screen-awareness-pill screen-awareness-${screenAwarenessStatus.phase}`}
+                role="status"
+                aria-live="polite"
+              >
+                <span aria-hidden="true" />
+                Screen: {screenInspectionActive ? 'inspecting active window' : 'awareness on'}
+              </div>
+            ) : null}
             <div
               className={`wake-word-pill microphone-pipeline-${microphonePipelineState}`}
               role="status"
@@ -1191,6 +1207,11 @@ function App(): React.JSX.Element {
         </fieldset>
 
         <BrowserConnectionPanel />
+
+        <ScreenAwarenessPanel
+          status={screenAwarenessStatus}
+          onStatusChange={setScreenAwarenessStatus}
+        />
 
         <SecurityPinSettings
           status={pinStatus}
