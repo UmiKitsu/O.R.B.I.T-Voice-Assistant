@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { isSafeToSpeak } from './useSpeech'
+import { calculateSpeechOutputGain, isSafeToSpeak } from './useSpeech'
+
+describe('Orbit speech output gain', () => {
+  it('boosts maximum speech volume while clamping the saved setting', () => {
+    expect(calculateSpeechOutputGain(1)).toBe(1.8)
+    expect(calculateSpeechOutputGain(0.5)).toBe(0.9)
+    expect(calculateSpeechOutputGain(-1)).toBe(0)
+    expect(calculateSpeechOutputGain(2)).toBe(1.8)
+  })
+})
 
 describe('safe local speech filtering', () => {
   it('allows normal assistant responses', () => {

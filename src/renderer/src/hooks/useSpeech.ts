@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KokoroVoice, SpeechSynthesisEvent } from '../../../shared/types'
 
 const LARGE_CODE_BLOCK_LENGTH = 240
+const ORBIT_SPEECH_OUTPUT_BOOST = 1.8
 const RETRYABLE_KOKORO_ERRORS = new Set([
   'KOKORO_RUNTIME_FAILED',
   'KOKORO_PROCESS_MESSAGE_FAILED',
@@ -41,6 +42,10 @@ function isActionPlanJson(text: string): boolean {
   } catch {
     return false
   }
+}
+
+export function calculateSpeechOutputGain(volume: number): number {
+  return Math.min(1, Math.max(0, volume)) * ORBIT_SPEECH_OUTPUT_BOOST
 }
 
 export function isSafeToSpeak(text: string): boolean {
@@ -121,10 +126,17 @@ export function useSpeech(): UseSpeechResult {
 
       const source = context.createBufferSource()
       const gain = context.createGain()
-      gain.gain.value = volume
+      const limiter = context.createDynamicsCompressor()
+      gain.gain.value = calculateSpeechOutputGain(volume)
+      limiter.threshold.value = -3
+      limiter.knee.value = 6
+      limiter.ratio.value = 12
+      limiter.attack.value = 0.003
+      limiter.release.value = 0.15
       source.buffer = buffer
       source.connect(gain)
-      gain.connect(context.destination)
+      gain.connect(limiter)
+      limiter.connect(context.destination)
 
       const startAt = Math.max(context.currentTime + 0.01, nextPlaybackTime.current)
       nextPlaybackTime.current = startAt + buffer.duration
@@ -213,9 +225,7 @@ export function useSpeech(): UseSpeechResult {
       const text = pendingKokoroText.current
       const expectedGeneration = currentGeneration.current
       const canRetry =
-        text !== null &&
-        kokoroRetryAttempt.current < 1 &&
-        RETRYABLE_KOKORO_ERRORS.has(event.code)
+        text !== null && kokoroRetryAttempt.current < 1 && RETRYABLE_KOKORO_ERRORS.has(event.code)
 
       activeKokoroRequest.current = null
       stopAudioNodes()
