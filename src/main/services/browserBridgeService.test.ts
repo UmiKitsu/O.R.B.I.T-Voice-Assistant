@@ -68,7 +68,7 @@ describe('browserBridgeService disconnected behavior', () => {
       phase: 'unpaired',
       pairingState: 'none',
       expectedExtensionId: 'bpnhommpdnofjjgbgjoehmdjglfglkje',
-      grantedOrigins: []
+      siteAccessMode: 'restricted'
     })
     expect(JSON.stringify(getBrowserStatus())).not.toMatch(/secret|nonce|hmac/i)
   })

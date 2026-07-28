@@ -6,7 +6,17 @@ import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
 export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out'] },
+  {
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/out',
+      'resources/kokoro/**',
+      'resources/whisper/**',
+      'resources/wake-word/**',
+      'resources/node-runtime/**'
+    ]
+  },
   tseslint.configs.recommended,
   eslintPluginReact.configs.flat.recommended,
   eslintPluginReact.configs.flat['jsx-runtime'],

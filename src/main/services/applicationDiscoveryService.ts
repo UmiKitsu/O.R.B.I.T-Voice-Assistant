@@ -72,6 +72,15 @@ function knownApplications(): ApplicationCandidate[] {
       priority: 200,
       source: 'built-in'
     },
+    {
+      id: 'powershell',
+      displayName: 'PowerShell',
+      executable: 'powershell.exe',
+      aliases: ['powershell', 'windows powershell'],
+      requiresExistingPath: false,
+      priority: 200,
+      source: 'built-in'
+    },
     ...candidatePaths(
       programFiles ? join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
       programFilesX86 ? join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
@@ -196,6 +205,24 @@ function matchScore(requested: string, candidate: ApplicationCandidate): number 
 
 export function clearApplicationDiscoveryCache(): void {
   shortcutCache = null
+}
+
+export function listAvailableApplications(limit = 100): Array<Pick<ResolvedApplication, 'id' | 'displayName' | 'source'>> {
+  const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)))
+  const unique = new Map<string, Pick<ResolvedApplication, 'id' | 'displayName' | 'source'>>()
+  for (const candidate of [...knownApplications(), ...cachedShortcutApplications()]) {
+    if (candidate.requiresExistingPath && !existsSync(candidate.executable)) continue
+    const key = `${candidate.id}\n${candidate.displayName}`.toLocaleLowerCase()
+    if (!unique.has(key)) {
+      unique.set(key, {
+        id: candidate.id,
+        displayName: candidate.displayName,
+        source: candidate.source
+      })
+    }
+    if (unique.size >= boundedLimit) break
+  }
+  return [...unique.values()].sort((left, right) => left.displayName.localeCompare(right.displayName))
 }
 
 export function resolveApplication(value: string): ResolvedApplication | null {

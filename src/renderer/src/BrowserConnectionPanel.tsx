@@ -12,7 +12,7 @@ const EMPTY_STATUS: BrowserConnectionStatus = {
   phase: 'unpaired',
   pairingState: 'none',
   expectedExtensionId: 'unknown',
-  grantedOrigins: []
+  siteAccessMode: 'restricted'
 }
 
 export function BrowserConnectionPanel(): React.JSX.Element {
@@ -195,13 +195,18 @@ export function BrowserConnectionPanel(): React.JSX.Element {
         Enable typed browser control
       </label>
       <div className="browser-granted-sites">
-        <strong>Granted sites</strong>
-        {status.grantedOrigins.length > 0 ? (
-          <ul>
-            {status.grantedOrigins.map((origin) => <li key={origin}>{origin}</li>)}
-          </ul>
+        <strong>Website access</strong>
+        <p>
+          Version 1.3.0 adds required website permissions. Chrome may ask for one approval or
+          temporarily disable the extension until you accept the updated permissions.
+        </p>
+        {status.siteAccessMode === 'all-websites' ? (
+          <p>Chrome allows Orbit on all regular HTTP and HTTPS websites.</p>
         ) : (
-          <p>No optional sites granted. YouTube access is included for stage one.</p>
+          <p>
+            Chrome is withholding website access. Open <code>chrome://extensions</code>, select
+            Orbit Browser Control, and set Site access to <strong>On all sites</strong>.
+          </p>
         )}
       </div>
 

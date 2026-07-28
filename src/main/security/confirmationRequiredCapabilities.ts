@@ -7,6 +7,7 @@ export const confirmationRequiredCapabilities = new Set([
   'network.disableBluetooth',
   'application.closePotentiallyUnsaved',
   'application.closeAll',
+  'process.stopUser',
   'communication.sendMessage',
   'communication.sendEmail',
   'communication.joinCall',

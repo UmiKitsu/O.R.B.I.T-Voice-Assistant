@@ -16,9 +16,11 @@ import { getSettings } from '../services/settingsService'
 import { registerApplicationCapabilities } from './applicationCapabilities'
 import { registerAssistantCapabilities } from './assistantCapabilities'
 import { registerBrowserCapabilities } from './browserCapabilities'
+import { registerClipboardCapabilities } from './clipboardCapabilities'
 import { CapabilityRegistry } from './capabilityRegistry'
 import { registerMediaCapabilities } from './mediaCapabilities'
 import { registerFilesystemCapabilities } from './filesystemCapabilities'
+import { registerProcessCapabilities } from './processCapabilities'
 import { registerSoftwareCapabilities } from './softwareCapabilities'
 import { registerSpotifyCapabilities } from './spotifyCapabilities'
 import { registerSystemCapabilities } from './systemCapabilities'
@@ -47,6 +49,7 @@ export function createCapabilityRegistry(
   const registry = new CapabilityRegistry()
   registerSystemCapabilities(registry, dependencies.now)
   registerBrowserCapabilities(registry, dependencies.openExternalUrl)
+  registerClipboardCapabilities(registry)
   registerMediaCapabilities(
     registry,
     dependencies.sendMediaKey,
@@ -67,6 +70,7 @@ export function createCapabilityRegistry(
   registerAssistantCapabilities(registry)
   registerWindowInputCapabilities(registry, dependencies.windowController)
   registerFilesystemCapabilities(registry, dependencies.trashController)
+  registerProcessCapabilities(registry)
   registerSoftwareCapabilities(registry, dependencies.installerLauncher)
 
   return registry

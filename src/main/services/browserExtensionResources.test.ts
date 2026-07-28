@@ -14,9 +14,10 @@ import {
 type ExtensionManifest = {
   manifest_version: number
   minimum_chrome_version: string
+  incognito?: string
   permissions: string[]
   host_permissions: string[]
-  optional_host_permissions: string[]
+  optional_host_permissions?: string[]
   version: string
   key: string
   background?: { service_worker?: string; type?: string }
@@ -57,17 +58,15 @@ describe('Orbit browser extension resources', () => {
 
     expect(manifest.manifest_version).toBe(3)
     expect(Number(manifest.minimum_chrome_version)).toBeGreaterThanOrEqual(116)
+    expect(manifest.incognito).toBe('not_allowed')
     expect(manifest.permissions.sort()).toEqual(['alarms', 'scripting', 'storage', 'tabs'])
-    expect(manifest.host_permissions).toEqual([
-      'http://127.0.0.1/*',
-      'https://www.youtube.com/*'
-    ])
-    expect(manifest.optional_host_permissions.sort()).toEqual(['http://*/*', 'https://*/*'])
+    expect(manifest.host_permissions.sort()).toEqual(['http://*/*', 'https://*/*'])
+    expect(manifest.optional_host_permissions).toBeUndefined()
     expect(manifest.background).toEqual({
       service_worker: 'service-worker.js',
       type: 'module'
     })
-    expect(manifest.version).toBe('1.2.0')
+    expect(manifest.version).toBe('1.3.0')
     expect(manifest.action?.default_popup).toBe('popup.html')
 
     const forbidden = [
@@ -167,7 +166,7 @@ describe('Orbit browser extension resources', () => {
     expect(service).toContain('could not acknowledge it')
   })
 
-  it('uses durable retries and an exact-origin toolbar permission UI', async () => {
+  it('uses durable retries and one global all-sites access status', async () => {
     const root = join(process.cwd(), 'resources', 'orbit-browser-extension')
     const [worker, controls, popupHtml, popupSource, optionsSource] = await Promise.all([
       readFile(join(root, 'service-worker.js'), 'utf8'),
@@ -182,17 +181,22 @@ describe('Orbit browser extension resources', () => {
     expect(worker).toContain('chrome.alarms.onAlarm.addListener')
     expect(worker).toContain("requestConnection('authenticated-disconnect')")
     expect(worker).toContain('function orderedPorts(savedPort)')
-    expect(worker).toContain('async function getGrantedOriginAllowlist()')
+    expect(worker).toContain('async function getSiteAccessMode()')
+    expect(worker).toContain("origins: ['http://*/*', 'https://*/*']")
+    expect(worker).not.toContain('getGrantedOriginAllowlist')
+    expect(worker).not.toContain('orbitGrantedOrigins:')
     expect(worker).toContain('AUTHENTICATED_CONTACT_TIMEOUT_MS = 60000')
     expect(worker).toContain("setLifecycle('connected'")
     expect(worker).toContain("failure('YOUTUBE_TAB_CLOSED'")
     expect(controls).toContain('YOUTUBE_SPA_NAVIGATION_TIMEOUT')
     expect(controls).toContain('YOUTUBE_TARGET_CHANGED')
-    expect(popupHtml).toContain('Grant this site')
-    expect(popupHtml).toContain('Revoke this site')
+    expect(popupHtml).not.toContain('Grant this site')
+    expect(popupHtml).not.toContain('Revoke this site')
+    expect(popupHtml).toContain('On all sites')
     expect(popupSource).toContain('chrome.tabs.query({ active: true, currentWindow: true })')
-    expect(popupSource).toContain('chrome.permissions.request({ origins: [activePattern] })')
-    expect(popupSource).toContain('chrome.permissions.remove({ origins: [activePattern] })')
+    expect(popupSource).not.toContain('chrome.permissions.request')
+    expect(popupSource).not.toContain('chrome.permissions.remove')
+    expect(optionsSource).toContain('On all sites')
     expect(optionsSource).not.toContain('chrome.tabs.query')
 
     for (const visiblePageSource of [popupSource, optionsSource]) {

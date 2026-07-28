@@ -9,7 +9,7 @@ const BASE_STATUS: BrowserConnectionStatus = {
   phase: 'unpaired',
   pairingState: 'none',
   expectedExtensionId: 'bpnhommpdnofjjgbgjoehmdjglfglkje',
-  grantedOrigins: []
+  siteAccessMode: 'restricted'
 }
 
 describe('browser connection renderer states', () => {

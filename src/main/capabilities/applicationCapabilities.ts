@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { ActionResult } from '../../shared/types'
 import {
   launchApplication,
+  listAvailableApplications,
   type ApplicationLauncher
 } from '../services/applicationDiscoveryService'
 import type { CapabilityRegistry } from './capabilityRegistry'
@@ -15,6 +16,21 @@ const applicationParametersSchema = z
   .strict()
 
 const applicationDataSchema = z.object({ application: z.string().min(1) }).strict()
+const availableApplicationsDataSchema = z
+  .object({
+    applications: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(200),
+            displayName: z.string().min(1).max(300),
+            source: z.enum(['built-in', 'installed-shortcut', 'known-path'])
+          })
+          .strict()
+      )
+      .max(100)
+  })
+  .strict()
 
 type ApplicationParameters = z.infer<typeof applicationParametersSchema>
 type ApplicationData = z.infer<typeof applicationDataSchema>
@@ -34,4 +50,24 @@ export function registerApplicationCapabilities(
   }
 
   registry.register(launch, applicationParametersSchema, actionResultSchema(applicationDataSchema))
+
+  const listParameters = z.object({ limit: z.number().int().min(1).max(100).default(50) }).strict()
+  registry.register(
+    {
+      name: 'application.listAvailable',
+      risk: 'automatic',
+      timeoutMs: 5_000,
+      execute: async ({ limit }, signal) => {
+        if (signal.aborted) throw new Error('The action was cancelled.')
+        const applications = listAvailableApplications(limit)
+        return {
+          ok: true as const,
+          message: `Found ${applications.length} available applications.`,
+          data: { applications }
+        }
+      }
+    },
+    listParameters,
+    actionResultSchema(availableApplicationsDataSchema)
+  )
 }

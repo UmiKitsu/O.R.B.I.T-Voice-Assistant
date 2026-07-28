@@ -1,10 +1,6 @@
 /* global chrome */
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
-import {
-  migrateExactOriginPatterns,
-  normalizeExactOrigin
-} from './origin-grants.js'
 import { EXPECTED_EXTENSION_ORIGIN } from './extension-identity.js'
 import { getInstalledLifecycle } from './extension-lifecycle.js'
 import {
@@ -16,7 +12,7 @@ import { navigateYouTubePlayer, setYouTubePlayback } from './youtube-controls.js
 import { evaluateYouTubePlaybackMeasurement } from './youtube-playback.js'
 import { selectFirstRegularYouTubeVideo } from './youtube-selection.js'
 
-const PROTOCOL_VERSION = 2
+const PROTOCOL_VERSION = 3
 const SOCKET_PATH = '/orbit-browser-v1'
 const REQUEST_TTL_MS = 60_000
 const PORT_MIN = 43117
@@ -178,58 +174,11 @@ function parseSafeUrl(value) {
   }
 }
 
-async function getGrantedOriginAllowlist() {
-  const stored = await chrome.storage.local.get([
-    'orbitGrantedOrigins',
-    'orbitOriginAllowlistMigrated'
-  ])
-  const existing = Array.isArray(stored.orbitGrantedOrigins)
-    ? stored.orbitGrantedOrigins.flatMap((origin) => {
-        const normalized = normalizeExactOrigin(origin)
-        return normalized ? [normalized] : []
-      })
-    : []
-  if (stored.orbitOriginAllowlistMigrated === true) return [...new Set(existing)].sort()
-
-  const permissions = await chrome.permissions.getAll()
-  const origins = migrateExactOriginPatterns(permissions.origins ?? [], existing)
-  await chrome.storage.local.set({
-    orbitGrantedOrigins: origins,
-    orbitOriginAllowlistMigrated: true
+async function getSiteAccessMode() {
+  const allWebsites = await chrome.permissions.contains({
+    origins: ['http://*/*', 'https://*/*']
   })
-  return origins
-}
-
-async function setGrantedOrigin(origin, granted) {
-  const normalized = normalizeExactOrigin(origin)
-  if (!normalized) return false
-  const existing = await getGrantedOriginAllowlist()
-  const next = granted
-    ? [...new Set([...existing, normalized])].sort()
-    : existing.filter((candidate) => candidate !== normalized)
-  await chrome.storage.local.set({
-    orbitGrantedOrigins: next,
-    orbitOriginAllowlistMigrated: true
-  })
-  return true
-}
-
-async function getEffectiveGrantedOrigins() {
-  const allowed = await getGrantedOriginAllowlist()
-  const checks = await Promise.all(
-    allowed.map(async (origin) => ({
-      origin,
-      granted: await chrome.permissions.contains({ origins: [`${origin}/*`] })
-    }))
-  )
-  const effective = checks.filter((entry) => entry.granted).map((entry) => entry.origin)
-  if (effective.length !== allowed.length) {
-    await chrome.storage.local.set({
-      orbitGrantedOrigins: effective,
-      orbitOriginAllowlistMigrated: true
-    })
-  }
-  return effective
+  return allWebsites ? 'all-websites' : 'restricted'
 }
 
 async function getPairing() {
@@ -330,14 +279,9 @@ function protectedPageFailure() {
 
 async function requireControllableTab() {
   const tab = await getControlledTab()
-  if (!tab?.id || !tab.url || !parseSafeUrl(tab.url)) return { error: protectedPageFailure() }
-  return { tab }
-}
-
-async function requireActiveWebTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-  if (!tab?.id || !tab.url || !parseSafeUrl(tab.url)) return { error: protectedPageFailure() }
-  await setControlledTabId(tab.id)
+  if (!tab?.id || !tab.url || tab.incognito || !parseSafeUrl(tab.url)) {
+    return { error: protectedPageFailure() }
+  }
   return { tab }
 }
 
@@ -360,11 +304,8 @@ async function waitForTabComplete(tabId, timeoutMs = 12000) {
 }
 
 async function hasPagePermission(url) {
-  const parsed = parseSafeUrl(url)
-  if (!parsed) return false
-  const allowed = await getEffectiveGrantedOrigins()
-  if (!allowed.includes(parsed.origin)) return false
-  return chrome.permissions.contains({ origins: [`${parsed.origin}/*`] })
+  if (!parseSafeUrl(url)) return false
+  return (await getSiteAccessMode()) === 'all-websites'
 }
 
 async function executeFixedScript(tabId, func, args = []) {
@@ -970,7 +911,7 @@ async function executeCapability(capability, parameters, signal) {
     const query = parameters.query.trim().toLowerCase()
     const tabs = await chrome.tabs.query({ currentWindow: true })
     const match = tabs.find((tab) => {
-      if (!tab.id || !tab.url || !parseSafeUrl(tab.url)) return false
+      if (!tab.id || !tab.url || tab.incognito || !parseSafeUrl(tab.url)) return false
       return `${tab.title || ''} ${tab.url}`.toLowerCase().includes(query)
     })
     if (!match?.id) return failure('BROWSER_TAB_NOT_FOUND', 'No matching safe browser tab was found.')
@@ -997,9 +938,9 @@ async function executeCapability(capability, parameters, signal) {
     ) {
       return failure('BROWSER_INVALID_PARAMETERS', 'The scroll parameters are invalid.')
     }
-    const required = await requireActiveWebTab()
+    const required = await requireControllableTab()
     if (required.error) return required.error
-    if (!(await hasPagePermission(required.tab.url))) return failure('BROWSER_SITE_ACCESS_REQUIRED', 'Grant this exact site from the Orbit extension toolbar before page actions.')
+    if (!(await hasPagePermission(required.tab.url))) return failure('BROWSER_SITE_ACCESS_REQUIRED', 'Chrome is withholding Orbit site access. Open the extension details and set Site access to “On all sites.”')
     return executeFixedScript(required.tab.id, scrollPage, [parameters.direction, parameters.amount])
   }
 
@@ -1088,10 +1029,10 @@ async function executeCapability(capability, parameters, signal) {
     return withYouTubeTab((tab) => executeFixedScript(tab.id, readYouTubePlaybackState))
   }
 
-  const stageTwo = await requireActiveWebTab()
+  const stageTwo = await requireControllableTab()
   if (stageTwo.error) return stageTwo.error
   if (!(await hasPagePermission(stageTwo.tab.url))) {
-    return failure('BROWSER_SITE_ACCESS_REQUIRED', 'Grant this exact site from the Orbit extension toolbar before page actions.')
+    return failure('BROWSER_SITE_ACCESS_REQUIRED', 'Chrome is withholding Orbit site access. Open the extension details and set Site access to “On all sites.”')
   }
   if (capability === 'browser.readVisiblePage') {
     if (!hasOnlyKeys(parameters, [])) return failure('BROWSER_INVALID_PARAMETERS', 'Invalid page-read parameters.')
@@ -1194,7 +1135,7 @@ async function handleCommand(message) {
 
 async function sendExtensionStatus() {
   if (!socketAuthenticated || !socket || socket.readyState !== WebSocket.OPEN) return
-  const grantedOrigins = await getEffectiveGrantedOrigins()
+  const siteAccessMode = await getSiteAccessMode()
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
   let activeTabOrigin
   try {
@@ -1208,7 +1149,7 @@ async function sendExtensionStatus() {
     JSON.stringify({
       type: 'extension_status',
       version: PROTOCOL_VERSION,
-      grantedOrigins: grantedOrigins.map((origin) => `${origin}/*`),
+      siteAccessMode,
       ...(activeTabOrigin ? { activeTabOrigin } : {})
     })
   )
@@ -1245,9 +1186,9 @@ function setLifecycle(phase, options = {}) {
 }
 
 async function getSafeConnectionStatus() {
-  const [pairing, grantedOrigins] = await Promise.all([
+  const [pairing, siteAccessMode] = await Promise.all([
     getPairing(),
-    getEffectiveGrantedOrigins()
+    getSiteAccessMode()
   ])
   return {
     paired: Boolean(pairing.secret && pairing.port),
@@ -1257,7 +1198,7 @@ async function getSafeConnectionStatus() {
     activePort: activePort ?? pairing.port,
     retryAt,
     lastError: pairing.storageError ?? lastError,
-    grantedOrigins
+    siteAccessMode
   }
 }
 
@@ -1951,28 +1892,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       )
     return true
   }
-  if (message?.type === 'get-origin-access') {
-    void (async () => {
-      const normalized = normalizeExactOrigin(message.origin)
-      const origins = await getEffectiveGrantedOrigins()
-      sendResponse({
-        ok: Boolean(normalized),
-        granted: Boolean(normalized && origins.includes(normalized))
-      })
-    })()
-    return true
-  }
-  if (message?.type === 'site-granted' || message?.type === 'site-revoked') {
-    void (async () => {
-      const updated = await setGrantedOrigin(message.origin, message.type === 'site-granted')
-      if (updated) await sendExtensionStatus()
-      sendResponse({ ok: updated })
-    })()
-    return true
-  }
   if (message?.type === 'permissions-changed') {
-    void getEffectiveGrantedOrigins()
-      .then(() => sendExtensionStatus())
+    void sendExtensionStatus()
       .then(() => sendResponse({ ok: true }))
     return true
   }
@@ -1996,9 +1917,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   })
 })
 chrome.permissions.onAdded.addListener(() => void sendExtensionStatus())
-chrome.permissions.onRemoved.addListener(() => {
-  void getEffectiveGrantedOrigins().then(() => sendExtensionStatus())
-})
+chrome.permissions.onRemoved.addListener(() => void sendExtensionStatus())
 
 void (async () => {
   const saved = await chrome.storage.session.get('orbitConnectionLifecycle')
@@ -2008,6 +1927,6 @@ void (async () => {
     retryAt = Number.isFinite(lifecycle.retryAt) ? lifecycle.retryAt : null
     lastError = isPlainObject(lifecycle.lastError) ? lifecycle.lastError : null
   }
-  await getGrantedOriginAllowlist()
+  await chrome.storage.local.remove(['orbitGrantedOrigins', 'orbitOriginAllowlistMigrated'])
   await requestConnection('service-worker-startup')
 })()

@@ -111,7 +111,7 @@ let retryAt: number | undefined
 let lastError: BrowserConnectionError | undefined
 let sequence = 0
 let lastResponseSequence = 0
-let grantedOrigins: string[] = []
+let siteAccessMode: BrowserConnectionStatus['siteAccessMode'] = 'restricted'
 let activeTabOrigin: string | undefined
 let lastYouTubePlaybackState: YouTubePlaybackState | undefined
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -245,7 +245,7 @@ function currentStatus(): BrowserConnectionStatus {
     ...(lastError ? { lastError: { ...lastError } } : {}),
     ...(extensionVersion ? { extensionVersion } : {}),
     ...(lastSeenAt ? { lastSeenAt } : {}),
-    grantedOrigins: [...grantedOrigins],
+    siteAccessMode,
     ...(activeTabOrigin ? { activeTabOrigin } : {})
   }
 }
@@ -284,7 +284,7 @@ function resetPairingMetadata(): void {
   connectionPhase = 'unpaired'
   retryAt = undefined
   lastError = undefined
-  grantedOrigins = []
+  siteAccessMode = 'restricted'
   activeTabOrigin = undefined
 }
 
@@ -672,7 +672,7 @@ function handleExtensionStatus(connection: LocalWebSocketConnection, message: un
   const parsed = extensionStatusSchema.safeParse(message)
   if (!parsed.success) return false
   if (connection !== activeConnection || !authenticatedConnections.has(connection)) return true
-  grantedOrigins = [...new Set(parsed.data.grantedOrigins)].sort()
+  siteAccessMode = parsed.data.siteAccessMode
   activeTabOrigin = parsed.data.activeTabOrigin
   const now = Date.now()
   lastSeenAt = now
@@ -1097,7 +1097,7 @@ export function resetBrowserBridgeServiceForTests(): void {
   lastError = undefined
   sequence = 0
   lastResponseSequence = 0
-  grantedOrigins = []
+  siteAccessMode = 'restricted'
   activeTabOrigin = undefined
   lastYouTubePlaybackState = undefined
   usedAuthNonces.clear()

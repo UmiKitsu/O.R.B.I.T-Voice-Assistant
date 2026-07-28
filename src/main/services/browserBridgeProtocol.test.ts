@@ -64,33 +64,37 @@ describe('browser bridge protocol', () => {
     ).toBe(false)
   })
 
-  it('accepts Chrome host permission patterns but not arbitrary strings', () => {
+  it('accepts only the global website-access mode', () => {
     expect(
       extensionStatusSchema.safeParse({
         type: 'extension_status',
         version: BROWSER_PROTOCOL_VERSION,
-        grantedOrigins: [
-          'https://www.youtube.com/*',
-          'http://localhost:3000/*',
-          'https://example.com/*'
-        ],
+        siteAccessMode: 'all-websites',
         activeTabOrigin: 'https://example.com'
       }).success
     ).toBe(true)
-    for (const grantedOrigins of [
-      ['chrome://extensions/*'],
-      ['http://*/*'],
-      ['https://*.example.com/*'],
-      ['https://user:password@example.com/*']
-    ]) {
-      expect(
-        extensionStatusSchema.safeParse({
-          type: 'extension_status',
-          version: BROWSER_PROTOCOL_VERSION,
-          grantedOrigins
-        }).success
-      ).toBe(false)
-    }
+    expect(
+      extensionStatusSchema.safeParse({
+        type: 'extension_status',
+        version: BROWSER_PROTOCOL_VERSION,
+        siteAccessMode: 'restricted'
+      }).success
+    ).toBe(true)
+    expect(
+      extensionStatusSchema.safeParse({
+        type: 'extension_status',
+        version: BROWSER_PROTOCOL_VERSION,
+        siteAccessMode: 'per-origin'
+      }).success
+    ).toBe(false)
+    expect(
+      extensionStatusSchema.safeParse({
+        type: 'extension_status',
+        version: BROWSER_PROTOCOL_VERSION,
+        siteAccessMode: 'all-websites',
+        grantedOrigins: ['https://example.com/*']
+      }).success
+    ).toBe(false)
   })
 
   it('registers explicit and compatible YouTube controls', () => {
@@ -121,7 +125,7 @@ describe('browser bridge protocol', () => {
       type: 'auth_hello',
       version: BROWSER_PROTOCOL_VERSION,
       extensionOrigin: ORBIT_BROWSER_EXTENSION_ORIGIN,
-      extensionVersion: '1.2.0',
+      extensionVersion: '1.3.0',
       nonce: 'n'.repeat(32),
       timestamp: now,
       mac: 'a'.repeat(64)

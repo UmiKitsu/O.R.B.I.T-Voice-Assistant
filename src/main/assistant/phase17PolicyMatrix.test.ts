@@ -56,6 +56,11 @@ const pinProtected = [
     'Install C:\\Users\\Test\\Downloads\\setup.exe.',
     'software.install',
     { installerPath: 'C:\\Users\\Test\\Downloads\\setup.exe' }
+  ],
+  [
+    'Append hello to C:\\Users\\Test\\Documents\\notes.txt.',
+    'filesystem.append',
+    { content: 'hello', path: 'C:\\Users\\Test\\Documents\\notes.txt' }
   ]
 ] as const
 
@@ -64,7 +69,8 @@ const requiredConfirmations = [
   ['Shut down the computer.', 'system.shutdown'],
   ['Close all applications.', 'application.closeAll'],
   ['Turn off Wi-Fi.', 'network.disableWifi'],
-  ['Send this message.', 'communication.sendMessage']
+  ['Send this message.', 'communication.sendMessage'],
+  ['Stop process 777.', 'process.stopUser']
 ] as const
 
 const requiredAllowed = [
@@ -75,7 +81,13 @@ const requiredAllowed = [
   ['Set volume to 30 percent.', 'audio.setVolume', { volume: 30 }],
   ['Pause the music.', 'media.playPause', {}],
   ['Tell me the time.', 'system.getTime', {}],
-  ['Maximize Chrome.', 'application.maximize', { application: 'Chrome' }]
+  ['Maximize Chrome.', 'application.maximize', { application: 'Chrome' }],
+  ['Open PowerShell.', 'application.launch', { application: 'powershell' }],
+  ['Show system information.', 'system.getInformation', {}],
+  ['Show battery status.', 'system.getBattery', {}],
+  ['Show network status.', 'system.getNetworkStatus', {}],
+  ['List running processes.', 'process.listUser', { limit: 50 }],
+  ['List available applications.', 'application.listAvailable', { limit: 50 }]
 ] as const
 
 function registerConfirmationCapability(
@@ -99,6 +111,16 @@ function registerConfirmationCapability(
 describe('Protected capability policy matrix', () => {
   it.each(permanentlyBlocked)('keeps %s permanently blocked', (capability) => {
     expect(blockedCapabilities.has(capability)).toBe(true)
+  })
+
+  it('opens a blank PowerShell window but blocks command-entry requests', () => {
+    expect(routeDeterministicCommand('Open PowerShell.')?.actions).toEqual([
+      { capability: 'application.launch', parameters: { application: 'powershell' } }
+    ])
+    expect(routeDeterministicCommand('Open PowerShell and run whoami.')?.actions).toEqual([
+      { capability: 'powershell.execute', parameters: {} }
+    ])
+    expect(blockedCapabilities.has('powershell.execute')).toBe(true)
   })
 
   it.each(pinProtected)('routes %s as an exact PIN-protected action', async (message, capability, parameters) => {

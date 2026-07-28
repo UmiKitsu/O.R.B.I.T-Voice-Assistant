@@ -46,6 +46,8 @@ extraResources:
     to: orbit-browser-extension
     filter:
       - '**/*'
+  - from: resources/windows-fixed-operations.ps1
+    to: windows-fixed-operations.ps1
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   oneClick: false

@@ -260,7 +260,7 @@ export type BrowserConnectionStatus = {
   lastError?: BrowserConnectionError
   extensionVersion?: string
   lastSeenAt?: number
-  grantedOrigins: string[]
+  siteAccessMode: 'all-websites' | 'restricted'
   activeTabOrigin?: string
 }
 

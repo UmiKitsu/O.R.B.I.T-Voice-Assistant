@@ -1,48 +1,34 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import {
-  migrateExactOriginPatterns,
-  normalizeExactOrigin
-} from '../../../resources/orbit-browser-extension/origin-grants.js'
 
-describe('browser exact-origin grants', () => {
-  it.each([
-    ['https://example.com', 'https://example.com'],
-    ['http://localhost:3000', 'http://localhost:3000'],
-    ['https://example.com/path', null],
-    ['https://user:password@example.com', null],
-    ['chrome://extensions', null],
-    ['file:///C:/secret.txt', null],
-    ['https://*.example.com', null]
-  ])('normalizes only an exact HTTP(S) origin: %s', (value, expected) => {
-    expect(normalizeExactOrigin(value)).toBe(expected)
-  })
+describe('browser protocol v3 global website access', () => {
+  it('removes per-origin grant storage and toolbar grant controls', async () => {
+    const root = join(process.cwd(), 'resources', 'orbit-browser-extension')
+    const [manifestSource, worker, popupHtml, popupSource, optionsSource, legacyModule] =
+      await Promise.all([
+        readFile(join(root, 'manifest.json'), 'utf8'),
+        readFile(join(root, 'service-worker.js'), 'utf8'),
+        readFile(join(root, 'popup.html'), 'utf8'),
+        readFile(join(root, 'popup.js'), 'utf8'),
+        readFile(join(root, 'options.js'), 'utf8'),
+        readFile(join(root, 'origin-grants.js'), 'utf8')
+      ])
+    const manifest = JSON.parse(manifestSource)
 
-  it('migrates exact grants while rejecting broad and fixed host permissions', () => {
-    expect(
-      migrateExactOriginPatterns(
-        [
-          'http://*/*',
-          'https://*/*',
-          'https://www.youtube.com/*',
-          'https://example.com/*',
-          'http://localhost:3000/*',
-          'chrome://extensions/*'
-        ],
-        ['https://existing.example']
-      )
-    ).toEqual([
-      'http://localhost:3000',
-      'https://example.com',
-      'https://existing.example'
-    ])
-  })
-
-  it('deduplicates grants without broadening their origin', () => {
-    expect(
-      migrateExactOriginPatterns(
-        ['https://example.com/*', 'https://example.com/*'],
-        ['https://example.com']
-      )
-    ).toEqual(['https://example.com'])
+    expect(manifest.host_permissions.sort()).toEqual(['http://*/*', 'https://*/*'])
+    expect(manifest.optional_host_permissions).toBeUndefined()
+    expect(worker).not.toContain("from './origin-grants.js'")
+    expect(worker).not.toContain('getGrantedOriginAllowlist')
+    expect(worker).not.toContain('setGrantedOrigin')
+    expect(worker).not.toContain("message?.type === 'site-granted'")
+    expect(worker).not.toContain("message?.type === 'site-revoked'")
+    expect(worker).toContain("chrome.storage.local.remove(['orbitGrantedOrigins', 'orbitOriginAllowlistMigrated'])")
+    expect(popupHtml).not.toContain('Grant this site')
+    expect(popupHtml).not.toContain('Revoke this site')
+    expect(popupSource).not.toContain('chrome.permissions.request')
+    expect(popupSource).not.toContain('chrome.permissions.remove')
+    expect(optionsSource).not.toContain('grantedOrigins')
+    expect(legacyModule).toContain('Per-origin grants were removed')
   })
 })

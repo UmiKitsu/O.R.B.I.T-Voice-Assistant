@@ -4,13 +4,9 @@
 const originElement = document.querySelector('#origin')
 const permissionElement = document.querySelector('#permission')
 const statusElement = document.querySelector('#status')
-const grantButton = document.querySelector('#grant')
-const revokeButton = document.querySelector('#revoke')
 const retryButton = document.querySelector('#retry')
 const optionsButton = document.querySelector('#options')
 
-let activeOrigin = null
-let activePattern = null
 let orbitPort = null
 
 const ACCESS_PROBE_PATH = '/orbit-browser-v1/access'
@@ -52,71 +48,25 @@ function safeStatusText(status) {
   return `${status.phase || (status.paired ? 'reconnecting' : 'unpaired')}.${errorText}${retryText}`
 }
 
-async function readActiveOrigin() {
+async function renderActiveSite() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   try {
     const url = new URL(tab?.url || '')
     if (!['http:', 'https:'].includes(url.protocol)) throw new Error('protected')
-    activeOrigin = url.origin
-    activePattern = `${url.origin}/*`
-    originElement.textContent = activeOrigin
-    return
+    originElement.textContent = url.origin
   } catch {
-    activeOrigin = null
-    activePattern = null
-    originElement.textContent = 'This is a protected Chrome page.'
+    originElement.textContent = 'This is a protected Chrome or local page.'
   }
-}
-
-async function renderPermission() {
-  if (!activePattern) {
-    permissionElement.textContent = 'Orbit cannot receive access to this page.'
-    grantButton.disabled = true
-    revokeButton.disabled = true
-    return
-  }
-  const access = await chrome.runtime
-    .sendMessage({ type: 'get-origin-access', origin: activeOrigin })
-    .catch(() => ({ granted: false }))
-  const granted = access?.granted === true
-  permissionElement.textContent = granted
-    ? `Orbit has guarded automation access to ${activeOrigin}.`
-    : `Orbit does not have automation access to ${activeOrigin}.`
-  grantButton.disabled = granted
-  revokeButton.disabled = !granted
 }
 
 async function renderStatus() {
   const status = await chrome.runtime.sendMessage({ type: 'get-status' }).catch(() => null)
   orbitPort = isOrbitPort(status?.activePort) ? status.activePort : null
   statusElement.textContent = safeStatusText(status)
+  permissionElement.textContent = status?.siteAccessMode === 'all-websites'
+    ? 'Website access: On all sites.'
+    : 'Website access is restricted. Open chrome://extensions, select Orbit Browser Control, and set Site access to “On all sites.”'
 }
-
-grantButton.addEventListener('click', async () => {
-  if (!activePattern) return
-  const granted = await chrome.permissions.request({ origins: [activePattern] })
-  if (granted) {
-    await chrome.runtime
-      .sendMessage({ type: 'site-granted', origin: activeOrigin })
-      .catch(() => undefined)
-  }
-  statusElement.textContent = granted
-    ? `Granted guarded access to ${activeOrigin}.`
-    : 'Chrome did not grant this site.'
-  await renderPermission()
-})
-
-revokeButton.addEventListener('click', async () => {
-  if (!activePattern) return
-  await chrome.permissions.remove({ origins: [activePattern] })
-  const response = await chrome.runtime
-    .sendMessage({ type: 'site-revoked', origin: activeOrigin })
-    .catch(() => ({ ok: false }))
-  statusElement.textContent = response?.ok
-    ? `Revoked access to ${activeOrigin}.`
-    : 'Chrome did not change this site permission.'
-  await renderPermission()
-})
 
 retryButton.addEventListener('click', async () => {
   retryButton.disabled = true
@@ -141,7 +91,6 @@ chrome.runtime.onMessage.addListener((message) => {
 })
 
 void (async () => {
-  await readActiveOrigin()
-  await Promise.all([renderPermission(), renderStatus()])
+  await Promise.all([renderActiveSite(), renderStatus()])
   await chrome.runtime.sendMessage({ type: 'ui-opened' }).catch(() => undefined)
 })()

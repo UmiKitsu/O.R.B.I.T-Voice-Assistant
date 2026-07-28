@@ -1,9 +1,16 @@
 import { z } from 'zod'
 import {
+  appendTextFile,
   copyFilePath,
   createDirectoryPath,
+  getFilesystemMetadata,
+  listDirectoryBounded,
   movePath,
+  navigateFolderReadOnly,
+  openFileReadOnly,
+  readTextFileBounded,
   renamePath,
+  searchFilesystemBounded,
   trashPath,
   validateAbsolutePath,
   writeTextFile,
@@ -21,6 +28,38 @@ const absolutePathSchema = z
 
 const pathDataSchema = z.object({ path: z.string() }).strict()
 const transferDataSchema = z.object({ source: z.string(), destination: z.string() }).strict()
+const readTextDataSchema = z
+  .object({ path: z.string(), text: z.string().max(64_000), truncated: z.boolean() })
+  .strict()
+const directoryListDataSchema = z
+  .object({
+    path: z.string(),
+    entries: z
+      .array(
+        z
+          .object({
+            name: z.string().max(255),
+            type: z.enum(['file', 'directory', 'other']),
+            size: z.number().nonnegative().optional()
+          })
+          .strict()
+      )
+      .max(100),
+    truncated: z.boolean()
+  })
+  .strict()
+const searchDataSchema = z
+  .object({ root: z.string(), matches: z.array(z.string()).max(50), truncated: z.boolean() })
+  .strict()
+const metadataDataSchema = z
+  .object({
+    path: z.string(),
+    type: z.enum(['file', 'directory', 'other']),
+    size: z.number().nonnegative(),
+    createdAt: z.iso.datetime(),
+    modifiedAt: z.iso.datetime()
+  })
+  .strict()
 
 export function registerFilesystemCapabilities(
   registry: CapabilityRegistry,
@@ -124,6 +163,103 @@ export function registerFilesystemCapabilities(
       execute: ({ path, content }) => writeTextFile(path, content, true)
     },
     writeFileParameters,
+    actionResultSchema(pathDataSchema)
+  )
+
+  const appendParameters = z
+    .object({ path: absolutePathSchema, content: z.string().max(100_000) })
+    .strict()
+  registry.register(
+    {
+      name: 'filesystem.append',
+      risk: 'pin-required',
+      timeoutMs: 30_000,
+      confirmationSummary: ({ path }) => `Append text to ${path}.`,
+      execute: ({ path, content }) => appendTextFile(path, content)
+    },
+    appendParameters,
+    actionResultSchema(pathDataSchema)
+  )
+
+  const readParameters = z
+    .object({ path: absolutePathSchema, maxBytes: z.number().int().min(1).max(64_000).default(32_000) })
+    .strict()
+  registry.register(
+    {
+      name: 'filesystem.readText',
+      risk: 'automatic',
+      timeoutMs: 10_000,
+      execute: ({ path, maxBytes }) => readTextFileBounded(path, maxBytes)
+    },
+    readParameters,
+    actionResultSchema(readTextDataSchema)
+  )
+
+  const listParameters = z
+    .object({ path: absolutePathSchema, limit: z.number().int().min(1).max(100).default(50) })
+    .strict()
+  registry.register(
+    {
+      name: 'filesystem.listDirectory',
+      risk: 'automatic',
+      timeoutMs: 10_000,
+      execute: ({ path, limit }) => listDirectoryBounded(path, limit)
+    },
+    listParameters,
+    actionResultSchema(directoryListDataSchema)
+  )
+
+  const searchParameters = z
+    .object({
+      root: absolutePathSchema,
+      query: z.string().trim().min(1).max(200),
+      maxResults: z.number().int().min(1).max(50).default(25),
+      maxDepth: z.number().int().min(0).max(8).default(5)
+    })
+    .strict()
+  registry.register(
+    {
+      name: 'filesystem.search',
+      risk: 'automatic',
+      timeoutMs: 20_000,
+      execute: ({ root, query, maxResults, maxDepth }) =>
+        searchFilesystemBounded(root, query, maxResults, maxDepth)
+    },
+    searchParameters,
+    actionResultSchema(searchDataSchema)
+  )
+
+  const metadataParameters = z.object({ path: absolutePathSchema }).strict()
+  registry.register(
+    {
+      name: 'filesystem.getMetadata',
+      risk: 'automatic',
+      timeoutMs: 5_000,
+      execute: ({ path }) => getFilesystemMetadata(path)
+    },
+    metadataParameters,
+    actionResultSchema(metadataDataSchema)
+  )
+
+  registry.register(
+    {
+      name: 'file.openReadOnly',
+      risk: 'automatic',
+      timeoutMs: 10_000,
+      execute: ({ path }) => openFileReadOnly(path)
+    },
+    metadataParameters,
+    actionResultSchema(pathDataSchema)
+  )
+
+  registry.register(
+    {
+      name: 'folder.navigateReadOnly',
+      risk: 'automatic',
+      timeoutMs: 10_000,
+      execute: ({ path }) => navigateFolderReadOnly(path)
+    },
+    metadataParameters,
     actionResultSchema(pathDataSchema)
   )
 }

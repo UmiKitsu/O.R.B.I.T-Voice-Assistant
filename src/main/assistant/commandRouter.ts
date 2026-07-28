@@ -69,8 +69,14 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
     .trim()
   const lower = normalized.toLocaleLowerCase()
 
-  if (/^open powershell(?:\s+and\s+.+)?$/.test(lower)) {
-    return actionPlan('Run PowerShell', 'powershell.execute')
+  if (/^open powershell$/.test(lower)) {
+    return actionPlan('Open a blank PowerShell window', 'application.launch', {
+      application: 'powershell'
+    })
+  }
+
+  if (/^open powershell\s+and\s+.+$/.test(lower)) {
+    return actionPlan('Run a raw PowerShell command', 'powershell.execute')
   }
 
   const deleteRequest = normalized.match(/^delete\s+(.+)$/i)
@@ -116,6 +122,50 @@ export function routeDeterministicCommand(message: string): ActionPlan | null {
     return actionPlan('Start a local software installer', 'software.install', {
       installerPath: installRequest[1].trim()
     })
+  }
+
+  const appendRequest = normalized.match(/^append\s+(.+?)\s+to\s+(.+)$/i)
+  if (appendRequest) {
+    return actionPlan('Append text to a file', 'filesystem.append', {
+      content: appendRequest[1],
+      path: appendRequest[2].trim()
+    })
+  }
+
+  if (/^(?:list|show) (?:the )?(?:running )?(?:user )?(?:applications|processes)$/.test(lower)) {
+    return actionPlan('List ordinary current-user applications', 'process.listUser', { limit: 50 })
+  }
+
+  if (/^(?:list|show) (?:the )?(?:available|installed) applications$/.test(lower)) {
+    return actionPlan('List available applications', 'application.listAvailable', { limit: 50 })
+  }
+
+  if (/^(?:show|tell me) (?:the )?(?:system|computer) information$/.test(lower)) {
+    return actionPlan('Read bounded system information', 'system.getInformation')
+  }
+
+  if (/^(?:show|tell me) (?:the )?battery(?: status)?$/.test(lower)) {
+    return actionPlan('Read the battery status', 'system.getBattery')
+  }
+
+  if (/^(?:show|tell me) (?:the )?network status$/.test(lower)) {
+    return actionPlan('Read the network status', 'system.getNetworkStatus')
+  }
+
+  if (/^lock (?:the )?(?:computer|pc|windows)$/.test(lower)) {
+    return actionPlan('Lock Windows', 'system.lock')
+  }
+
+  if (/^(?:sign|log) out(?: of windows)?$/.test(lower)) {
+    return actionPlan('Sign out of Windows', 'system.signOut')
+  }
+
+  if (/^restart (?:the )?(?:computer|pc|windows)$/.test(lower)) {
+    return actionPlan('Restart Windows', 'system.restart')
+  }
+
+  if (/^(?:shut down|shutdown) (?:the )?(?:computer|pc|windows)$/.test(lower)) {
+    return actionPlan('Shut down Windows', 'system.shutdown')
   }
 
   if (/^stop speaking$/.test(lower)) {

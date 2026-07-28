@@ -8,10 +8,9 @@ const codeInput = document.querySelector('#code')
 const pairButton = document.querySelector('#pair')
 const retryButton = document.querySelector('#retry')
 const disconnectButton = document.querySelector('#disconnect')
-const refreshSitesButton = document.querySelector('#refresh-sites')
 const statusElement = document.querySelector('#status')
 const diagnosticsElement = document.querySelector('#diagnostics')
-const sitesElement = document.querySelector('#sites')
+const siteAccessElement = document.querySelector('#site-access')
 
 const ACCESS_PROBE_PATH = '/orbit-browser-v1/access'
 const ACCESS_PROBE_TIMEOUT_MS = 5000
@@ -83,25 +82,12 @@ async function renderStatus() {
       'Next retry',
       response.retryAt ? new Date(response.retryAt).toLocaleString() : 'not scheduled'
     ),
-    diagnosticItem('Last error code', response.lastError?.code ?? 'none')
+    diagnosticItem('Last error code', response.lastError?.code ?? 'none'),
+    diagnosticItem('Website access', response.siteAccessMode ?? 'restricted')
   )
-}
-
-async function renderSites() {
-  const status = await chrome.runtime.sendMessage({ type: 'get-status' }).catch(() => null)
-  const origins = Array.isArray(status?.grantedOrigins) ? [...status.grantedOrigins].sort() : []
-  sitesElement.replaceChildren(
-    ...origins.map((origin) => {
-      const item = document.createElement('li')
-      item.textContent = origin
-      return item
-    })
-  )
-  if (origins.length === 0) {
-    const item = document.createElement('li')
-    item.textContent = 'No optional sites granted.'
-    sitesElement.append(item)
-  }
+  siteAccessElement.textContent = response.siteAccessMode === 'all-websites'
+    ? 'Chrome allows Orbit on all regular HTTP and HTTPS websites.'
+    : 'Chrome is withholding website access. Open chrome://extensions, select Orbit Browser Control, and set Site access to “On all sites.”'
 }
 
 pairButton.addEventListener('click', async () => {
@@ -161,13 +147,11 @@ disconnectButton.addEventListener('click', async () => {
   await renderStatus()
 })
 
-refreshSitesButton.addEventListener('click', () => void renderSites())
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === 'connection-status') void renderStatus()
 })
 
 void Promise.all([
   chrome.runtime.sendMessage({ type: 'ui-opened' }).catch(() => undefined),
-  renderStatus(),
-  renderSites()
+  renderStatus()
 ])

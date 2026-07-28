@@ -1,5 +1,4 @@
 export const blockedCapabilities = new Set([
-  'filesystem.append',
   'filesystem.deleteDirectory',
   'filesystem.changePermissions',
 
@@ -24,5 +23,13 @@ export const blockedCapabilities = new Set([
 
   'security.disableProtection',
   'security.bypassUac',
-  'security.obtainCredentials'
+  'security.obtainCredentials',
+
+  'process.stopCritical',
+  'service.change',
+  'driver.change',
+  'firewall.change',
+  'boot.change',
+  'permission.change',
+  'system.elevate'
 ])

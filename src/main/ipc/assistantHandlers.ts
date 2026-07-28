@@ -7,6 +7,7 @@ import type {
   OllamaHealth
 } from '../../shared/types'
 import { BrowserTaskFlow } from '../assistant/browserTaskFlow'
+import { ComputerTaskFlow } from '../assistant/computerTaskFlow'
 import { ConfirmationFlow, parseConfirmationResponse } from '../assistant/confirmationFlow'
 import { planAssistantRequest } from '../assistant/actionPlanner'
 import { executeActionPlan } from '../assistant/actionPlanExecutor'
@@ -44,6 +45,7 @@ const capabilityRegistry = createCapabilityRegistry()
 const capabilityRuntime = createCapabilityRuntime({}, capabilityRegistry)
 const confirmationFlow = new ConfirmationFlow(capabilityRuntime)
 const browserTaskFlow = new BrowserTaskFlow(capabilityRegistry, capabilityRuntime)
+const computerTaskFlow = new ComputerTaskFlow(capabilityRegistry, capabilityRuntime)
 
 function parseAssistantRequest(value: unknown): string | null {
   if (
@@ -79,6 +81,7 @@ function getOrCreateSession(event: IpcMainInvokeEvent): AssistantSession {
     activeRequests.delete(senderId)
     confirmationFlow.cancelSender(senderId)
     browserTaskFlow.cancelSender(senderId)
+    computerTaskFlow.cancelSender(senderId)
     sessions.delete(senderId)
   })
   return session
@@ -151,6 +154,7 @@ export function registerAssistantHandlers(): void {
       if (isConversationResetCommand(message)) {
         confirmationFlow.cancelSender(senderId)
         browserTaskFlow.cancelSender(senderId)
+        computerTaskFlow.cancelSender(senderId)
         activeRequests.get(senderId)?.abort()
         activeRequests.delete(senderId)
         sessions.delete(senderId)
@@ -310,8 +314,10 @@ export function registerAssistantHandlers(): void {
                 data: { response: output.response }
               }
             : output.kind === 'browser_task'
-              ? await browserTaskFlow.start(message, senderId, controller.signal)
-              : await confirmationFlow.execute(output, senderId)
+              ? await browserTaskFlow.start(output.goal, senderId, controller.signal)
+              : output.kind === 'computer_task'
+                ? await computerTaskFlow.start(output.goal, senderId, controller.signal)
+                : await confirmationFlow.execute(output, senderId)
 
         if (result.ok && result.data?.response) {
           recordSuccessfulExchange(
@@ -348,6 +354,15 @@ export function registerAssistantHandlers(): void {
         }
       }
 
+      if (computerTaskFlow.hasPending(event.sender.id, response.requestId)) {
+        return computerTaskFlow.respond(
+          event.sender.id,
+          response.requestId,
+          response.approved,
+          response.pin
+        )
+      }
+
       if (browserTaskFlow.hasPending(event.sender.id, response.requestId)) {
         return browserTaskFlow.respond(event.sender.id, response.requestId, response.approved)
       }
@@ -364,6 +379,7 @@ export function registerAssistantHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.assistantCancel, (event: IpcMainInvokeEvent): ActionResult => {
     confirmationFlow.cancelSender(event.sender.id)
     browserTaskFlow.cancelSender(event.sender.id)
+    computerTaskFlow.cancelSender(event.sender.id)
     const session = sessions.get(event.sender.id)
     const hadPendingDestination = Boolean(session?.pendingMediaDestination)
     if (session) session.pendingMediaDestination = undefined

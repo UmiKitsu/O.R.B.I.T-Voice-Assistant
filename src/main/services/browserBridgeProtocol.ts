@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { BrowserCommandResult } from '../../shared/types'
 import { ORBIT_BROWSER_EXTENSION_ORIGIN } from './browserBridgeCompatibility'
 
-export const BROWSER_PROTOCOL_VERSION = 2 as const
+export const BROWSER_PROTOCOL_VERSION = 3 as const
 export const BROWSER_MAX_MESSAGE_BYTES = 64 * 1024
 export const BROWSER_REQUEST_TTL_MS = 60_000
 export const BROWSER_AUTH_CLOCK_SKEW_MS = 30_000
@@ -138,37 +138,11 @@ export const forgetPairingAckSchema = z
   })
   .strict()
 
-function isExactHttpOriginPattern(value: string): boolean {
-  if (!value.endsWith('/*')) return false
-  const origin = value.slice(0, -2)
-  try {
-    const url = new URL(origin)
-    return (
-      ['http:', 'https:'].includes(url.protocol) &&
-      !url.username &&
-      !url.password &&
-      !url.hostname.includes('*') &&
-      url.origin === origin
-    )
-  } catch {
-    return false
-  }
-}
-
 export const extensionStatusSchema = z
   .object({
     type: z.literal('extension_status'),
     version: z.literal(BROWSER_PROTOCOL_VERSION),
-    grantedOrigins: z
-      .array(
-        z
-          .string()
-          .trim()
-          .min(6)
-          .max(500)
-          .refine(isExactHttpOriginPattern, 'An exact HTTP(S) origin grant is required.')
-      )
-      .max(200),
+    siteAccessMode: z.enum(['all-websites', 'restricted']),
     activeTabOrigin: z.string().url().optional()
   })
   .strict()
@@ -216,7 +190,7 @@ export function commandMacPayload(
 }
 
 export function responseMacPayload(response: {
-  version: 2
+  version: 3
   requestId: string
   sequence: number
   result: BrowserCommandResult<unknown>
