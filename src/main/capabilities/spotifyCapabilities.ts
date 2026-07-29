@@ -34,7 +34,10 @@ const dataSchema = z.union([
     .object({
       application: z.literal('spotify'),
       query: z.string(),
-      method: z.literal('desktop')
+      method: z.literal('desktop'),
+      verification: z.literal('playing'),
+      title: z.string().optional(),
+      artist: z.string().optional()
     })
     .strict(),
   z
@@ -42,7 +45,9 @@ const dataSchema = z.union([
       application: z.literal('spotify'),
       query: z.string(),
       method: z.literal('desktop-artist'),
-      verification: z.enum(['playing', 'activated'])
+      verification: z.literal('playing'),
+      title: z.string().optional(),
+      artist: z.string().optional()
     })
     .strict(),
   z

@@ -5,7 +5,10 @@ import type {
   AudioVolumeController,
   MediaKeySender
 } from '../services/mediaControlService'
-import type { SpotifyPlaybackController } from '../services/spotifyService'
+import type {
+  SpotifyPlaybackController,
+  SpotifyPlaybackDependencies
+} from '../services/spotifyService'
 import type { SpotifyWebApiDependencies } from '../services/spotifyWebApiService'
 import type { WindowController } from '../services/windowInputService'
 import type { TrashController } from '../services/filesystemService'
@@ -41,6 +44,13 @@ export type CapabilityRuntimeDependencies = {
   spotifyController?: SpotifyPlaybackController
   spotifyDelay?: (milliseconds: number) => Promise<void>
   spotifyNow?: () => number
+  spotifyInspectDesktopWindow?: SpotifyPlaybackDependencies['inspectDesktopWindow']
+  spotifyPerformDesktopAction?: SpotifyPlaybackDependencies['performDesktopAction']
+  spotifyReadMediaSession?: SpotifyPlaybackDependencies['readMediaSession']
+  spotifyInspectVisually?: SpotifyPlaybackDependencies['inspectVisually']
+  spotifySetScreenPhase?: SpotifyPlaybackDependencies['setScreenPhase']
+  spotifyClearScreenPhase?: SpotifyPlaybackDependencies['clearScreenPhase']
+  spotifySettings?: SpotifyPlaybackDependencies['settings']
   spotifyWebApi?: SpotifyWebApiDependencies
   trashController?: TrashController
   installerLauncher?: InstallerLauncher
@@ -68,6 +78,13 @@ export function createCapabilityRegistry(
     launcher: dependencies.launchApplication,
     delay: dependencies.spotifyDelay,
     now: dependencies.spotifyNow,
+    inspectDesktopWindow: dependencies.spotifyInspectDesktopWindow,
+    performDesktopAction: dependencies.spotifyPerformDesktopAction,
+    readMediaSession: dependencies.spotifyReadMediaSession,
+    inspectVisually: dependencies.spotifyInspectVisually,
+    setScreenPhase: dependencies.spotifySetScreenPhase,
+    clearScreenPhase: dependencies.spotifyClearScreenPhase,
+    settings: dependencies.spotifySettings,
     openExternalUrl: dependencies.openExternalUrl,
     sendMediaKey: dependencies.sendMediaKey,
     webApi: dependencies.spotifyWebApi
