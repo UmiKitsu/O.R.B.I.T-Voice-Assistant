@@ -22,6 +22,7 @@ export type WindowController = {
   pressEnter(): boolean
   focusSpotifySearch(): boolean
   selectAllText(): boolean
+  playSpotifySelectedResult?(): boolean
   pressTab(): boolean
   clickScreenPoint?(x: number, y: number): boolean
 }
@@ -428,6 +429,17 @@ export const windowsController: WindowController = {
       inputEvent(0x41, false, false),
       inputEvent(0x41, true, false),
       inputEvent(0x11, true, false)
+    ]
+    return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length
+  },
+
+  playSpotifySelectedResult() {
+    const native = loadNativeFunctions()
+    const inputs = [
+      inputEvent(0x10, false, false),
+      inputEvent(0x0d, false, false),
+      inputEvent(0x0d, true, false),
+      inputEvent(0x10, true, false)
     ]
     return native.sendInput(inputs.length, inputs, native.inputSize) === inputs.length
   },

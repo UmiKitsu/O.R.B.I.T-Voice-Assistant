@@ -35,7 +35,7 @@ const dataSchema = z.union([
       application: z.literal('spotify'),
       query: z.string(),
       method: z.literal('desktop'),
-      verification: z.literal('playing'),
+      verification: z.enum(['playing', 'started']),
       title: z.string().optional(),
       artist: z.string().optional()
     })
@@ -45,7 +45,7 @@ const dataSchema = z.union([
       application: z.literal('spotify'),
       query: z.string(),
       method: z.literal('desktop-artist'),
-      verification: z.literal('playing'),
+      verification: z.enum(['playing', 'started']),
       title: z.string().optional(),
       artist: z.string().optional()
     })
@@ -89,7 +89,7 @@ function definition(
   return {
     name,
     risk: 'automatic',
-    timeoutMs: 40_000,
+    timeoutMs: 20_000,
     execute
   }
 }

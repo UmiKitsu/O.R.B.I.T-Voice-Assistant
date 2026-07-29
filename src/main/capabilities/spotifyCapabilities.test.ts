@@ -3,7 +3,7 @@ import type { DesktopElement, DesktopWindowSnapshot } from '../../shared/types'
 import type { ForegroundTarget } from '../security/protectedTargets'
 import type { SpotifyPlaybackController } from '../services/spotifyService'
 import type { PolicyResult } from '../security/policyEngine'
-import { createCapabilityRuntime } from './capabilityRuntime'
+import { createCapabilityRegistry, createCapabilityRuntime } from './capabilityRuntime'
 
 const target: ForegroundTarget = {
   windowHandle: 7,
@@ -28,6 +28,7 @@ const controller: SpotifyControllerProbe = {
   focusSpotifySearch: vi.fn(() => true),
   selectAllText: vi.fn(() => true),
   typeUnicodeText: vi.fn(() => true),
+  playSpotifySelectedResult: vi.fn(() => true),
   pressTab: vi.fn(() => true),
   pressEnter: vi.fn(() => true)
 }
@@ -138,6 +139,12 @@ describe('Spotify capability', () => {
     vi.mocked(controller.focusSpotifySearch).mockReturnValue(true)
     vi.mocked(controller.selectAllText).mockReturnValue(true)
     vi.mocked(controller.typeUnicodeText).mockReturnValue(true)
+    vi.mocked(controller.playSpotifySelectedResult).mockReturnValue(true)
+  })
+
+  it('uses a twenty-second capability budget', () => {
+    expect(createCapabilityRegistry().get('spotify.playSearch')?.timeoutMs).toBe(20_000)
+    expect(createCapabilityRegistry().get('music.playSearch')?.timeoutMs).toBe(20_000)
   })
 
   it('executes a validated plain-text track query with verified desktop data', async () => {

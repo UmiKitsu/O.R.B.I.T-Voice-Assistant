@@ -161,6 +161,22 @@ describe('context-aware routing', () => {
     })
   })
 
+  it.each([
+    'play Bruno Mars song in Spotify',
+    'play Bruno Mars songs in Spotify',
+    'play a Bruno Mars song in Spotify',
+    'play some Bruno Mars songs on Spotify'
+  ])('routes %s directly as an artist request', (message) => {
+    expect(routeCommand(message)).toMatchObject({
+      actions: [
+        {
+          capability: 'spotify.playSearch',
+          parameters: { query: 'Bruno Mars', intent: 'artist' }
+        }
+      ]
+    })
+  })
+
   it('marks explicit artist phrases without calling the classifier', () => {
     expect(routeCommand('play music by Bruno Mars')).toMatchObject({
       actions: [

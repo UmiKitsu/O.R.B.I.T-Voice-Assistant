@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  ActionResult,
   DesktopElement,
   DesktopWindowSnapshot,
   MediaSessionState,
@@ -52,6 +53,7 @@ const controller: SpotifyControllerProbe = {
   focusSpotifySearch: vi.fn(() => true),
   selectAllText: vi.fn(() => true),
   typeUnicodeText: vi.fn(() => true),
+  playSpotifySelectedResult: vi.fn(() => true),
   pressTab: vi.fn(() => true),
   pressEnter: vi.fn(() => true)
 }
@@ -163,6 +165,204 @@ function screenAwareDependencies(
   }
 }
 
+describe('fast screen-safe Spotify desktop playback', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
+    vi.mocked(controller.findWindow).mockReturnValue(42)
+    vi.mocked(controller.getForegroundTarget).mockReturnValue(safeSpotifyTarget)
+    vi.mocked(controller.getProcessAgeMs).mockReturnValue(20_000)
+    vi.mocked(controller.show).mockReturnValue(true)
+    vi.mocked(controller.activate).mockReturnValue(true)
+    vi.mocked(controller.focusSpotifySearch).mockReturnValue(true)
+    vi.mocked(controller.selectAllText).mockReturnValue(true)
+    vi.mocked(controller.typeUnicodeText).mockReturnValue(true)
+    vi.mocked(controller.playSpotifySelectedResult).mockReturnValue(true)
+  })
+
+  it('uses the warm action order and stays inside the activation and response budgets', async () => {
+    const timing = clock()
+    const events: string[] = []
+    let activationAt = -1
+
+    vi.mocked(controller.activate).mockImplementation(() => {
+      events.push('activate')
+      return true
+    })
+    vi.mocked(controller.getForegroundTarget).mockImplementation(() => {
+      events.push('foreground')
+      return safeSpotifyTarget
+    })
+    vi.mocked(controller.focusSpotifySearch).mockImplementation(() => {
+      events.push('ctrl-k')
+      return true
+    })
+    vi.mocked(controller.selectAllText).mockImplementation(() => {
+      events.push('select-all')
+      return true
+    })
+    vi.mocked(controller.typeUnicodeText).mockImplementation(() => {
+      events.push('type-query')
+      return true
+    })
+    vi.mocked(controller.playSpotifySelectedResult).mockImplementation(() => {
+      activationAt = timing.now()
+      events.push('shift-enter')
+      return true
+    })
+    const dependencies = screenAwareDependencies(timing)
+
+    await expect(
+      playSpotifyDesktopArtist('Bruno Mars', new AbortController().signal, dependencies)
+    ).resolves.toMatchObject({
+      ok: true,
+      data: { method: 'desktop-artist', verification: 'playing', artist: 'Bruno Mars' }
+    })
+
+    const activateIndex = events.indexOf('activate')
+    const quickSearchIndex = events.indexOf('ctrl-k')
+    const selectIndex = events.indexOf('select-all')
+    const typeIndex = events.indexOf('type-query')
+    const shortcutIndex = events.indexOf('shift-enter')
+    const foregroundRecheckIndex = events.findIndex(
+      (event, index) => event === 'foreground' && index > typeIndex && index < shortcutIndex
+    )
+
+    expect(activateIndex).toBeLessThan(quickSearchIndex)
+    expect(quickSearchIndex).toBeLessThan(selectIndex)
+    expect(selectIndex).toBeLessThan(typeIndex)
+    expect(foregroundRecheckIndex).toBeGreaterThan(typeIndex)
+    expect(foregroundRecheckIndex).toBeLessThan(shortcutIndex)
+    expect(timing.delays).toEqual([250, 750, 350])
+    expect(activationAt).toBeLessThanOrEqual(2_000)
+    expect(timing.now()).toBeLessThanOrEqual(4_000)
+    expect(controller.getProcessAgeMs).toHaveBeenCalledOnce()
+    expect(controller.findWindow).toHaveBeenCalledTimes(2)
+    expect(dependencies.inspectDesktopWindow).not.toHaveBeenCalled()
+  })
+
+  it('returns started after one stale media-session check without invoking UI Automation', async () => {
+    const timing = clock()
+    const readMediaSession = vi.fn(async () => ({
+      ok: true as const,
+      message: 'Stale session.',
+      data: playingState('Blinding Lights', 'The Weeknd')
+    }))
+    const dependencies = screenAwareDependencies(timing, { readMediaSession })
+
+    await expect(
+      playSpotifyDesktopArtist('Bruno Mars', new AbortController().signal, dependencies)
+    ).resolves.toEqual({
+      ok: true,
+      message: 'Started the top Spotify result for Bruno Mars.',
+      data: {
+        application: 'spotify',
+        query: 'Bruno Mars',
+        method: 'desktop-artist',
+        verification: 'started'
+      }
+    })
+
+    expect(readMediaSession).toHaveBeenCalledOnce()
+    expect(dependencies.inspectDesktopWindow).not.toHaveBeenCalled()
+    expect(dependencies.performDesktopAction).not.toHaveBeenCalled()
+  })
+
+  it('bounds an unavailable verification read to two seconds and does not retry', async () => {
+    vi.useFakeTimers()
+    const timing = clock()
+    const readMediaSession = vi.fn(
+      () => new Promise<ActionResult<MediaSessionState>>(() => undefined)
+    )
+    const dependencies = screenAwareDependencies(timing, { readMediaSession })
+    const resultPromise = playSpotifyDesktopTopResult(
+      'Locked Out of Heaven',
+      new AbortController().signal,
+      dependencies
+    )
+
+    await vi.advanceTimersByTimeAsync(2_000)
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: true,
+      data: { verification: 'started' }
+    })
+    expect(readMediaSession).toHaveBeenCalledOnce()
+    expect(dependencies.inspectDesktopWindow).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('does not fall back or double-activate after an accepted shortcut is cancelled', async () => {
+    const timing = clock()
+    const abortController = new AbortController()
+    vi.mocked(controller.playSpotifySelectedResult).mockImplementation(() => {
+      abortController.abort()
+      return true
+    })
+    const dependencies = screenAwareDependencies(timing)
+
+    await expect(
+      playSpotifyDesktopTopResult('Locked Out of Heaven', abortController.signal, dependencies)
+    ).resolves.toMatchObject({ ok: false, code: 'ACTION_CANCELLED' })
+
+    expect(controller.playSpotifySelectedResult).toHaveBeenCalledOnce()
+    expect(dependencies.inspectDesktopWindow).not.toHaveBeenCalled()
+    expect(dependencies.performDesktopAction).not.toHaveBeenCalled()
+    expect(dependencies.readMediaSession).not.toHaveBeenCalled()
+  })
+
+  it('stops when the accepted shortcut leaves a protected Spotify target active', async () => {
+    const timing = clock()
+    let foregroundTarget = safeSpotifyTarget
+    vi.mocked(controller.getForegroundTarget).mockImplementation(() => foregroundTarget)
+    vi.mocked(controller.playSpotifySelectedResult).mockImplementation(() => {
+      foregroundTarget = { ...safeSpotifyTarget, isPasswordField: true }
+      return true
+    })
+    const dependencies = screenAwareDependencies(timing)
+
+    await expect(
+      playSpotifyDesktopTopResult(
+        'Locked Out of Heaven',
+        new AbortController().signal,
+        dependencies
+      )
+    ).resolves.toMatchObject({ ok: false, code: 'SPOTIFY_TARGET_CHANGED' })
+
+    expect(dependencies.inspectDesktopWindow).not.toHaveBeenCalled()
+    expect(dependencies.readMediaSession).not.toHaveBeenCalled()
+  })
+
+  it('bounds the rejected-shortcut UI Automation fallback to eight seconds', async () => {
+    vi.useFakeTimers()
+    const timing = clock()
+    vi.mocked(controller.playSpotifySelectedResult).mockReturnValue(false)
+    const clearScreenPhase = vi.fn(() => status('ready', 'Ready.'))
+    const dependencies = screenAwareDependencies(timing, {
+      inspectDesktopWindow: vi.fn(
+        () => new Promise<ActionResult<DesktopWindowSnapshot>>(() => undefined)
+      ),
+      clearScreenPhase
+    })
+    const resultPromise = playSpotifyDesktopTopResult(
+      'Locked Out of Heaven',
+      new AbortController().signal,
+      dependencies
+    )
+
+    await vi.advanceTimersByTimeAsync(8_000)
+
+    await expect(resultPromise).resolves.toMatchObject({
+      ok: false,
+      code: 'SPOTIFY_UI_FALLBACK_TIMEOUT'
+    })
+    expect(controller.playSpotifySelectedResult).toHaveBeenCalledOnce()
+    expect(dependencies.inspectDesktopWindow).toHaveBeenCalledOnce()
+    expect(clearScreenPhase).toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+})
+
 describe('screen-aware Spotify desktop playback', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -174,6 +374,7 @@ describe('screen-aware Spotify desktop playback', () => {
     vi.mocked(controller.focusSpotifySearch).mockReturnValue(true)
     vi.mocked(controller.selectAllText).mockReturnValue(true)
     vi.mocked(controller.typeUnicodeText).mockReturnValue(true)
+    vi.mocked(controller.playSpotifySelectedResult).mockReturnValue(false)
     vi.mocked(controller.pressTab).mockReturnValue(true)
     vi.mocked(controller.pressEnter).mockReturnValue(true)
   })
@@ -828,6 +1029,7 @@ describe('Spotify fallback and URI behavior', () => {
     vi.mocked(controller.focusSpotifySearch).mockReturnValue(true)
     vi.mocked(controller.selectAllText).mockReturnValue(true)
     vi.mocked(controller.typeUnicodeText).mockReturnValue(true)
+    vi.mocked(controller.playSpotifySelectedResult).mockReturnValue(false)
   })
 
   it('does not open YouTube when screen awareness cannot identify Spotify controls', async () => {

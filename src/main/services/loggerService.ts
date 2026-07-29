@@ -28,6 +28,12 @@ export type OperationalLogEvent =
       port?: number
       code?: string
     }
+  | {
+      event: 'spotify.playback-stage'
+      stage: 'readiness' | 'search-entry' | 'activation' | 'verification'
+      outcome: 'succeeded' | 'failed' | 'unconfirmed'
+      durationMs: number
+    }
   | { event: 'capability.requested'; capability: string }
   | { event: 'policy.decided'; capability: string; decision: 'allowed' | 'blocked' }
   | { event: 'action.completed'; capability: string; outcome: 'succeeded' | 'failed' }
