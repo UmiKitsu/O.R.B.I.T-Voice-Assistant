@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  applySpotifyPlaybackIntent,
   extractAmbiguousMediaQuery,
-  getUnclassifiedSpotifyPlaybackQuery,
   isClarificationCancellation,
   isConversationResetCommand,
   routeCommand,
@@ -155,7 +153,18 @@ describe('context-aware routing', () => {
     })
   })
 
-  it('routes an explicit Spotify playback request without prior context', () => {
+  it.each([
+    'play Bruno Mars on Spotify',
+    'Play Bruno Mars in Spotify',
+    'PLAY Bruno Mars ON SPOTIFY.',
+    'play Bruno Mars in spotify!'
+  ])('routes %s directly to Spotify without an inferred intent', (message) => {
+    expect(routeCommand(message)).toMatchObject({
+      actions: [{ capability: 'spotify.playSearch', parameters: { query: 'Bruno Mars' } }]
+    })
+  })
+
+  it('keeps a specific Spotify track query complete', () => {
     expect(routeCommand('play Locked Out of Heaven on Spotify')).toMatchObject({
       actions: [{ capability: 'spotify.playSearch', parameters: { query: 'Locked Out of Heaven' } }]
     })
@@ -165,8 +174,13 @@ describe('context-aware routing', () => {
     'play Bruno Mars song in Spotify',
     'play Bruno Mars songs in Spotify',
     'play a Bruno Mars song in Spotify',
-    'play some Bruno Mars songs on Spotify'
-  ])('routes %s directly as an artist request', (message) => {
+    'play some Bruno Mars songs on Spotify',
+    'play any Bruno Mars song on Spotify',
+    'play any song by Bruno Mars on Spotify',
+    'play a song of Bruno Mars in Spotify',
+    'play some songs from Bruno Mars on Spotify',
+    'play music from Bruno Mars in Spotify'
+  ])('routes %s directly as a clean artist request', (message) => {
     expect(routeCommand(message)).toMatchObject({
       actions: [
         {
@@ -188,31 +202,12 @@ describe('context-aware routing', () => {
     })
   })
 
-  it('keeps bare requests unclassified until local Qwen resolves artist versus track', () => {
-    const artistPlan = routeCommand('Play Bruno Mars')
-    const trackPlan = routeCommand('Play Locked Out of Heaven')
-    expect(artistPlan?.kind).toBe('action_plan')
-    expect(trackPlan?.kind).toBe('action_plan')
-    if (!artistPlan || artistPlan.kind !== 'action_plan') throw new Error('Expected artist plan.')
-    if (!trackPlan || trackPlan.kind !== 'action_plan') throw new Error('Expected track plan.')
-
-    expect(getUnclassifiedSpotifyPlaybackQuery(artistPlan)).toBe('Bruno Mars')
-    expect(getUnclassifiedSpotifyPlaybackQuery(trackPlan)).toBe('Locked Out of Heaven')
-    expect(applySpotifyPlaybackIntent(artistPlan, 'artist')).toMatchObject({
-      actions: [
-        {
-          capability: 'music.playSearch',
-          parameters: { query: 'Bruno Mars', intent: 'artist' }
-        }
-      ]
-    })
-    expect(applySpotifyPlaybackIntent(trackPlan, 'track')).toMatchObject({
-      actions: [
-        {
-          capability: 'music.playSearch',
-          parameters: { query: 'Locked Out of Heaven', intent: 'track' }
-        }
-      ]
+  it.each([
+    ['Play Bruno Mars', 'Bruno Mars'],
+    ['Play Locked Out of Heaven', 'Locked Out of Heaven']
+  ])('routes %s to the preferred provider without classification', (message, query) => {
+    expect(routeCommand(message)).toMatchObject({
+      actions: [{ capability: 'music.playSearch', parameters: { query } }]
     })
   })
 
@@ -225,8 +220,14 @@ describe('context-aware routing', () => {
     })
   })
 
-  it('routes an unqualified playback request to the preferred music provider capability', () => {
-    expect(routeCommand('play a Bruno Mars song')).toEqual({
+  it.each([
+    'play a Bruno Mars song',
+    'play any song by Bruno Mars',
+    'play one song of Bruno Mars',
+    'play some songs from Bruno Mars',
+    'play Bruno Mars music'
+  ])('routes %s to the preferred provider with a clean artist intent', (message) => {
+    expect(routeCommand(message)).toEqual({
       kind: 'action_plan',
       summary: 'Play music using the preferred provider',
       actions: [
@@ -301,6 +302,10 @@ describe('context-aware routing', () => {
       extractAmbiguousMediaQuery('play a Bruno Mars song', { lastMediaApplication: 'spotify' })
     ).toBeNull()
     expect(extractAmbiguousMediaQuery('play it')).toBeNull()
+    expect(routeCommand('play it')).toBeNull()
+    expect(routeCommand('play it', { lastMediaApplication: 'spotify' })).toMatchObject({
+      actions: [{ capability: 'media.play', parameters: { sourceApplication: 'spotify' } }]
+    })
   })
 
   it('routes a clarified Spotify destination', () => {

@@ -420,13 +420,17 @@ function validMediaQuery(query: string): string | null {
 
 function parseMediaQuery(value: string): ParsedMediaQuery | null {
   const trimmed = value.trim()
-  const artistBy = trimmed.match(/^(?:music|songs?)\s+by\s+(.+)$/i)
-  const artistSong = trimmed.match(/^(?:(?:a|some)\s+)?(.+?)\s+(?:song|songs|music)$/i)
+  const artistSource = trimmed.match(
+    /^(?:(?:a|any|some|one)\s+)?(?:song|songs|music)\s+(?:by|of|from)\s+(.+)$/i
+  )
+  const artistSong = trimmed.match(/^(?:(?:a|any|some)\s+)?(.+?)\s+(?:song|songs|music)$/i)
   const explicitTrack = trimmed.match(/^(?:the\s+)?(?:song|track)\s+(.+)$/i)
 
-  const query = validMediaQuery(artistBy?.[1] ?? artistSong?.[1] ?? explicitTrack?.[1] ?? trimmed)
+  const query = validMediaQuery(
+    artistSource?.[1] ?? artistSong?.[1] ?? explicitTrack?.[1] ?? trimmed
+  )
   if (!query) return null
-  if (artistBy || artistSong) return { query, intent: 'artist' }
+  if (artistSource || artistSong) return { query, intent: 'artist' }
   if (explicitTrack) return { query, intent: 'track' }
   return { query }
 }
@@ -558,37 +562,6 @@ export function extractAmbiguousMediaQuery(
     .trim()
   const playbackRequest = normalized.match(/^play\s+(.+)$/i)
   return normalizeMediaQuery(playbackRequest?.[1] ?? '')
-}
-
-export function getUnclassifiedSpotifyPlaybackQuery(plan: ActionPlan): string | null {
-  if (plan.actions.length !== 1) return null
-  const [action] = plan.actions
-  if (
-    !action ||
-    !['spotify.playSearch', 'music.playSearch'].includes(action.capability) ||
-    Object.hasOwn(action.parameters, 'intent') ||
-    typeof action.parameters.query !== 'string'
-  ) {
-    return null
-  }
-  return action.parameters.query
-}
-
-export function applySpotifyPlaybackIntent(
-  plan: ActionPlan,
-  intent: RoutedPlaybackIntent
-): ActionPlan {
-  const query = getUnclassifiedSpotifyPlaybackQuery(plan)
-  if (!query) return plan
-  return {
-    ...plan,
-    actions: [
-      {
-        ...plan.actions[0],
-        parameters: { query, intent }
-      }
-    ]
-  }
 }
 
 export function routeMediaDestinationResponse(message: string, query: string): ActionPlan | null {

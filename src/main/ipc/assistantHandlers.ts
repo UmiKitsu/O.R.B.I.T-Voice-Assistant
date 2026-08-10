@@ -18,9 +18,7 @@ import {
   type AssistantSession
 } from '../assistant/assistantSession'
 import {
-  applySpotifyPlaybackIntent,
   extractAmbiguousMediaQuery,
-  getUnclassifiedSpotifyPlaybackQuery,
   isClarificationCancellation,
   isConversationResetCommand,
   routeCommand,
@@ -35,7 +33,6 @@ import { prepareOllama } from '../services/ollamaStartupService'
 import { logOperationalEvent } from '../services/loggerService'
 import { getLastYouTubePlaybackState } from '../services/browserBridgeService'
 import { getSettings } from '../services/settingsService'
-import { classifySpotifyPlaybackIntent } from '../services/spotifyIntentClassifier'
 
 const MAX_MESSAGE_LENGTH = 4_000
 
@@ -223,15 +220,8 @@ export function registerAssistantHandlers(): void {
         if (actionController) activeRequests.set(senderId, actionController)
 
         try {
-          const unclassifiedQuery = getUnclassifiedSpotifyPlaybackQuery(deterministicPlan)
-          const resolvedPlan = unclassifiedQuery
-            ? applySpotifyPlaybackIntent(
-                deterministicPlan,
-                await classifySpotifyPlaybackIntent(unclassifiedQuery, actionController?.signal)
-              )
-            : deterministicPlan
           const actionResult = await executeActionPlan(
-            resolvedPlan,
+            deterministicPlan,
             capabilityRuntime,
             actionController?.signal
           )
@@ -240,7 +230,7 @@ export function registerAssistantHandlers(): void {
               session,
               message,
               actionResult.data.response,
-              resolvedPlan,
+              deterministicPlan,
               getLastYouTubePlaybackState()
             )
           }
